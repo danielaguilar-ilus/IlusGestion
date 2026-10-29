@@ -84,9 +84,14 @@ class TestLecturaDeDocumentos(unittest.TestCase):
         r = self.amb([("FCV", "11348")], s)(151, 5)
         self.assertEqual((r["servicio"]["saldo"], r["servicio"]["usado"]), (242857, 100000))
 
-    def test_si_random_no_entrego_un_documento_o_es_de_otro_cliente_queda_incompleto(self):
+    def test_si_random_no_entrego_un_documento_queda_incompleto(self):
         self.assertTrue(self.amb([("FCV", "1")], self.saldo(leido=False))(151, 5)["incompleto"])
-        self.assertTrue(self.amb([("FCV", "1")], self.saldo(otro=True))(151, 5)["incompleto"])
+
+    def test_un_documento_de_otra_empresa_no_bloquea_a_los_demas_se_informa(self):
+        # 2026-10-29 (OT-2026-00190): se sabe con certeza que no cuenta (el saldo lo excluye): no impide tomar el cobro de la factura buena.
+        r = self.amb([("FCV", "1")], self.saldo(otro=True))(151, 5)
+        self.assertFalse(r["incompleto"])
+        self.assertEqual(r["otra_empresa"], ["FCV 11348"])
 
     def test_una_nota_de_venta_cuya_factura_ya_esta_no_cuenta_ni_marca_incompleto(self):
         r = self.amb([("NVV", "1")], self.saldo(omitido="Su factura ya está en la OT"))(151, 5)

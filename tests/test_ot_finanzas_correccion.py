@@ -83,6 +83,7 @@ def _ambito(superadmin=True, cuerpo=None, fila=FILA):
         ["ot2_api_finanzas_corregir", "_ot_fin_ganancia", "_ot_fin_es_superadmin", "_ot_fin_dudosas_motivos",
          "_ot2_err", "_ot_fin_rep_de",
          "_ot_fin_corr_desde_docs",   # 2026-10-29: «tomar el cobro de los documentos» (la ruta decide el rótulo con ella)
+         "_ot_fin_anexo_restriccion",   # 2026-10-29: el costo del proveedor no se cambia por otro camino que su anexo (las OT de estas pruebas no tienen anexo vivo)
          # la cuenta única y lo que usa
          "_ot_finanzas", "_ot_cobertura", "_ot_es_interna", "_ot_fin_num", "_ot_fin_clp"],
         ["_OT_FIN_CORR_CAMPOS", "_OT_FIN_CORR_ROT", "_OT_FIN_CORR_MOTIVO_MIN", "_OT_FIN_SQL_CONTRATO_REAL",
@@ -98,6 +99,7 @@ def _ambito(superadmin=True, cuerpo=None, fila=FILA):
             "_mant_log": lambda *a, **k: mant_log.append(a),
             "_OT2_CENTROS_COSTO": [("sstt", "SSTT"), ("logistica", "Logística"), ("comercial", "Comercial")],
             "_ot_repuestos_desglose": lambda vids: {},
+            "_ot_fin_anexo_vivo": lambda vid: None, "_oac": __import__("ot_anexo_costo"),
         })
     # las vistas llevan decoradores de Flask: se llama a la función sin ellos
     amb["_conn"], amb["_mant_log_reg"] = conn, mant_log

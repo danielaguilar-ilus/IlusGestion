@@ -344,6 +344,44 @@ class TestPuertaCerrar(unittest.TestCase):
         self.assertTrue(P({"id": 41, "documentos": None, "autorizaciones": None}, "cerrar")["ok"])
 
 
+class TestGarantiaNoPideFactura(unittest.TestCase):
+    """2026-10-29 (Daniel, OT-2026-00241: «las garantías no deben quedar pidiendo factura»). Una OT que no se cobra tiene como documento la
+    nota de venta de la venta (referencia); lo que exige al cerrar es la autorización del $0 (REGLA #24), nunca una factura."""
+
+    def test_garantia_con_nota_de_venta_pide_el_cero_autorizado_no_la_factura(self):
+        r = P({"modalidad_cobro": "garantia", "cobro_cero_motivo": "garantia", "documentos": [NVV]}, "cerrar")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["falta"], "autorizacion_cobro_cero")          # antes: «factura» («agrega la factura o boleta»)
+        self.assertNotIn("factura", r["mensaje"].lower())
+
+    def test_garantia_con_nota_de_venta_y_cero_autorizado_cierra(self):
+        r = P({"modalidad_cobro": "garantia", "cobro_cero_motivo": "garantia", "cobro_cero_autorizacion_id": 5,
+               "autorizaciones": [APROBADA_CERO], "documentos": [NVV]}, "cerrar")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["via"], "cobro_cero")
+
+    def test_garantia_marcada_solo_por_cubierto_por_tampoco_pide_factura(self):
+        r = P({"modalidad_cobro": "pagado", "cubierto_por": "garantia", "documentos": [NVV]}, "cerrar")
+        self.assertEqual(r.get("falta"), "autorizacion_cobro_cero")
+
+    def test_regalia_y_arriendo_con_nota_de_venta_tampoco_piden_factura(self):
+        for motivo in ("regalia", "arriendo_leasing"):
+            r = P({"modalidad_cobro": "sin_costo", "cobro_cero_motivo": motivo, "documentos": [NVV]}, "cerrar")
+            self.assertEqual(r.get("falta"), "autorizacion_cobro_cero", motivo)
+
+    def test_garantia_con_factura_sigue_cerrando_por_el_documento(self):
+        r = P({"modalidad_cobro": "garantia", "cobro_cero_motivo": "garantia", "documentos": [FCV]}, "cerrar")
+        self.assertTrue(r["ok"]); self.assertEqual(r["via"], "documento")
+
+    def test_una_ot_que_si_se_cobra_con_nota_de_venta_sigue_pidiendo_la_factura(self):
+        r = P({"modalidad_cobro": "pagado", "documentos": [NVV]}, "cerrar")
+        self.assertFalse(r["ok"]); self.assertEqual(r["falta"], "factura")
+
+    def test_al_crear_no_cambia_nada(self):
+        r = P({"modalidad_cobro": "garantia", "cobro_cero_motivo": "garantia", "documentos": [NVV]}, "crear")
+        self.assertTrue(r["ok"]); self.assertEqual(r["via"], "nota_venta")
+
+
 class TestUnaSolaReglaDelCeroAutorizado(unittest.TestCase):
     """2026-10-25 (Daniel, con la OT-2026-00354: «arriba dice sin autorización de Daniel y abajo dice Crear OT sin documento · Garantía, autorizada…
     ¿la pidió o no la pidió? Eso tiene que ser dinámico»): la puerta de cierre y el recorrido de la ficha deciden con UNA sola regla si una

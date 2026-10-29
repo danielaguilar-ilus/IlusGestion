@@ -957,7 +957,9 @@ class TestCandadosPorTexto(unittest.TestCase):
 
     def test_el_cierre_de_la_hija_exige_la_factura_de_la_madre(self):
         cierre = F.fuente_funcion("mant_ot_aprobar_cierre")
-        self.assertIn('_exenta_doc_cliente = _mod_cobro in ("garantia", "sin_costo") or _cob_cierre in ("contrato", "cubierta")', cierre)
+        # 2026-10-29: además de la desinstalación cubierta y el contrato, ya no piden documento del cliente garantía, regalía ni arriendo/leasing.
+        self.assertIn('_exenta_doc_cliente = (_mod_cobro in ("garantia", "sin_costo")', cierre)
+        self.assertIn('_cob_cierre in ("contrato", "cubierta", "garantia", "sin_costo", "regalia", "arriendo_leasing")', cierre)
         self.assertEqual(cierre.count('"cubierta_madre"'), 2)
         self.assertIn('_cob_cierre in ("cobra", "cubierta")', cierre)
         self.assertIn("MADRE_SIN_FACTURA", F.fuente_constante("_OT_CIERRE_ACCIONES"))

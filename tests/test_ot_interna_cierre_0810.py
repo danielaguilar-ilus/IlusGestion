@@ -389,13 +389,21 @@ class TestRecorridoDeLaGarantiaAutorizada(unittest.TestCase):
         self.assertEqual(r["pasos"][0]["texto"], "Garantía: no se le cobra. Esperando a Daniel: solicitud N° 9 (la pidió Aarón Urbina).")
         self.assertEqual((r["resumen"]["estado"], r["resumen"]["titulo"]), ("espera", "Esperando a Daniel (solicitud N° 9)"))
 
-    def test_el_paso_2_se_llama_factura_y_dice_que_la_nota_de_venta_es_provisoria(self):
+    def test_el_paso_2_se_llama_factura_y_en_una_garantia_la_nota_de_venta_es_la_referencia(self):
+        # 2026-10-29 (Daniel, OT-241: «las garantías no deben quedar pidiendo factura»): esta OT es una garantía (no se cobra), así que la nota de
+        # venta es la REFERENCIA de la venta y el paso no queda en «falta». Lo que exige para cerrar es el $0 autorizado (aquí ya lo está).
         r, _ = self._r(auts=[self.AUT], docs=[self.NV])
         p2 = r["pasos"][1]
-        self.assertEqual((p2["titulo"], p2["estado"]), ("Factura", "falta"))
-        self.assertEqual(p2["texto"], "Solo hay nota de venta (Nota de venta N° VD00010667): es provisoria, falta la factura para poder cerrar.")
-        self.assertEqual((r["resumen"]["estado"], r["resumen"]["titulo"]), ("falta", "Falta la factura"))
-        self.assertEqual(r["resumen"]["faltan"], ["la factura"])
+        self.assertEqual((p2["titulo"], p2["estado"]), ("Factura", "no_aplica"))
+        self.assertEqual(p2["texto"], "Referencia de la venta: Nota de venta N° VD00010667. Esta OT no se cobra: no lleva factura.")
+        self.assertTrue(r["puerta"]["ok"])
+        self.assertNotIn("la factura", r["resumen"]["faltan"])
+        self.assertNotEqual(r["resumen"]["titulo"], "Falta la factura")
+        self.assertFalse(r["falta_factura"])
+        # sin la autorización del $0 sigue frenando, pero por el $0, nunca por una factura
+        sin_aut, _ = self._r(auts=[], docs=[self.NV], cobro_cero_autorizacion_id=None)
+        self.assertEqual(sin_aut["puerta"]["falta"], "autorizacion_cobro_cero")
+        self.assertNotIn("la factura", sin_aut["resumen"]["faltan"])
         ok, _ = self._r(auts=[self.AUT], docs=[self.FCV])
         self.assertEqual(ok["pasos"][1]["estado"], "hecho")
         self.assertEqual(ok["pasos"][1]["texto"], "Factura N° 11439 (referencia de la venta: esta OT no se cobra).")

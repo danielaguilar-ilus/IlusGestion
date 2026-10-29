@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+{% block title %}Finanzas por reparar · ILUS Fitness{% endblock %}
+
+{#
+  🛠️ 2026-10-29 (REGLA #56 — Daniel: «para no tener que corregir todo a mano… lo que diga la OT, eso es lo mismo para el anexo»).
+  Solo superadmin. Dos listas, las dos de SOLO LECTURA hasta que él toca un botón:
+    1) Documento declarado, cobro sin declarar  (OT-151, 152…)  ← GET /ot/api/finanzas/por-reparar
+    2) El costo de la OT no es igual al de su anexo  (OT-150, 158…)  ← GET /ot/api/anexos/vinculo-costos
+  Se repara en DOS pasos para no escribir nada a ciegas: «Revisar» (calcula y muestra, no cambia nada) y recién entonces «Tomar el cobro» /
+  «Alinear con el anexo», que llaman a los MISMOS caminos de siempre (los que validan contra Random, exigen el motivo y dejan el registro
+  con quién, cuándo y antes/después): aquí no se escribe nada por un camino nuevo.
+  Tabla como Etiquetas (REGLA #4.3): Mostrando A–B de N, N por página, Anterior / Página X de Y / Siguiente. «Seleccionar/deseleccionar todo»
+  es un interruptor (REGLA #14). Nombres completos, sin truncar (REGLA #15). Celular: tarjetas con botones de 44 px (REGLA #3).
+#}
+
+{% block content %}
+<style>
+.fr-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.fr-tab{display:inline-flex;align-items:center;gap:8px;border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:999px;
+  padding:8px 15px;font-size:.84rem;font-weight:800;min-height:44px;cursor:pointer}
+.fr-tab b{font-variant-numeric:tabular-nums;color:#dc2626}
+.fr-tab.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}.fr-tab.on b{color:#fff}
+.fr-nota{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;font-size:.84rem;color:#374151;margin:0 0 14px;line-height:1.5}
+.fr-nota b{color:#0a0a0a}
+.fr-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+.fr-bar input[type=search],.fr-bar select{font-size:16px;min-height:44px;border:1px solid #d1d5db;border-radius:9px;padding:0 12px;background:#fff}
+.fr-btn{min-height:44px;padding:0 16px;border-radius:9px;border:1px solid #d1d5db;background:#fff;color:#0a0a0a;font-weight:800;font-size:.84rem;
+  display:inline-flex;align-items:center;gap:7px;cursor:pointer}
+.fr-btn:disabled{opacity:.45;cursor:not-allowed}
+.fr-btn.dark{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.fr-btn.red{background:#dc2626;border-color:#dc2626;color:#fff}
+.fr-sel{font-size:.8rem;font-weight:800;color:#374151}
+.fr-prog{height:6px;border-radius:99px;background:#e5e7eb;overflow:hidden;margin:0 0 12px;display:none}
+.fr-prog i{display:block;height:100%;width:0;background:#16a34a;transition:width .2s}
+.fr-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
+.fr-t{width:100%;border-collapse:collapse;font-size:.86rem}
+.fr-t th{background:#0a0a0a;color:#fff;padding:10px 12px;text-align:left;font-size:.72rem;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+.fr-t td{padding:10px 12px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+.fr-t .n{text-align:right;font-variant-numeric:tabular-nums}
+.fr-t td.ck,.fr-t th.ck{width:44px;text-align:center}
+.fr-t input[type=checkbox]{width:20px;height:20px;accent-color:#dc2626}
+.fr-ot{font-weight:900;color:#0a0a0a;text-decoration:none;white-space:nowrap}.fr-ot:hover{color:#dc2626}
+.fr-sub{font-size:.72rem;color:#6b7280;margin-top:2px}
+.fr-doc{display:inline-block;background:#f3f4f6;border-radius:6px;padding:6px 12px;font-size:.76rem;font-weight:700;margin:0 6px 6px 0}
+.fr-est{display:inline-flex;align-items:flex-start;gap:6px;border-radius:8px;padding:8px 12px;font-size:.78rem;font-weight:700;line-height:1.35}
+.fr-est.nueva{background:#f3f4f6;color:#4b5563}
+.fr-est.revisando{background:#dbeafe;color:#1d4ed8}
+.fr-est.lista{background:#dcfce7;color:#166534}
+.fr-est.bloqueada{background:#fff8e1;color:#92400e}
+.fr-est.hecha{background:#dcfce7;color:#166534}
+.fr-est.error{background:#fee2e2;color:#991b1b}
+.fr-cifra{display:block;font-weight:800;color:#0a0a0a}
+.fr-cifra.dim{color:#6b7280;font-weight:600}
+.fr-pie{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px 4px}
+.fr-pie button{min-height:44px;padding:0 14px;border:1px solid #d1d5db;border-radius:9px;background:#fff;color:#0a0a0a;font-weight:800;font-size:.84rem;cursor:pointer}
+.fr-pie button:disabled{opacity:.4;cursor:not-allowed}
+.fr-vacio{padding:34px 16px;text-align:center;color:#6b7280}
+.fr-vacio i{font-size:1.6rem;color:#16a34a;display:block;margin-bottom:6px}
+@media (max-width:768px){
+  .fr-t thead{display:none}
+  .fr-t,.fr-t tbody,.fr-t tr,.fr-t td{display:block;width:100%}
+  .fr-t tr{border-bottom:8px solid #f3f4f6;padding:8px 4px}
+  .fr-t td{border:0;padding:4px 10px}.fr-t .n{text-align:left}
+  .fr-t td.ck{width:auto;text-align:left}
+  .fr-t td[data-k]::before{content:attr(data-k) ": ";font-size:.68rem;font-weight:800;text-transform:uppercase;color:#6b7280}
+  .fr-btn,.fr-tab{width:100%;justify-content:center}
+}
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-wrench-adjustable me-2"></i>Finanzas por reparar</h4>
+    <div class="sub">Las OT con el documento ya declarado pero el cobro en blanco, y las que tienen el costo distinto al de su anexo.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="/ot/finanzas-dudosas" class="btn btn-sm btn-outline-secondary"><i class="bi bi-cash-coin me-1"></i>OT con finanzas dudosas</a>
+    <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+  </div>
+</div>
+
+<div class="fr-nota" role="note">
+  <b>Cómo funciona.</b> Primero «Revisar»: calcula lo que corresponde leyendo el documento en Random (solo lectura) o el anexo, y <b>no cambia nada</b>.
+  Solo después, «Tomar el cobro» o «Alinear con el anexo» lo aplica por el mismo camino de siempre: queda en el registro de correcciones con tu nombre,
+  la hora y el motivo. Si un documento no se puede leer, no trae línea de servicio o su saldo ya lo usan otras OT, la OT queda en ámbar con el motivo y no se toca.
+  Un documento emitido a otra empresa (otro RUT) no se cuenta como cobro, pero no impide tomar el de los demás.
+</div>
+
+<div class="fr-tabs" role="tablist">
+  <button type="button" class="fr-tab on" data-tab="cobro" role="tab"><i class="bi bi-receipt"></i>Documento declarado, cobro sin declarar <b id="frN-cobro">…</b></button>
+  <button type="button" class="fr-tab" data-tab="anexo" role="tab"><i class="bi bi-file-earmark-text"></i>Costo de la OT distinto al anexo <b id="frN-anexo">…</b></button>
+</div>
+
+<div class="fr-bar">
+  <input type="search" id="frQ" placeholder="Buscar por N° de OT, cliente o documento" style="min-width:min(340px,100%)" aria-label="Buscar">
+  <select id="frPor" aria-label="OT por página">
+    <option value="25">25 por página</option><option value="50" selected>50 por página</option>
+    <option value="100">100 por página</option><option value="200">200 por página</option>
+  </select>
+  <button type="button" class="fr-btn" id="frTodo"><i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo</button>
+  <span class="fr-sel" id="frSel"></span>
+  <button type="button" class="fr-btn dark" id="frRevisarSel" disabled><i class="bi bi-search"></i>Revisar las seleccionadas</button>
+  <button type="button" class="fr-btn red" id="frAplicarListas" disabled><i class="bi bi-wrench-adjustable"></i>Aplicar las listas</button>
+  <button type="button" class="fr-btn" id="frRecargar"><i class="bi bi-arrow-clockwise"></i>Recargar</button>
+</div>
+<div class="fr-prog" id="frProg"><i></i></div>
+
+<div class="fr-wrap">
+  <table class="fr-t">
+    <thead id="frHead"></thead>
+    <tbody id="frBody"><tr><td colspan="6" class="fr-vacio">Cargando…</td></tr></tbody>
+  </table>
+</div>
+<div class="fr-pie" id="frPie"></div>
+
+<script>
+(function () {
+  'use strict';
+  var CFG = {
+    cobro: { url: '/ot/api/finanzas/por-reparar', clave: 'cobro_sin_declarar', verbo: 'Tomar el cobro', titulo: 'Tomar el cobro de los documentos',
+             vacio: 'Ninguna OT tiene un documento de cobro declarado con el cobro en blanco.' },
+    anexo: { url: '/ot/api/anexos/vinculo-costos', clave: 'por_corregir', verbo: 'Alinear con el anexo', titulo: 'Alinear el costo con el anexo',
+             vacio: 'El costo de todas las OT con anexo es igual al de su anexo.' }
+  };
+  var S = { tab: 'cobro', q: '', page: 1, por: 50, datos: { cobro: null, anexo: null }, sel: {}, res: {}, ocupado: false };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function clp(n) { return (n == null || isNaN(n)) ? 'sin declarar' : '$' + Math.round(n).toLocaleString('es-CL'); }
+  function toast(m, t) { try { if (window.ilusToast) return window.ilusToast(m, { type: t || 'info' }); } catch (e) {} }
+  function llave(f) { return S.tab + ':' + (S.tab === 'cobro' ? f.id : f.ot_id); }
+  function estadoDe(f) { return S.res[llave(f)] || { fase: 'nueva' }; }
+  function setRes(f, r) { S.res[llave(f)] = r; }
+
+  function filtradas() {
+    var lista = (S.datos[S.tab] || []), q = S.q.trim().toLowerCase();
+    if (!q) return lista;
+    return lista.filter(function (f) {
+      var h = S.tab === 'cobro' ? [f.numero, f.cliente, (f.documentos || []).join(' ')] : [f.ot, f.cliente, f.anexo];
+      return h.join(' ').toLowerCase().indexOf(q) >= 0;
+    });
+  }
+
+  async function pedir(url, opts) {
+    var r = await fetch(url, Object.assign({ credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } }, opts || {}));
+    var j = null;
+    try { j = await r.json(); } catch (e) {}
+    return { ok: r.ok && j && j.ok !== false, status: r.status, j: j || {} };
+  }
+
+  async function cargar() {
+    $('frBody').innerHTML = '<tr><td colspan="6" class="fr-vacio">Cargando…</td></tr>';
+    var pares = [['cobro', CFG.cobro], ['anexo', CFG.anexo]];
+    await Promise.all(pares.map(async function (p) {
+      try {
+        var r = await pedir(p[1].url);
+        S.datos[p[0]] = r.ok ? (r.j[p[1].clave] || []) : [];
+        if (!r.ok) toast((r.j && r.j.error) || 'No se pudo cargar una de las listas.', 'error');
+      } catch (e) { S.datos[p[0]] = []; toast('No se pudo cargar una de las listas.', 'error'); }
+      $('frN-' + p[0]).textContent = (S.datos[p[0]] || []).length;
+    }));
+    pintar();
+  }
+
+  function cabecera() {
+    if (S.tab === 'cobro')
+      return '<tr><th class="ck"></th><th>OT</th><th>Cliente</th><th>Documentos declarados</th><th>Estado</th><th></th></tr>';
+    return '<tr><th class="ck"></th><th>OT</th><th>Cliente</th><th>Costo de la OT · Anexo</th><th>Estado</th><th></th></tr>';
+  }
+
+  function celdaEstado(f) {
+    var e = estadoDe(f), ic = { nueva: 'bi-dash-circle', revisando: 'bi-hourglass-split', lista: 'bi-check-circle', bloqueada: 'bi-exclamation-triangle',
+                                hecha: 'bi-check-circle-fill', error: 'bi-x-circle' }[e.fase] || 'bi-dash-circle';
+    var txt = e.msg || ({ nueva: 'Sin revisar', revisando: 'Revisando…' }[e.fase] || '');
+    return '<span class="fr-est ' + e.fase + '"><i class="bi ' + ic + '"></i><span>' + esc(txt) + '</span></span>';
+  }
+
+  function celdaAccion(f) {
+    var e = estadoDe(f), k = esc(llave(f));
+    if (e.fase === 'revisando') return '<button class="fr-btn" disabled><i class="bi bi-hourglass-split"></i>Revisando…</button>';
+    if (e.fase === 'hecha') return '<a class="fr-btn" href="/ot/' + (S.tab === 'cobro' ? f.id : f.ot_id) + '"><i class="bi bi-box-arrow-up-right"></i>Abrir la OT</a>';
+    if (e.fase === 'lista') return '<button class="fr-btn red" data-act="aplicar" data-k="' + k + '"><i class="bi bi-wrench-adjustable"></i>' + CFG[S.tab].verbo + '</button>';
+    return '<button class="fr-btn" data-act="revisar" data-k="' + k + '"><i class="bi bi-search"></i>' + (e.fase === 'nueva' ? 'Revisar' : 'Revisar de nuevo') + '</button>';
+  }
+
+  function filaCobro(f) {
+    var docs = (f.documentos || []).map(function (d) { return '<span class="fr-doc">' + esc(d) + '</span>'; }).join('') || '<span class="fr-sub">—</span>';
+    var extra = (f.precio_anotado != null) ? '<span class="fr-cifra dim">Precio anotado (no cuenta como cobro): ' + clp(f.precio_anotado) + '</span>' : '';
+    return '<td data-k="Documentos">' + docs + extra + '</td>';
+  }
+
+  function filaAnexo(f) {
+    var costo = (f.costo_proveedor == null) ? null : (Number(f.costo_proveedor) || 0) + (Number(f.costo_despacho) || 0);
+    var parte = f.compartido ? ' · ' + (f.parte === 'salida' ? 'parte de la desinstalación' : 'parte de la instalación') : '';
+    return '<td data-k="Costo · Anexo"><span class="fr-cifra">La OT dice: ' + clp(costo) + '</span>' +
+           '<span class="fr-cifra">Anexo N° ' + esc(f.anexo) + ': ' + clp(f.total_anexo) + '</span>' +
+           '<span class="fr-sub">Anexo ' + esc(f.anexo_estado || '') + parte + '</span></td>';
+  }
+
+  function pintar() {
+    $('frHead').innerHTML = cabecera();
+    var todas = filtradas(), total = todas.length;
+    var paginas = Math.max(1, Math.ceil(total / S.por));
+    if (S.page > paginas) S.page = paginas;
+    var ini = (S.page - 1) * S.por, vis = todas.slice(ini, ini + S.por);
+    var h = '';
+    vis.forEach(function (f) {
+      var k = llave(f), id = S.tab === 'cobro' ? f.id : f.ot_id, num = S.tab === 'cobro' ? f.numero : f.ot, est = S.tab === 'cobro' ? f.estado : f.ot_estado;
+      h += '<tr><td class="ck"><input type="checkbox" data-sel="' + esc(k) + '"' + (S.sel[k] ? ' checked' : '') + ' aria-label="Seleccionar ' + esc(num) + '"></td>' +
+           '<td data-k="OT"><a class="fr-ot" href="/ot/' + id + '">' + esc(num) + '</a><div class="fr-sub">' + esc(String(est || '').replace(/_/g, ' ')) + '</div></td>' +
+           '<td data-k="Cliente">' + esc(f.cliente || '—') + '</td>' +
+           (S.tab === 'cobro' ? filaCobro(f) : filaAnexo(f)) +
+           '<td data-k="Estado">' + celdaEstado(f) + '</td><td>' + celdaAccion(f) + '</td></tr>';
+    });
+    if (!vis.length) {
+      var hay = (S.datos[S.tab] || []).length;
+      h = '<tr><td colspan="6" class="fr-vacio">' + (hay ? 'Ninguna OT coincide con la búsqueda.' : '<i class="bi bi-check-circle-fill"></i>' + esc(CFG[S.tab].vacio)) + '</td></tr>';
+    }
+    $('frBody').innerHTML = h;
+    var desde = total ? ini + 1 : 0, hasta = Math.min(S.page * S.por, total);
+    $('frPie').innerHTML = '<span>Mostrando ' + desde + '–' + hasta + ' de ' + total + '</span><div class="d-flex gap-2 align-items-center">' +
+      '<button type="button" data-pg="-1"' + (S.page <= 1 ? ' disabled' : '') + '>Anterior</button><span>Página ' + S.page + ' de ' + paginas + '</span>' +
+      '<button type="button" data-pg="1"' + (S.page >= paginas ? ' disabled' : '') + '>Siguiente</button></div>';
+    resumenSel();
+  }
+
+  function seleccionadas() { return filtradas().filter(function (f) { return S.sel[llave(f)]; }); }
+  function resumenSel() {
+    var s = seleccionadas(), listas = filtradas().filter(function (f) { return estadoDe(f).fase === 'lista'; });
+    $('frSel').textContent = s.length ? s.length + ' seleccionada' + (s.length === 1 ? '' : 's') : '';
+    $('frRevisarSel').disabled = S.ocupado || !s.length;
+    var l = listas.length;
+    $('frAplicarListas').disabled = S.ocupado || !l;
+    $('frAplicarListas').lastChild.textContent = l ? 'Aplicar las listas (' + l + ')' : 'Aplicar las listas';
+  }
+
+  /* ── Revisar: calcula y muestra; NO escribe nada ── */
+  async function revisarCobro(f) {
+    var r = await pedir('/ot/api/finanzas/' + f.id + '/correcciones');
+    if (!r.ok) return { fase: 'error', msg: (r.j && r.j.error) || 'No se pudo leer la OT.' };
+    var j = r.j, d = j.docs;
+    if (j.docs_error) return { fase: 'bloqueada', msg: 'Random no respondió al leer el documento. Inténtalo más tarde.' };
+    if (!d) return { fase: 'bloqueada', msg: 'La OT ya no tiene un documento de cobro declarado.' };
+    if (j.fin && j.fin.cobre && j.fin.cobre.hay) return { fase: 'hecha', msg: 'Ya tiene el cobro declarado (' + clp(j.fin.cobre.total) + ').' };
+    if (!j.cobra) return { fase: 'bloqueada', msg: 'Esta OT no se cobra (' + (j.cobertura || 'cobertura') + '): no corresponde tomar un cobro.' };
+    if (d.incompleto) return { fase: 'bloqueada', msg: 'Un documento no se pudo leer en Random. Revísalo en la OT.' };
+    if (!d.servicio || !d.servicio.hay_lineas) return { fase: 'bloqueada', msg: 'El documento no trae una línea de servicio (solo productos). Declara el cobro en la OT.' };
+    if ((d.servicio.saldo || 0) <= 0) return { fase: 'bloqueada', msg: 'El saldo de servicio de ese documento ya lo usan otras OT (' + clp(d.servicio.usado) + ' de ' + clp(d.servicio.total) + ').' };
+    var desp = (d.despacho && d.despacho.hay_lineas) ? (d.despacho.saldo || 0) : 0, total = d.servicio.saldo + desp;
+    var me = (j.fin && j.fin.me_cobraron) ? Number(j.fin.me_cobraron.total || 0) : null;
+    var queda = (me == null) ? '' : ' · me cobraron ' + clp(me) + ' · queda ' + clp(total - me);
+    // Un documento emitido a otra empresa no cuenta como cobro de esta OT, pero no impide tomar el de los demás: se dice.
+    if (d.otra_empresa && d.otra_empresa.length) queda += ' · no cuenta (otra empresa): ' + d.otra_empresa.join(', ');
+    return { fase: 'lista', servicio: d.servicio.saldo, despacho: desp, total: total,
+             msg: 'Cobraría ' + clp(total) + ' (servicio ' + clp(d.servicio.saldo) + (desp ? ' + despacho ' + clp(desp) : '') + ')' + queda };
+  }
+
+  async function revisarAnexo(f) {
+    var costo = (f.costo_proveedor == null) ? null : (Number(f.costo_proveedor) || 0) + (Number(f.costo_despacho) || 0);
+    if (f.abierta) return { fase: 'lista', msg: 'El costo de la OT pasaría de ' + clp(costo) + ' a ' + clp(f.total_anexo) + ' (el valor del anexo).' };
+    if (f.anexo_estado !== 'firmado') return { fase: 'bloqueada', msg: 'El Anexo N° ' + f.anexo + ' aún no está firmado: una OT cerrada solo se alinea con un anexo firmado.' };
+    var r = await pedir('/ot/api/' + f.ot_id + '/costo-desde-anexo/corregir', { method: 'POST', body: JSON.stringify({ simular: true }) });
+    if (!r.ok) return { fase: 'bloqueada', msg: (r.j && r.j.error) || 'No se pudo simular la corrección.' };
+    if (r.j.sin_cambios) return { fase: 'hecha', msg: 'El costo de la OT ya es igual al del anexo.' };
+    return { fase: 'lista', msg: 'Costo ' + clp(costo) + ' → ' + clp(f.total_anexo) + ' · la ganancia pasaría de ' + clp(r.j.ganancia_antes) + ' a ' + clp(r.j.ganancia_despues) + '.' };
+  }
+
+  async function revisar(f) {
+    setRes(f, { fase: 'revisando' }); pintar();
+    var r;
+    try { r = S.tab === 'cobro' ? await revisarCobro(f) : await revisarAnexo(f); }
+    catch (e) { r = { fase: 'error', msg: 'No se pudo revisar. Inténtalo de nuevo.' }; }
+    setRes(f, r);
+  }
+
+  /* ── Aplicar: los MISMOS caminos de siempre (validan, piden motivo y dejan el registro) ── */
+  async function aplicar(f) {
+    var e = estadoDe(f);
+    setRes(f, Object.assign({}, e, { fase: 'revisando', msg: 'Aplicando…' })); pintar();
+    var r;
+    try {
+      if (S.tab === 'cobro') {
+        var cuerpo = { zz_monto: e.servicio, desde_documentos: true,
+          motivo: 'Se toma el cobro de los documentos ya declarados en la OT (servicio ' + clp(e.servicio) + (e.despacho ? ' + despacho ' + clp(e.despacho) : '') +
+                  '), según el saldo de cada línea en Random. Reparación desde «Finanzas por reparar» (REGLA #56).' };
+        if (e.despacho) cuerpo.zz_envio_monto = e.despacho;
+        r = await pedir('/ot/api/finanzas/' + f.id + '/corregir', { method: 'POST', body: JSON.stringify(cuerpo) });
+        if (r.ok) setRes(f, { fase: 'hecha', msg: 'Cobro tomado: ' + clp(e.total) + '. Queda ' + clp(r.j.ganancia_despues) + '.' + (r.j.aviso_saldo ? ' Aviso: ' + r.j.aviso_saldo : '') });
+      } else if (f.abierta) {
+        r = await pedir('/ot/api/' + f.ot_id + '/costo-desde-anexo', { method: 'POST', body: '{}' });
+        if (r.ok) setRes(f, { fase: 'hecha', msg: r.j.mensaje || 'El costo quedó igual al anexo.' });
+      } else {
+        r = await pedir('/ot/api/' + f.ot_id + '/costo-desde-anexo/corregir', { method: 'POST', body: '{}' });
+        if (r.ok) setRes(f, { fase: 'hecha', msg: r.j.mensaje || 'El costo quedó igual al anexo.' });
+      }
+      if (!r.ok) setRes(f, { fase: 'error', msg: (r.j && r.j.error) || 'No se pudo aplicar.' });
+    } catch (x) { setRes(f, { fase: 'error', msg: 'No se pudo aplicar. Inténtalo de nuevo.' }); }
+  }
+
+  /* Cada proceso de Random tiene pocas conexiones: se trabaja de a 3, nunca todas a la vez. */
+  async function correr(lista, fn, etiqueta) {
+    if (!lista.length) return;
+    S.ocupado = true; resumenSel();
+    var barra = $('frProg'), paso = barra.firstElementChild, hechas = 0, i = 0;
+    barra.style.display = 'block'; paso.style.width = '0';
+    async function obrero() {
+      while (i < lista.length) {
+        var f = lista[i++];
+        await fn(f);
+        hechas++; paso.style.width = Math.round(hechas * 100 / lista.length) + '%';
+        pintar();
+      }
+    }
+    await Promise.all([obrero(), obrero(), obrero()]);
+    S.ocupado = false; barra.style.display = 'none'; pintar();
+    toast(etiqueta + ': ' + lista.length + ' OT procesada' + (lista.length === 1 ? '' : 's') + '.', 'success');
+  }
+
+  /* ── Eventos ── */
+  document.querySelectorAll('.fr-tab').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.fr-tab').forEach(function (x) { x.classList.toggle('on', x === b); });
+      S.tab = b.getAttribute('data-tab'); S.page = 1; pintar();
+    });
+  });
+  $('frQ').addEventListener('input', function () { S.q = this.value; S.page = 1; pintar(); });
+  $('frPor').addEventListener('change', function () { S.por = parseInt(this.value, 10) || 50; S.page = 1; pintar(); });
+  $('frRecargar').addEventListener('click', function () { S.sel = {}; S.res = {}; cargar(); });
+  $('frTodo').addEventListener('click', function () {
+    var lista = filtradas(), faltan = lista.some(function (f) { return !S.sel[llave(f)]; });
+    lista.forEach(function (f) { if (faltan) S.sel[llave(f)] = true; else delete S.sel[llave(f)]; });
+    pintar();
+  });
+  $('frBody').addEventListener('change', function (ev) {
+    var k = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-sel');
+    if (!k) return;
+    if (ev.target.checked) S.sel[k] = true; else delete S.sel[k];
+    resumenSel();
+  });
+  $('frBody').addEventListener('click', async function (ev) {
+    var b = ev.target.closest && ev.target.closest('button[data-act]');
+    if (!b || S.ocupado) return;
+    var k = b.getAttribute('data-k'), f = filtradas().find(function (x) { return llave(x) === k; });
+    if (!f) return;
+    if (b.getAttribute('data-act') === 'revisar') { await revisar(f); pintar(); return; }
+    var ok = await window.ilusConfirm({ title: CFG[S.tab].titulo, message: (S.tab === 'cobro' ? f.numero : f.ot) + ' · ' + (f.cliente || ''),
+      sub: estadoDe(f).msg + ' Queda registrado con tu nombre, la hora y el motivo.', okLabel: CFG[S.tab].verbo, cancelLabel: 'Cancelar', danger: false });
+    if (!ok) return;
+    await aplicar(f); pintar();
+  });
+  $('frPie').addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('button[data-pg]');
+    if (!b || b.disabled) return;
+    S.page += parseInt(b.getAttribute('data-pg'), 10); pintar();
+  });
+  $('frRevisarSel').addEventListener('click', async function () {
+    var s = seleccionadas();
+    if (s.length > 200) {
+      toast('Son ' + s.length + ' OT: se revisan las primeras 200 y luego sigues con el resto.', 'warning');
+      s = s.slice(0, 200);
+    }
+    await correr(s, revisar, 'Revisión');
+  });
+  $('frAplicarListas').addEventListener('click', async function () {
+    var listas = filtradas().filter(function (f) { return estadoDe(f).fase === 'lista'; });
+    if (!listas.length) return;
+    var total = 0;
+    if (S.tab === 'cobro') listas.forEach(function (f) { total += Number(estadoDe(f).total) || 0; });
+    var ok = await window.ilusConfirm({ title: CFG[S.tab].titulo + ' (' + listas.length + ' OT)',
+      message: S.tab === 'cobro' ? 'Se tomará el cobro de ' + listas.length + ' OT por un total de ' + clp(total) + '.'
+                                 : 'Se alineará el costo de ' + listas.length + ' OT con el de su anexo.',
+      sub: 'Cada cambio pasa por la corrección de siempre y queda registrado con tu nombre, la hora y el motivo. Las que estén en ámbar o con error no se tocan.',
+      okLabel: 'Aplicar', cancelLabel: 'Cancelar', danger: false });
+    if (!ok) return;
+    await correr(listas, aplicar, 'Reparación');
+  });
+
+  cargar();
+})();
+</script>
+{% endblock %}

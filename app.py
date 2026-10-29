@@ -97090,8 +97090,12 @@ def _ot_fin_docs_cobro(vid, cliente_id=None):
     puede cobrar otra vez), para ofrecerlo con un clic. Solo LEE (Random en solo lectura, REGLA #4.1); no escribe nada.
 
     Devuelve None si la OT no tiene documentos de cobro; si no, {documentos: [{titulo, leido, otro_cliente, omitido}],
-    servicio/despacho: {hay_lineas, total, usado, saldo}, sku_servicio, incompleto}. `incompleto` = algún documento no se pudo leer (o es
-    de otro RUT): en ese caso NO se ofrece tomar el cobro (jamás se calcula a ciegas)."""
+    servicio/despacho: {hay_lineas, total, usado, saldo}, sku_servicio, incompleto, otra_empresa}. `incompleto` = algún documento no se
+    pudo leer: en ese caso NO se ofrece tomar el cobro (jamás se calcula a ciegas).
+
+    2026-10-29 (Daniel, OT-2026-00190): un documento emitido a OTRA empresa (otro RUT) ya NO bloquea el cálculo de los demás: se sabe con
+    certeza que no cuenta (el saldo lo excluye) y se informa en `otra_empresa`. Antes, una boleta de otro RUT dejaba la OT sin poder tomar
+    el cobro de su factura buena y obligaba a escribirlo a mano."""
     docs = _ot_saldo_docs_de_ot(vid)
     if not docs:
         return None
@@ -97099,11 +97103,13 @@ def _ot_fin_docs_cobro(vid, cliente_id=None):
     if cliente_id:
         rut = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cliente_id,)) or {}).get("rut")
     s = _ot_saldo_de_docs(docs, excluir_vid=vid, cliente_rut=rut)
-    docs_out, sku, incompleto = [], None, False
+    docs_out, sku, incompleto, otras = [], None, False, []
     for i in s.get("por_doc") or []:
         leido, otro, omit = bool(i.get("leido", True)), bool(i.get("otro_cliente")), (i.get("omitido") or None)
-        if not leido or otro:
+        if not leido:
             incompleto = True
+        if otro and leido:
+            otras.append(i.get("titulo") or "")
         docs_out.append({"titulo": i.get("titulo") or "", "leido": leido, "otro_cliente": otro, "omitido": omit})
         if sku is None and leido and not otro and not omit:
             lineas = ((i.get("servicio") or {}).get("lineas") or [])
@@ -97117,7 +97123,78 @@ def _ot_fin_docs_cobro(vid, cliente_id=None):
                 "usado": int(x.get("usado") or 0), "saldo": int(x.get("saldo") or 0)}
 
     return {"documentos": docs_out, "servicio": _cat("servicio"), "despacho": _cat("despacho"),
-            "sku_servicio": sku, "incompleto": incompleto}
+            "sku_servicio": sku, "incompleto": incompleto, "otra_empresa": otras}
+
+
+def _ot_fin_anexo_vivo(vid):
+    """El anexo VIVO de la OT (borrador, enviado, visto, vencido o firmado): {numero, estado, firmado, total, items, compartido}; None si no
+    hay. Nunca lanza.
+
+    Daniel (2026-10-29): «si se modifica lo que me cobraron, ahí tenemos que modificar el anexo, y es peligroso: que tengamos restricciones; yo
+    puedo hacer de todo, pero a veces puedo pasar a llevar un anexo». Lo que se le paga al proveedor es UN solo valor (REGLA #34): lo fija su
+    anexo, y ni «Corregir finanzas» (superadmin) lo cambia por otro camino."""
+    try:
+        ax = _ot_anexo_vivo(vid)
+    except Exception as e:
+        print(f"[ot-fin-anexo] vid={vid}: {type(e).__name__}", flush=True)
+        return None
+    if not ax:
+        return None
+    return {"numero": ax["numero"], "estado": ax.get("estado") or "", "firmado": ax.get("estado") == "firmado", "total": int(ax["total"] or 0),
+            "items": ax["items"], "compartido": bool(ax.get("compartido"))}
+
+
+def _ot_fin_anexo_restriccion(ax, prov, desp):
+    """PURA. Si lo que la OT quedaría pagando (prov + desp) NO es igual al total de su anexo vivo, la restricción {numero, total, costo, firmado,
+    texto}; None si coincide o no hay anexo. `costo` es None cuando el costo quedaría sin declarar. Es la MISMA cuenta que usa el cierre
+    (ANEXO_DESACTUALIZADO) y que muestra la franja «Un solo valor»."""
+    if not ax:
+        return None
+    if _oac.estado(prov, desp, ax["items"]) == "alineado":
+        return None
+    suma = None if prov is None else int(round(float(prov or 0) + float(desp or 0)))
+    pagaria = "sin declarar" if suma is None else _oac.clp(suma)
+    cond = "firmado" if ax.get("firmado") else "vigente"
+    salida = ("Un anexo firmado no se modifica: si este es el valor correcto, hay que SUSTITUIR el anexo (emitir uno nuevo con el monto correcto y "
+              "firmarlo) y recién ahí la OT lo sigue."
+              if ax.get("firmado") else
+              "Corrige el monto en el anexo (aún no está firmado) y luego iguala la OT a su valor.")
+    return {"numero": ax["numero"], "total": ax["total"], "costo": suma, "firmado": bool(ax.get("firmado")),
+            "texto": (f"Lo que se le paga al proveedor es UN solo valor y lo fija el Anexo N° {ax['numero']} ({cond}, {_oac.clp(ax['total'])}). "
+                      f"Con este cambio la OT quedaría pagando {pagaria}: no se puede guardar. " + salida +
+                      " Si lo correcto es lo que dice el anexo, usa «Igualar la OT al anexo».")}
+
+
+def _ot_fin_registrar_automatico(vid, antes, motivo):
+    """Constancia en el registro inmutable de «Corregir finanzas» (mant_ot_finanzas_correcciones: antes / después / quién / cuándo / por qué)
+    de un cambio de finanzas que NO vino de ese modal sino de un camino automático (hoy: un documento que manda sobre un cobro escrito a
+    mano). `antes` = fila de _OT_FIN_SELECT leída ANTES de escribir. Best-effort: jamás rompe el camino que la llama."""
+    try:
+        despues = mysql_fetchone(_OT_FIN_SELECT, (vid,))
+        if not antes or not despues:
+            return
+
+        def _n(k, x):
+            if x is None:
+                return None
+            return int(round(float(x))) if k in ("zz_monto", "zz_envio_monto", "costo") else str(x)
+        a, d = {}, {}
+        for k in ("zz_monto", "zz_envio_monto", "costo", "zz_codigo", "valor_origen"):
+            av, dv = _n(k, antes.get(k)), _n(k, despues.get(k))
+            if av != dv:
+                a[k], d[k] = av, dv
+        if not d:
+            return
+        rep = _ot_fin_rep_de(vid)
+        mysql_execute(
+            "INSERT INTO mant_ot_finanzas_correcciones "
+            "(visita_id, numero_ot, usuario, motivo, antes_json, despues_json, ganancia_antes, ganancia_despues) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (vid, despues.get("numero_ot"), current_username() or "?", (motivo or "")[:500],
+             json.dumps(a, ensure_ascii=False), json.dumps(d, ensure_ascii=False),
+             _ot_fin_ganancia(antes, rep), _ot_fin_ganancia(despues, rep)))
+    except Exception as e:
+        print(f"[ot-fin-registro] vid={vid}: {type(e).__name__}", flush=True)
 
 
 def _ot_fin_corr_desde_docs(pide, nuevos, dc):
@@ -97182,6 +97259,19 @@ def ot2_api_finanzas_corregir(vid):
             cambios[k] = {"antes": (None if av is None else (int(av) if k != "centro_costo" else av)), "despues": nv}
     if not cambios:
         return _ot2_err("No hay nada que cambiar: los valores son iguales a los que ya tiene la OT.", "SIN_CAMBIOS")
+    # 🔒 2026-10-29 (Daniel: «si se modifica lo que me cobraron, ahí tenemos que modificar el anexo, y es peligroso: que tengamos restricciones. Yo
+    # puedo hacer de todo, pero a veces puedo pasar a llevar un anexo»): lo que se le paga al proveedor (costo_proveedor + costo_despacho) es UN solo
+    # valor y lo fija su anexo vivo (REGLA #34). «Corregir finanzas» tampoco lo cambia por otro camino: el resultado tiene que sumar EXACTAMENTE el
+    # total del anexo. Para cambiarlo: corregir el monto en el anexo (si no está firmado) o SUSTITUIR el anexo (si ya está firmado). Antes de esto el
+    # superadmin podía dejar la OT distinta de un anexo firmado sin que nada lo frenara. Igualar la OT al anexo siempre se puede.
+    if "costo_proveedor" in cambios or "costo_despacho" in cambios:
+        _p_res = nuevos["costo_proveedor"] if "costo_proveedor" in nuevos else v.get("costo_proveedor")
+        _d_res = nuevos["costo_despacho"] if "costo_despacho" in nuevos else v.get("costo_despacho")
+        _restr = _ot_fin_anexo_restriccion(_ot_fin_anexo_vivo(vid), _p_res, _d_res)
+        if _restr:
+            return jsonify({"ok": False, "error": _restr["texto"], "error_codigo": "COSTO_ES_DEL_ANEXO",
+                            "anexo": {"numero": _restr["numero"], "total": _restr["total"], "firmado": _restr["firmado"]},
+                            "acciones": (["sustituir_anexo", "igualar_al_anexo"] if _restr["firmado"] else ["editar_anexo", "igualar_al_anexo"])}), 409
     # 🧾 2026-10-29 (Daniel, OT-2026-00151): «tomar el cobro de los documentos». Si el modal pide el cobro que aportan los documentos ya
     # declarados, el SERVIDOR lo recalcula (con el saldo por línea) y, solo si el monto coincide exacto, lo rotula «línea del documento».
     _dc_corr = None
@@ -97332,9 +97422,24 @@ def ot2_api_finanzas_correcciones(vid):
     except Exception as _e_dcg:
         _docs_error = True
         print(f"[ot-fin-correcciones] documentos vid={vid}: {type(_e_dcg).__name__}", flush=True)
+    # 🔒 2026-10-29: el anexo VIVO fija lo que se le paga al proveedor: el modal bloquea esos dos casilleros y ofrece «Igualar la OT al anexo»
+    # con los montos que dejan la OT igual a él (la misma cuenta del botón «Usar el valor del anexo»).
+    _anx_info = None
+    _anx_vivo = _ot_fin_anexo_vivo(vid)
+    if _anx_vivo:
+        try:
+            _al = _oac.alinear(v.get("costo_proveedor"), v.get("costo_despacho"), _anx_vivo["items"])
+        except Exception:
+            _al = None
+        _igualar = ({"prov": int(round(_al["prov"])), "desp": (None if _al.get("desp") is None else int(round(_al["desp"])))}
+                    if (_al and not _al.get("conflicto") and _al.get("prov") is not None) else None)
+        _anx_info = {"numero": _anx_vivo["numero"], "total": _anx_vivo["total"], "firmado": _anx_vivo["firmado"], "estado": _anx_vivo["estado"],
+                     "alineado": _oac.estado(v.get("costo_proveedor"), v.get("costo_despacho"), _anx_vivo["items"]) == "alineado",
+                     "igualar": _igualar}
     return jsonify({
         "ok": True, "historial": out,
         "docs": _docs_cobro, "docs_error": _docs_error,
+        "anexo": _anx_info,
         "actual": {k: v.get(k) for k in (*_OT_FIN_CORR_CAMPOS, "centro_costo")},
         "ganancia": fin["queda"]["total"],
         # Misma regla de cobertura que todo el sistema (_ot_cobertura): antes había tres criterios distintos.
@@ -97454,6 +97559,85 @@ def ot2_finanzas_dudosas():
     return render_template("ot2/finanzas_dudosas.html", filas=vista, total=total, total_dudosas=total_dudosas,
                            revisadas=len(rows), resumen=sorted(resumen.items(), key=lambda kv: -kv[1]),
                            page=page, paginas=paginas, por=por, filtro=filtro, q=q)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🛠️ 2026-10-29 — «FINANZAS POR REPARAR» (REGLA #56, Daniel: «que se declaren los montos de cobro… para no inventar»)
+#  Las OT con un documento de cobro YA declarado pero con el cobro SIN declarar (OT-151, 152…), y las que tienen el anexo distinto a la OT
+#  (OT-150, 158…). La pantalla las lista y las repara una por una o en lote, por los MISMOS caminos que ya validan y dejan registro
+#  (`/ot/api/finanzas/<id>/corregir`, `/costo-desde-anexo`, `/costo-desde-anexo/corregir`): aquí no se escribe nada nuevo. Solo superadmin.
+# ═══════════════════════════════════════════════════════════════════════════
+_OT_FIN_REPARAR_LIMITE = 1500
+
+
+def _ot_fin_cobro_sin_declarar_cargar():
+    """Las OT (no canceladas ni anuladas) que SE COBRAN, tienen un documento de cobro declarado y NO tienen cobro declarado. Solo lectura:
+    no consulta a Random (lo que aporta cada documento se lee al reparar, uno por uno). [{id, numero, cliente, estado, tipo, documentos,
+    precio_anotado}]; `precio_anotado` es solo referencia (no es un cobro)."""
+    rows = mysql_fetchall(
+        "SELECT v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.zz_monto, v.zz_envio_monto, v.zz_codigo, v.costo, v.valor_origen, "
+        "       v.costo_proveedor, v.costo_despacho, v.centro_costo, v.modalidad_cobro, v.cubierto_por, v.proveedor_tipo, "
+        "       v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, v.factura_tido, v.factura_nudo, "
+        "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, " + _OT_FIN_SQL_MADRE_COLS + ", c.razon_social AS cliente "
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+        " WHERE LOWER(COALESCE(v.estado,'')) NOT IN ('cancelada','anulada') "
+        "   AND COALESCE(v.zz_monto,0)=0 AND COALESCE(v.zz_envio_monto,0)=0 "
+        "   AND (COALESCE(v.factura_nudo,'')<>'' OR EXISTS (SELECT 1 FROM mant_visita_documentos d WHERE d.visita_id=v.id AND d.origen='erp' "
+        "        AND d.es_cobro=1 AND d.reemplazado_por_id IS NULL AND d.heredado_de_visita_id IS NULL AND COALESCE(d.erp_nudo,'')<>'')) "
+        " ORDER BY v.id DESC LIMIT %s", (_OT_FIN_REPARAR_LIMITE,)) or []
+    out = []
+    for r in rows:
+        try:
+            fin = _ot_finanzas(r, None)
+        except Exception:
+            continue
+        if not fin.get("cobra") or (fin.get("cobre") or {}).get("hay"):
+            continue
+        out.append({"id": int(r["id"]), "numero": r.get("numero_ot") or f"VS-{int(r['id']):05d}", "cliente": r.get("cliente") or "—",
+                    "estado": (r.get("estado") or "").lower(), "tipo": r.get("tipo") or "",
+                    "precio_anotado": fin.get("precio_anotado"),
+                    "factura": (f"{(r.get('factura_tido') or '').strip()} {(r.get('factura_nudo') or '').strip().lstrip('0')}").strip()})
+    docs = {}
+    ids = [x["id"] for x in out]
+    for ini in range(0, len(ids), 500):
+        lote = ids[ini:ini + 500]
+        try:
+            for d in (mysql_fetchall(
+                    "SELECT visita_id, erp_tido, erp_nudo FROM mant_visita_documentos WHERE origen='erp' AND es_cobro=1 "
+                    "   AND reemplazado_por_id IS NULL AND heredado_de_visita_id IS NULL AND COALESCE(erp_nudo,'')<>'' "
+                    "   AND visita_id IN (" + ",".join(["%s"] * len(lote)) + ") ORDER BY es_principal DESC, id", tuple(lote)) or []):
+                docs.setdefault(int(d["visita_id"]), []).append(f"{(d.get('erp_tido') or '').strip()} {(d.get('erp_nudo') or '').strip().lstrip('0')}".strip())
+        except Exception as e:
+            print(f"[fin-reparar] documentos: {type(e).__name__}", flush=True)
+    for x in out:
+        x["documentos"] = docs.get(x["id"]) or ([x["factura"]] if x["factura"] else [])
+        x.pop("factura", None)
+    return out
+
+
+@app.route("/ot/api/finanzas/por-reparar", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_api_finanzas_por_reparar():
+    """Lista de OT con el cobro sin declarar teniendo documento. Solo superadmin y solo lectura."""
+    if not _ot_fin_es_superadmin():
+        return _ot2_err("Solo el superadministrador.", "SOLO_SUPERADMIN", 403)
+    try:
+        filas = _ot_fin_cobro_sin_declarar_cargar()
+    except Exception as e:
+        print(f"[fin-reparar] {type(e).__name__}", flush=True)
+        return _ot2_err("No se pudo armar la lista. Inténtalo de nuevo.", "ERROR_LISTA", 500)
+    return jsonify({"ok": True, "cobro_sin_declarar": filas, "tope": _OT_FIN_REPARAR_LIMITE})
+
+
+@app.route("/ot/finanzas-reparar", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot2_finanzas_reparar_pagina():
+    """Pantalla «Finanzas por reparar» (solo superadmin). Los datos los trae el navegador de las dos listas de solo lectura."""
+    if not _ot_fin_es_superadmin():
+        return _friendly_error_page("Sin acceso", "Esta pantalla es solo para el superadministrador.", 403)
+    return render_template("ot2/finanzas_reparar.html")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -99839,19 +100023,24 @@ def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_decla
             continue
         vistos.add(k)
         docs_ok.append(d)
+    # ¿La OT es un $0 (garantía, regalía, arriendo/leasing)? Se mira ANTES de la nota de venta: una OT que no se cobra no se factura.
+    motivo = (v.get("cobro_cero_motivo") or "").strip().lower()
+    es_cero = bool(motivo) or mod in ("garantia", "sin_costo") or cub == "garantia" or tipo == "garantia"
     tidos = {d["tido"] for d in docs_ok if d["origen"] == "erp" and d.get("es_cobro", True)}
     if tidos & set(_OT_DOCS_COBRO):
         return _ok("documento", documentos_ok=docs_ok)
     if tidos & set(_OT_DOCS_NOTA_VENTA):
         if momento == "crear" or _OT_PUERTA_NV_CIERRA:
             return _ok("nota_venta", nota_venta=True, estado_facturacion="con_nota_venta", documentos_ok=docs_ok)
-        return _no("factura", _OT_PUERTA_MSG_FACTURA)
+        # 🛡️ 2026-10-29 (Daniel, OT-2026-00241: «las garantías no deben quedar pidiendo factura»): una OT en $0 (garantía, regalía, arriendo/leasing)
+        # NO se factura: la nota de venta es la REFERENCIA de la venta que respalda la garantía. Antes la puerta se detenía aquí pidiendo la factura
+        # y nunca llegaba al $0 autorizado. Ahora sigue al paso 5: lo que exige es la autorización de Daniel del $0 (REGLA #24), no una factura.
+        if not es_cero:
+            return _no("factura", _OT_PUERTA_MSG_FACTURA)
     if momento == "crear" and any(d["origen"] == "cotizacion" for d in docs_ok):
         return _ok("cotizacion", documentos_ok=docs_ok)
 
     # 5) $0 (garantía, regalía, arriendo/leasing) con su autorización.
-    motivo = (v.get("cobro_cero_motivo") or "").strip().lower()
-    es_cero = bool(motivo) or mod in ("garantia", "sin_costo") or cub == "garantia" or tipo == "garantia"
     if es_cero:
         if motivo not in _OT_COBRO_CERO_MOTIVOS:
             motivo = "garantia" if (mod == "garantia" or cub == "garantia" or tipo == "garantia") else "regalia"
@@ -102403,6 +102592,11 @@ def ot_api_recorrido(vid):
         p2 = {"estado": "no_aplica", "texto": "El documento es el de su OT madre: esta OT no lleva uno propio"}
     elif via == "cero_madre":
         p2 = {"estado": "no_aplica", "texto": "Hereda el $0 autorizado de su instalación: no lleva documento propio"}
+    elif nv and cob != "cobra":
+        # 🛡️ 2026-10-29 (Daniel: «las garantías no deben quedar pidiendo factura»): una OT que no se cobra (garantía, regalía, arriendo/leasing,
+        # mantención de contrato) no se factura: la nota de venta es la referencia de la venta.
+        p2 = {"estado": "no_aplica", "texto": "Referencia de la venta: " + ", ".join(_doc_txt(x) for x in docs_nv)
+              + ". Esta OT no se cobra: no lleva factura."}
     elif nv:
         p2 = {"estado": "falta", "texto": "Solo hay nota de venta (" + ", ".join(_doc_txt(x) for x in docs_nv)
               + "): es provisoria, falta la factura para poder cerrar."}
@@ -102565,7 +102759,7 @@ def ot_api_recorrido(vid):
                        "argumento": v.get("cobro_cero_argumento"), "autorizacion_id": v.get("cobro_cero_autorizacion_id"),
                        "constancia": _const(aut_cero), "intencion": _cl_cero,
                        **_ot_intencion_campos(_cl_cero, v.get("centro_costo"))},
-        "estado_facturacion": v.get("estado_facturacion"), "falta_factura": nv and not cobro_doc,
+        "estado_facturacion": v.get("estado_facturacion"), "falta_factura": bool(nv and not cobro_doc and cob == "cobra"),
         "superadmin": _ot_aut_es_superadmin(), "motivos": [{"v": k, "n": n} for k, n in _OT_COBRO_CERO_MOTIVOS.items()],
         "perdida": perdida,
         # 🧩 2026-10-19: la cuenta CONJUNTA de la instalación y su desinstalación (None si la OT no tiene familia).
@@ -102743,7 +102937,9 @@ def ot_api_panorama(vid):
         v = mysql_fetchone(
             "SELECT v.id, v.numero_ot, v.estado, v.centro_costo, v.cliente_id, v.proveedor_tipo, v.costo_proveedor, "
             "       v.costo_despacho, v.zz_monto, v.zz_envio_monto, v.factura_asociada_por, v.estado_facturacion, "
-            "       c.razon_social AS cliente, "
+            "       c.razon_social AS cliente, v.cobro_cero_motivo, "
+            # 🛡️ 2026-10-29: lo que necesita la regla única de cobertura (_ot_cobertura) para saber si la OT se cobra.
+            "       " + _ot_fin_cols_sql("v") + ", "
             "       COALESCE(au.nombre, au.username) AS tecnico "
             "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
             "  LEFT JOIN app_users au ON au.id=v.tecnico_user_id WHERE v.id=%s", (vid,))
@@ -102816,7 +103012,15 @@ def ot_api_panorama(vid):
             infos_s.append(s_doc)
         contados_s = _saldo.marcar_omitidas(infos_s)
         comb_s = _saldo.combinar(contados_s)
-        cobro_s = {"servicio": _saldo._entero(v.get("zz_monto")), "despacho": _saldo._entero(v.get("zz_envio_monto"))}
+        # 🛡️ 2026-10-29 (OT-2026-00182, «Mantención de contrato · no se cobra»: salía la alarma roja «cobra más de lo que le queda a sus documentos»):
+        # una OT que NO se cobra (garantía, regalía, arriendo/leasing, contrato) no cobra nada de sus documentos: lo que quedó guardado en
+        # zz_monto de antes no es un cobro, así que no se compara con el saldo.
+        try:
+            _se_cobra_pan = _ot_cobertura(v) == "cobra"
+        except Exception:
+            _se_cobra_pan = True
+        cobro_s = ({"servicio": _saldo._entero(v.get("zz_monto")), "despacho": _saldo._entero(v.get("zz_envio_monto"))} if _se_cobra_pan
+                   else {"servicio": 0, "despacho": 0})
         ev_s = _saldo.evaluar_pedido(comb_s, cobro_s)
         cont["docs_con_servicio"] = sum(1 for s in infos_s if s["servicio"]["hay_lineas"])
         cont["docs_con_despacho"] = sum(1 for s in infos_s if s["despacho"]["hay_lineas"])
@@ -103229,8 +103433,8 @@ def ot_api_anexos_vinculo_costos():
         return jsonify({"ok": False, "error": "Solo el superadministrador.", "error_codigo": "SOLO_SUPERADMIN"}), 403
     filas = mysql_fetchall(
         "SELECT a.id AS anexo_id, a.numero, a.estado AS anexo_estado, a.precio_items_json, "
-        "       v.id AS vid, v.numero_ot, v.estado AS ot_estado, v.costo_proveedor, v.costo_despacho "
-        "  FROM mant_anexos a JOIN mant_visitas v ON v.id = a.ot_id "
+        "       v.id AS vid, v.numero_ot, v.estado AS ot_estado, v.costo_proveedor, v.costo_despacho, c.razon_social AS cliente "
+        "  FROM mant_anexos a JOIN mant_visitas v ON v.id = a.ot_id LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
         " WHERE COALESCE(a.estado,'') NOT IN ('rechazado','anulado') "
         "   AND a.id = (SELECT MAX(a2.id) FROM mant_anexos a2 WHERE a2.ot_id = a.ot_id "
         "                AND COALESCE(a2.estado,'') NOT IN ('rechazado','anulado')) "
@@ -103242,7 +103446,8 @@ def ot_api_anexos_vinculo_costos():
         cuenta[est] += 1
         if est == "alineado":
             return
-        out.append({"ot_id": vid, "ot": num, "ot_estado": ot_est,
+        out.append({"ot_id": vid, "ot": num, "ot_estado": ot_est, "cliente": r.get("cliente") or "",
+                    "abierta": (ot_est or "").strip().lower() not in _oac.ESTADOS_OT_CERRADOS,
                     "anexo": r.get("numero"), "anexo_estado": r.get("anexo_estado"), "total_anexo": _oac.total(items, rol),
                     "costo_proveedor": float(cprov) if cprov is not None else None,
                     "costo_despacho": float(cdesp) if cdesp is not None else None,
@@ -103592,7 +103797,7 @@ def ot2_api_documentos_agregar(vid):
 
     v = mysql_fetchone(
         "SELECT v.id, v.factura_tido, v.factura_nudo, v.estado_facturacion, "
-        "       v.zz_monto, v.zz_envio_monto, v.costo, v.zz_codigo, v.valor_origen, "
+        "       v.zz_monto, v.zz_envio_monto, v.costo, v.zz_codigo, v.valor_origen, v.zz_motivo_manual, "
         "       c.rut AS cli_rut, c.razon_social "
         "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
         " WHERE v.id=%s", (vid,))
@@ -103804,6 +104009,19 @@ def ot2_api_documentos_agregar(vid):
             _nv_e, _nv_c = float(_r_nv.get("e") or 0), int(_r_nv.get("c") or 0)
         except Exception as _e_nv:
             print(f"[ot_docs] aporte de notas de venta vid={vid}: {_e_nv}", flush=True)
+    # 🔏 2026-10-29 (Daniel, OT-2026-00190: «agregué la factura después de un valor a mano y no lo reconoce como cobro por la factura… que
+    # siempre predomine el valor del documento, a menos que yo lo autorice»). Un cobro ESCRITO A MANO (sin origen, «escrito a mano» sin motivo
+    # o un estimado) no es un cobro con respaldo: cuando llega un documento con líneas de servicio/despacho, el documento MANDA y reemplaza ese
+    # valor (con constancia). Si el cobro a mano lleva motivo (lo autorizó una persona), NO se toca: el documento queda de referencia y se avisa.
+    # El primer documento de la OT ya fijaba el valor; esto cubre el documento ADICIONAL (antes se SUMABA encima del valor a mano).
+    _origen_prev = (v.get("valor_origen") or "").strip().lower()
+    _cobro_prev = float(v.get("zz_monto") or 0) + float(v.get("zz_envio_monto") or 0)
+    _mano_autorizado = _origen_prev in ("manual", "supuesto") and bool((v.get("zz_motivo_manual") or "").strip())
+    _adicional_con_cobro = bool(_cobro_prev > 0 and not _es_primero and not _nv_c and _tipo_real in _OT_DOCS_COBRO
+                                and _zz_leido and _zz_total)
+    _doc_manda_sobre_mano = _adicional_con_cobro and _origen_prev in ("", "manual", "supuesto", "estimado") and not _mano_autorizado
+    _conserva_mano = _adicional_con_cobro and _mano_autorizado
+    _aporta = bool(_zz_leido and _zz_total and not _conserva_mano)     # lo que el documento SUMA al valor (queda registrado en su fila)
     # 🐛 2026-09-10: la fecha pasa por _erp_fecha_a_date (ver su docstring).
     # Antes iba `str(doc.get("fecha"))[:10]` y una fecha chilena del ERP
     # ('26/06/2026') hacía que MySQL rechazara el INSERT completo con un 500.
@@ -103828,8 +104046,8 @@ def ot2_api_documentos_agregar(vid):
              current_username(),
              # Solo si de verdad se sumó algo: NULL = no aportó al valor,
              # y así el "quitar" sabe que no tiene nada que restar.
-             _zz_serv if (_zz_leido and _zz_total) else None,
-             _zz_envio if (_zz_leido and _zz_total) else None,
+             _zz_serv if _aporta else None,
+             _zz_envio if _aporta else None,
              # 🔏 2026-10-07: para qué cuenta el documento (nota de venta = falta facturar).
              ("nota_venta" if _tipo_real in _OT_DOCS_NOTA_VENTA else "servicio")))
     except Exception as _e_ins:
@@ -103880,7 +104098,18 @@ def ot2_api_documentos_agregar(vid):
     _nom_doc = (f"{tipo} {numero}" if tipo in erp_engine.TIDO_NUDO_MAP
                 else f"{_tipo_real} {_numero_real}")
     _sumado = None
-    if _zz_leido and _zz_total:
+    _aviso_cobro = None
+    if _conserva_mano:
+        _aviso_cobro = (f"El cobro de esta OT está escrito a mano con motivo ({_ot_fin_clp(v.get('zz_monto'))} de servicio + "
+                        f"{_ot_fin_clp(v.get('zz_envio_monto'))} de despacho) y NO se tocó: {_nom_doc} queda como referencia. Si el documento "
+                        "debe mandar, usa «Corregir finanzas» → «Tomar el cobro de los documentos».")
+        try:
+            _mant_log("visita", vid, "documento_no_toco_cobro_a_mano",
+                      f"{_nom_doc} aporta servicio {_ot_fin_clp(_zz_serv)} + despacho {_ot_fin_clp(_zz_envio)}, pero el cobro de la OT está escrito "
+                      f"a mano con motivo y se conserva · por {current_username() or '?'}")
+        except Exception:
+            pass
+    if _aporta:
         _cod_serv = next((c for c in _zz_cods if c != "ZZENVIO"), None)
 
         def _clp(n):
@@ -103888,7 +104117,7 @@ def ot2_api_documentos_agregar(vid):
         # Bitácora ANTES de escribir (REGLA #5): el valor anterior queda.
         try:
             _mant_log("visita", vid, "valor_por_documento",
-                      f"{_nom_doc} {'fija' if _es_primero else 'suma'} ZZ: "
+                      f"{_nom_doc} {'fija' if _es_primero else ('manda sobre lo escrito a mano y fija' if _doc_manda_sobre_mano else 'suma')} ZZ: "
                       f"servicio {_clp(_zz_serv)} + despacho {_clp(_zz_envio)} "
                       f"({', '.join(_zz_cods)}) · antes: servicio "
                       f"{_clp(v.get('zz_monto'))}, despacho {_clp(v.get('zz_envio_monto'))}, "
@@ -103926,6 +104155,41 @@ def ot2_api_documentos_agregar(vid):
                     "  zz_codigo=COALESCE(NULLIF(zz_codigo,''), %s), valor_origen='zz' "
                     " WHERE id=%s",
                     (_zz_serv, _zz_envio, _zz_total, _cod_serv, vid))
+            elif _doc_manda_sobre_mano:
+                # 🔏 2026-10-29: el documento MANDA sobre el valor escrito a mano. El cobro pasa a ser EXACTAMENTE lo que aportan los documentos
+                # vivos de la OT (la suma de sus aportes registrados, incluido este): el valor a mano deja de existir, con constancia.
+                _antes_fila = mysql_fetchone(_OT_FIN_SELECT, (vid,))
+                _ap = mysql_fetchone(
+                    "SELECT COALESCE(SUM(zz_serv_monto),0) AS s, COALESCE(SUM(zz_envio_monto),0) AS e FROM mant_visita_documentos "
+                    " WHERE visita_id=%s AND origen='erp' AND reemplazado_por_id IS NULL AND heredado_de_visita_id IS NULL", (vid,)) or {}
+                _s_nuevo, _e_nuevo = int(round(float(_ap.get("s") or 0))), int(round(float(_ap.get("e") or 0)))
+                # Un documento manda SOLO sobre la categoría de la que habla: si trae servicio, reemplaza el servicio a mano; si trae despacho,
+                # el despacho. Lo que el documento no cubre NO se borra (sería perder plata sin que nadie lo decida): queda a la vista como
+                # «sin respaldo» para respaldarlo con otro documento o confirmarlo con su motivo.
+                _s_prev, _e_prev = int(round(float(v.get("zz_monto") or 0))), int(round(float(v.get("zz_envio_monto") or 0)))
+                _s_fin = _s_nuevo if _s_nuevo > 0 else _s_prev
+                _e_fin = _e_nuevo if _e_nuevo > 0 else _e_prev
+                _sin_resp = [n for n, nuevo, prev in (("servicio", _s_nuevo, _s_prev), ("despacho", _e_nuevo, _e_prev)) if nuevo <= 0 and prev > 0]
+                try:
+                    _mant_log("visita", vid, "valor_a_mano_reemplazado",
+                              f"{_nom_doc} manda: el cobro escrito a mano (servicio {_ot_fin_clp(_s_prev)} + despacho {_ot_fin_clp(_e_prev)}, "
+                              f"sin documento de respaldo) pasa a ser lo que aportan los documentos (servicio {_ot_fin_clp(_s_fin)} + despacho "
+                              f"{_ot_fin_clp(_e_fin)})" + (f"; sigue sin respaldo: {', '.join(_sin_resp)}" if _sin_resp else "")
+                              + f" · por {current_username() or '?'}")
+                except Exception:
+                    pass
+                mysql_execute(
+                    "UPDATE mant_visitas SET zz_monto=%s, zz_envio_monto=%s, "
+                    "  costo=CASE WHEN costo IS NULL OR costo=0 THEN costo ELSE %s END, "
+                    "  zz_codigo=COALESCE(%s, zz_codigo), valor_origen=CASE WHEN %s THEN 'zz' ELSE valor_origen END "
+                    " WHERE id=%s",
+                    (_s_fin, _e_fin, _s_fin + _e_fin, _cod_serv if _s_nuevo > 0 else None, 1 if _s_nuevo > 0 else 0, vid))
+                _ot_fin_registrar_automatico(
+                    vid, _antes_fila, f"El documento {_nom_doc} declara el cobro de la OT y reemplaza el valor escrito a mano "
+                                      "(el valor del documento manda, REGLA #56).")
+                if _sin_resp:
+                    _aviso_cobro = (f"{_nom_doc} declaró el cobro, pero el {' y el '.join(_sin_resp)} de la OT sigue escrito a mano, sin documento de "
+                                    "respaldo: agrega el documento de ese cobro o confírmalo con su motivo en «Corregir finanzas».")
             else:
                 mysql_execute(
                     "UPDATE mant_visitas SET "
@@ -103938,6 +104202,9 @@ def ot2_api_documentos_agregar(vid):
                     (_zz_serv, _zz_envio, _zz_total, _cod_serv, vid))
             _sumado = {"servicio": _zz_serv, "despacho": _zz_envio,
                        "codigos": _zz_cods, "reemplazo": _es_primero}
+            if _doc_manda_sobre_mano:
+                _sumado["reemplazo_manual"] = {"servicio": _s_prev if _s_nuevo > 0 else None,
+                                               "despacho": _e_prev if _e_nuevo > 0 else None}
         except Exception as e:
             print(f"[ot_docs] valor OT vid={vid}: {e}", flush=True)
         # 💰 2026-10-07 (integración fin-paso3) — con `costo` VACÍO, el documento le deja el «Precio al cliente» =
@@ -103960,7 +104227,7 @@ def ot2_api_documentos_agregar(vid):
     except Exception:
         pass
     return jsonify({"ok": True, "es_principal": _es_primero, "documento": _nom_doc,
-                    "zz_leido": _zz_leido, "sumado": _sumado,
+                    "zz_leido": _zz_leido, "sumado": _sumado, "aviso_cobro": _aviso_cobro,
                     **_ot_docs_listar(vid)})
 
 
@@ -132245,7 +132512,10 @@ def mant_ot_aprobar_cierre(vid):
     _via_cierre = ""
     # 🧩 2026-10-19: la desinstalación CUBIERTA tampoco pide documento propio (lo respalda la instalación, y la puerta de
     # cierre exige que la madre tenga su factura o boleta: MADRE_SIN_FACTURA).
-    _exenta_doc_cliente = _mod_cobro in ("garantia", "sin_costo") or _cob_cierre in ("contrato", "cubierta")
+    # 🛡️ 2026-10-29 (Daniel: «las garantías no deben quedar pidiendo factura»): ahora también la garantía marcada solo por cubierto_por/tipo, la regalía
+    # y el arriendo/leasing (todo lo que NO se cobra). Siguen exigiendo la autorización de Daniel del $0 (la puerta de cierre, REGLA #24).
+    _exenta_doc_cliente = (_mod_cobro in ("garantia", "sin_costo")
+                           or _cob_cierre in ("contrato", "cubierta", "garantia", "sin_costo", "regalia", "arriendo_leasing"))
     # 'interno' se exime igual que garantia/sin_costo: un trabajo interno de
     # ILUS no se factura a nadie, así que exigirle factura para firmar el
     # cierre lo dejaba trabado (Daniel 2026-08-08).

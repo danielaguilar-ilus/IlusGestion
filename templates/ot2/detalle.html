@@ -7757,6 +7757,8 @@ function otdIniciarRuta(app){
             <div class="col-6"><label class="form-label small fw-semibold mb-1">Costo del despacho ($)</label>
               <input type="text" inputmode="numeric" class="form-control" id="otdFc_costo_despacho" oninput="otdFinCorrCalc()"></div>
           </div>
+          {#- 🔏 2026-10-29 (Daniel: «si se modifica un anexo firmado, se debe sustituir el anexo»): avisa cuando lo que se le paga queda distinto del anexo firmado. -#}
+          <div class="otd-fc-docs nota mt-2" id="otdFcAnexoNota" role="status" hidden></div>
         </div>
         <div class="row g-2">
           <div class="col-12"><label class="form-label small fw-semibold mb-1">Valorizado ($)
@@ -7808,6 +7810,7 @@ function otdIniciarRuta(app){
 .otd-fc-docs:empty{display:none}
 .otd-fc-docs{margin:0 0 10px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;padding:10px 11px;font-size:.78rem;color:#14532d;line-height:1.5;overflow-wrap:anywhere}
 .otd-fc-docs.nota{border-color:#fde68a;background:#fff8e1;color:#92400e}
+.otd-fc-docs .dc-otra{margin-top:6px;padding:6px 9px;border-radius:8px;background:#fff8e1;border:1px solid #fde68a;color:#92400e;font-weight:700}
 .otd-fc-docs .dc-t{font-weight:800;margin-bottom:3px}
 .otd-fc-docs .dc-prev{margin-top:6px;padding:6px 9px;border-radius:8px;background:#fff;border:1px solid #bbf7d0;color:#111827;font-weight:700}
 .otd-fc-docs .dc-prev.neg{border-color:#fecaca;color:#991b1b}
@@ -7852,6 +7855,52 @@ var _otdFcBase = null, _otdFcRep = null, _otdFcSug = null, _otdFcNoServ = ['ZZRE
 var _otdFcPierde = null;   // 2026-10-07: la cuenta de cómo quedaría, si la corrección deja la OT sin cobro
 var _otdFcDocs = null, _otdFcDocsError = false;   // 2026-10-29: lo que aportan los documentos YA declarados (los manda /correcciones)
 var _otdFcFin = null;                             // la cuenta actual de la OT (la manda /correcciones): ¿se cobra?, ¿ya hay cobro declarado?
+var _otdFcAnexo = null;                           // 🔒 2026-10-29: el anexo VIVO de la OT {numero, total, firmado, igualar:{prov,desp}} (lo manda /correcciones)
+/* 🔒 Daniel (29-oct): «si se modifica lo que me cobraron, ahí tenemos que modificar el anexo, y es peligroso: que tengamos restricciones; yo puedo
+   hacer de todo, pero a veces puedo pasar a llevar un anexo». Con un anexo vivo, lo que se le paga al proveedor es UN solo valor (REGLA #34): los dos
+   casilleros quedan bloqueados y solo se pueden IGUALAR al anexo. Para cambiarlo de verdad: corregir el monto en el anexo (si no está firmado) o
+   sustituirlo (si está firmado). El servidor lo exige igual (COSTO_ES_DEL_ANEXO). */
+function _otdFcAnexoDifiere(){
+  var A = _otdFcAnexo; if (!A) return null;
+  var p = _otdFcNum('otdFc_costo_proveedor'), d = _otdFcNum('otdFc_costo_despacho');
+  if (p !== null && Math.abs((p + (d || 0)) - Number(A.total || 0)) <= 1) return null;
+  return {numero: A.numero, total: Number(A.total || 0), costo: (p === null ? null : p + (d || 0)), firmado: !!A.firmado};
+}
+function otdFinCorrAnexo(){
+  var box = document.getElementById('otdFcAnexoNota'); if (!box) return;
+  var A = _otdFcAnexo;
+  ['otdFc_costo_proveedor', 'otdFc_costo_despacho'].forEach(function(id){
+    var el = document.getElementById(id); if (!el) return;
+    el.readOnly = !!A;
+    el.title = A ? 'Lo fija el Anexo N° ' + A.numero + ' (' + (A.firmado ? 'firmado' : 'vigente') + '): no se cambia aquí' : '';
+  });
+  if (!A){ box.hidden = true; box.innerHTML = ''; box.className = 'otd-fc-docs nota mt-2'; return; }
+  var x = _otdFcAnexoDifiere();
+  box.hidden = false;
+  if (!x){
+    box.className = 'otd-fc-docs mt-2';
+    box.innerHTML = '<i class="bi bi-link-45deg"></i> <b>Un solo valor.</b> Lo que se le paga al proveedor es el del Anexo N° ' + _otdFcEsc(A.numero) +
+      ' (' + (A.firmado ? 'firmado' : 'vigente') + ', ' + _otdFcPlata(A.total) + '). Aquí no se cambia: para cambiarlo, ' +
+      (A.firmado ? 'hay que sustituir el anexo.' : 'corrige el monto en el anexo.');
+    return;
+  }
+  box.className = 'otd-fc-docs nota mt-2';
+  box.innerHTML = '<div class="dc-t"><i class="bi bi-file-earmark-lock2-fill"></i> La OT no coincide con su anexo</div>' +
+    'El Anexo N° ' + _otdFcEsc(x.numero) + ' (' + (x.firmado ? 'firmado' : 'vigente') + ') dice <b>' + _otdFcPlata(x.total) + '</b> y la OT paga <b>' +
+    (x.costo === null ? 'sin declarar' : _otdFcPlata(x.costo)) + '</b>. Lo que se le paga al proveedor es UN solo valor: ' +
+    (x.firmado ? 'un anexo firmado no se modifica; si el valor correcto es otro, hay que <b>sustituir el anexo</b>.'
+               : 'si el valor correcto es otro, corrige el monto en el anexo (aún no está firmado).') +
+    (A.igualar ? '<div class="dc-acc"><button type="button" class="dc-btn" onclick="otdFinCorrIgualarAnexo()"><i class="bi bi-link-45deg me-1"></i>Igualar la OT al anexo</button></div>' : '');
+}
+function otdFinCorrIgualarAnexo(){
+  var A = _otdFcAnexo; if (!A || !A.igualar) return;
+  document.getElementById('otdFc_costo_proveedor').value = String(A.igualar.prov);
+  if (A.igualar.desp !== null && A.igualar.desp !== undefined) document.getElementById('otdFc_costo_despacho').value = String(A.igualar.desp);
+  var mo = document.getElementById('otdFc_motivo');
+  if (mo && !(mo.value || '').trim()) mo.value = 'La OT queda igual al Anexo N° ' + A.numero + ' (' + _otdFcPlata(A.total) + '): lo que se le paga al proveedor es un solo valor.';
+  otdFinCorrCalc();
+  if (mo) mo.focus();
+}
 var _OTD_FC_CAMPOS = ['zz_monto', 'zz_envio_monto', 'costo_proveedor', 'costo_despacho', 'valorizado_clp'];
 /* 2026-10-07 (modelo único): ya NO hace su propia cuenta (antes: cobro 0 si era garantía, sin repuestos y
    sin mirar si el monto era un estimado o un ZZRETIRO). Pinta lo que devuelve la cuenta única del navegador
@@ -7902,6 +7951,7 @@ function otdFinCorrCalc(){
     if (_otdFcPierde && window.otdFinPierdeCobroHtml) av.innerHTML = window.otdFinPierdeCobroHtml(r, _otdFcEsc);
   }
   otdFinCorrDocs();   // 2026-10-29: el bloque de documentos se repinta con lo que hay escrito (¿ya está tomado?, ¿con qué margen quedaría?)
+  otdFinCorrAnexo();  // 🔏 2026-10-29: ¿lo que se le paga queda distinto de su anexo firmado?
 }
 /* 🧾 2026-10-29 (Daniel, OT-2026-00151: «el documento que ya declaré todavía no lo toma… me pide hacerlo a mano, lo que es peligroso»):
    los documentos de cobro YA declarados en la OT, lo que aportan (servicio + despacho, con el saldo que otras OT no usan) y un clic
@@ -7921,7 +7971,13 @@ function _otdFcDocsGuardado(){
   return !!_otdFcDocs && !_otdFcDocs.incompleto && m.s > 0 && n('zz_monto') === m.s && n('zz_envio_monto') === m.e;
 }
 function _otdFcDocsTitulos(){
-  return ((_otdFcDocs && _otdFcDocs.documentos) || []).filter(function(d){ return !d.omitido && d.titulo; }).map(function(d){ return d.titulo; });
+  return ((_otdFcDocs && _otdFcDocs.documentos) || []).filter(function(d){ return !d.omitido && !d.otro_cliente && d.titulo; }).map(function(d){ return d.titulo; });
+}
+/* 2026-10-29 (OT-2026-00190): un documento emitido a OTRA empresa no se cuenta como cobro de esta OT, pero tampoco bloquea a los demás: se avisa. */
+function _otdFcDocsOtraEmpresa(){
+  var o = (_otdFcDocs && _otdFcDocs.otra_empresa) || [];
+  return o.length ? '<div class="dc-otra"><i class="bi bi-exclamation-triangle-fill"></i> ' + o.map(_otdFcEsc).join(' · ') +
+    ' está emitido a otra empresa (otro RUT): no se cuenta como cobro de esta OT.</div>' : '';
 }
 function otdFinCorrDocs(){
   var box = document.getElementById('otdFcDocs'); if (!box) return;
@@ -7939,14 +7995,14 @@ function otdFinCorrDocs(){
   var agregar = '<button type="button" class="dc-btn sec" onclick="otdFinCorrAgregarDoc()">Agregar otro documento</button>';
   if (D.incompleto){
     box.className = 'otd-fc-docs nota';
-    box.innerHTML = '<div class="dc-t">Documentos de esta OT: ' + _otdFcEsc(tit.join(' · ') || 'sin leer') + '</div>Random no entregó las líneas de alguno de ellos (o es de otro cliente): ' +
-      'no calculo el cobro a ciegas. Reintenta en un momento o escríbelo a mano con su motivo.<div class="dc-acc">' + agregar + '</div>';
+    box.innerHTML = '<div class="dc-t">Documentos de esta OT: ' + _otdFcEsc(tit.join(' · ') || 'sin leer') + '</div>Random no entregó las líneas de alguno de ellos: ' +
+      'no calculo el cobro a ciegas. Reintenta en un momento o escríbelo a mano con su motivo.' + _otdFcDocsOtraEmpresa() + '<div class="dc-acc">' + agregar + '</div>';
     return;
   }
   if (!m.s && !m.e){
     box.className = 'otd-fc-docs nota';
-    box.innerHTML = '<div class="dc-t">Documentos de esta OT: ' + _otdFcEsc(tit.join(' · ')) + '</div>No traen líneas de servicio ni de despacho con saldo (o otras OT ya las usan por completo): ' +
-      'no hay cobro que tomar de ahí.<div class="dc-acc">' + agregar + '</div>';
+    box.innerHTML = '<div class="dc-t">Documentos de esta OT: ' + _otdFcEsc(tit.join(' · ') || 'ninguno cuenta') + '</div>No traen líneas de servicio ni de despacho con saldo (o otras OT ya las usan por completo): ' +
+      'no hay cobro que tomar de ahí.' + _otdFcDocsOtraEmpresa() + '<div class="dc-acc">' + agregar + '</div>';
     return;
   }
   var usado = (S.usado || 0) + (E.usado || 0);
@@ -7972,6 +8028,13 @@ function otdFinCorrDocs(){
     ? (_otdFcDocsGuardado() ? '<span class="dc-ok"><i class="bi bi-check-circle-fill"></i> Ya está tomado de los documentos</span>'
                             : '<span class="dc-pre"><i class="bi bi-magic"></i> Prellenado con lo que aportan los documentos: revisa y presiona «Guardar corrección».</span>')
     : '<button type="button" class="dc-btn" onclick="otdFinCorrTomarDocs()"><i class="bi bi-magic me-1"></i>Tomar el cobro de los documentos</button>';
+  // 2026-10-29: si lo que hoy está guardado como cobro NO viene de un documento («declarado» o escrito a mano) y los documentos dicen otra cosa, se dice claro.
+  var fte = (_otdFcFin && _otdFcFin.cobre && _otdFcFin.cobre.fuente) || '';
+  if (!_otdFcDocsGuardado() && _otdFcFin && _otdFcFin.cobre && _otdFcFin.cobre.hay && (fte === 'declarado' || fte === 'escrito a mano')){
+    html += '<div class="dc-otra"><i class="bi bi-exclamation-triangle-fill"></i> El cobro guardado hoy (' + _otdFcPlata(_otdFcFin.cobre.total) +
+      ') está escrito sin documento de respaldo. El que manda es el del documento: toma el de arriba, o déjalo a mano con tu motivo.</div>';
+  }
+  html += _otdFcDocsOtraEmpresa();
   html += '<div class="dc-acc">' + estado + agregar + '</div>';
   box.innerHTML = html;
 }
@@ -8071,7 +8134,7 @@ function otdFinCorrUsarAnotado(n){
 async function otdFinCorrAbrir(){
   document.getElementById('otdFcErr').textContent = '';
   document.getElementById('otdFc_motivo').value = '';
-  _otdFcDocs = null; _otdFcDocsError = false; _otdFcFin = null;      // 2026-10-29: se vuelven a leer los documentos cada vez que se abre
+  _otdFcDocs = null; _otdFcDocsError = false; _otdFcFin = null; _otdFcAnexo = null;      // 2026-10-29: se vuelven a leer los documentos cada vez que se abre
   bootstrap.Modal.getOrCreateInstance(document.getElementById('otdModalFinCorr')).show();
   try {
     var r = await fetch('/ot/api/finanzas/' + OTD_VID + '/correcciones', {credentials:'same-origin', cache:'no-store'});
@@ -8082,7 +8145,7 @@ async function otdFinCorrAbrir(){
     _otdFcBase = j.base || null;
     _otdFcRep = j.rep || null;
     _otdFcSug = j.zz_sugerida || null;
-    _otdFcDocs = j.docs || null; _otdFcDocsError = !!j.docs_error; _otdFcFin = j.fin || null;
+    _otdFcDocs = j.docs || null; _otdFcDocsError = !!j.docs_error; _otdFcFin = j.fin || null; _otdFcAnexo = j.anexo || null;
     if (Array.isArray(j.zz_no_servicio)) _otdFcNoServ = j.zz_no_servicio;
     _OTD_FC_CAMPOS.forEach(function(k){
       document.getElementById('otdFc_' + k).value = (a[k] === null || a[k] === undefined) ? '' : String(Math.round(Number(a[k])));
@@ -13923,9 +13986,20 @@ async function otdDocAgregar(tipoDirecto, numDirecto){
       const _ok = window.otdFinRefrescarCobro ? window.otdFinRefrescarCobro(d) : false;
       if (!_ok){ location.reload(); return; }
       if (window.otdFinDestellar) window.otdFinDestellar(_sumaTxt, false);
-      ilusToast('✓ ' + (d.documento || 'Documento') + ' sumado: ' + fmt(d.sumado.servicio) +
-                ' instalación / mantención + ' + fmt(d.sumado.despacho) + ' envío. ' +
-                'Los productos no suman.', {type: 'success'});
+      if (d.sumado.reemplazo_manual){
+        // 🔏 2026-10-29: el documento mandó sobre un cobro escrito a mano: se dice qué valor dejó de existir.
+        var _rm = d.sumado.reemplazo_manual;
+        ilusToast('✓ ' + (d.documento || 'Documento') + ' declara el cobro: reemplazó el valor escrito a mano' +
+                  (_rm.servicio != null ? ' (servicio ' + fmt(_rm.servicio) + ')' : '') + (_rm.despacho != null ? ' (despacho ' + fmt(_rm.despacho) + ')' : '') +
+                  '. Ahora es ' + fmt(d.sumado.servicio) + ' de servicio + ' + fmt(d.sumado.despacho) + ' de despacho, según el documento.', {type: 'success'});
+      } else {
+        ilusToast('✓ ' + (d.documento || 'Documento') + ' sumado: ' + fmt(d.sumado.servicio) +
+                  ' instalación / mantención + ' + fmt(d.sumado.despacho) + ' envío. ' +
+                  'Los productos no suman.', {type: 'success'});
+      }
+      if (d.aviso_cobro) ilusToast(d.aviso_cobro, {type: 'warning'});
+    } else if (d.aviso_cobro){
+      ilusToast('✓ ' + (d.documento || 'Documento') + ' asociado. ' + d.aviso_cobro, {type: 'warning'});
     } else if (d.zz_leido === false){
       ilusToast('✓ ' + (d.documento || 'Documento') + ' asociado, pero no se pudieron leer sus líneas ZZ: ' +
                 'revisa lo que se cobra en el Paso 1.', {type:'warning'});

@@ -403,6 +403,9 @@
   /* Lo que ESTE documento aporta al cobro (servicio + despacho), o por qué no suma. 2026-10-08 (Daniel: «los
      servicios por factura»): cada documento es un bloque con sus líneas y lo que aporta. */
   function sumaMontos(arr) { var t = 0; (arr || []).forEach(function (l) { t += Number(l.monto) || 0; }); return t; }
+  /* 2026-10-29 (Daniel, OT-2026-00241: «las garantías no deben quedar pidiendo factura»): en una OT que NO se cobra (garantía, regalía, arriendo/leasing,
+     contrato) la nota de venta no es una «promesa de cobro»: es la REFERENCIA de la venta. Lo fija htmlDocs() con la cuenta de la OT. */
+  var _noSeCobra = false;
   function aporteDoc(d) {
     if (d.dada_de_baja_por) return { cls: 'no', txt: 'No suma: la factura que la reemplaza ya cobra' };
     /* 2026-10-27 (OT-2026-00220): una nota de venta cuya factura o boleta TAMBIÉN está en la OT es el mismo cobro (el saldo ya la
@@ -414,7 +417,8 @@
     if (d.lineas) { s = sumaMontos(d.lineas.servicio); e = sumaMontos(d.lineas.despacho); }
     if (!s && !e) { s = d.zz_serv; e = d.zz_envio; }
     if (!s && !e) {
-      if (d.categoria === 'nota_venta') return { cls: 'nv', txt: 'Promesa de cobro: falta la factura' };
+      if (d.categoria === 'nota_venta') return _noSeCobra ? { cls: 'no', txt: 'Referencia de la venta: esta OT no se cobra, no lleva factura' }
+                                                         : { cls: 'nv', txt: 'Promesa de cobro: falta la factura' };
       return { cls: 'no', txt: 'No trae líneas de servicio ni despacho' };
     }
     return { cls: 'si', total: (s || 0) + (e || 0), txt: 'Aporta al cobro: servicio ' + clp(s || 0) + ' + despacho ' + clp(e || 0) + ' = ' + clp((s || 0) + (e || 0)) };
@@ -506,7 +510,7 @@
   }
   function cuentaTxt(d) {
     return { servicio: 'Cobro del servicio', despacho: 'Cobro del despacho',
-      nota_venta: 'Nota de venta: promesa de cobro', cotizacion: 'Cotización: solo referencia',
+      nota_venta: _noSeCobra ? 'Nota de venta: referencia de la venta' : 'Nota de venta: promesa de cobro', cotizacion: 'Cotización: solo referencia',
       referencia_garantia: 'Referencia de la garantía: no se cobra',
       otros: 'Factura de productos u otros: no es del servicio' }[d.cuenta] || (d.es_cobro ? 'Documento de cobro' : 'Referencia');
   }
@@ -534,6 +538,7 @@
     /* 2026-10-08 (revisión): el «Cobré» de la OT sale de lo declarado (zz_monto / despacho), no de las líneas leídas en
        Random. Si no coinciden, se dice: dos números distintos en la misma pantalla sin explicación confunden. */
     var fin = (inst.rec && inst.rec.fin) || null, sumaAp = 0, hayAp = false;
+    _noSeCobra = !!(fin && fin.cobra === false);
     docs.forEach(function (d) { var a = aporteDoc(d); if (a.total !== undefined) { sumaAp += a.total; hayAp = true; } });
     if (fin && fin.cobra && fin.cobre && hayAp && Math.abs(sumaAp - (fin.cobre.hay ? Number(fin.cobre.total) || 0 : 0)) >= 1) {
       h += '<div class="fm-aviso"><i class="bi bi-exclamation-triangle-fill"></i> Las líneas de los documentos suman ' + clp(sumaAp) +

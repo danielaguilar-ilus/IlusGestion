@@ -1074,6 +1074,10 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
     <a href="{{ url_for('ot_gerencial_pagina') }}" class="ot2-sa-btn">
       <i class="bi bi-bullseye"></i><span>Costeo de OT</span>
     </a>
+    {# 🛠️ REGLA #56: documento declarado sin cobro, y anexo distinto a la OT: reparación por OT y en lote #}
+    <a href="{{ url_for('ot2_finanzas_reparar_pagina') }}" class="ot2-sa-btn">
+      <i class="bi bi-wrench-adjustable"></i><span>Finanzas por reparar</span>
+    </a>
     {# 📜 REGLA #52: anexos anulados (también los huérfanos de una OT eliminada) y «Reenviar aviso» #}
     <a href="{{ url_for('ot2_anexos_anulados_pagina') }}" class="ot2-sa-btn">
       <i class="bi bi-file-earmark-x"></i><span>Anexos anulados</span>
