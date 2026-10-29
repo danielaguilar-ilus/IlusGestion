@@ -68950,6 +68950,11 @@ INC_HALLAZGO_INFO = {
         "ayuda": "Está físicamente en la Bodega 13 del WMS pero no tiene "
                  "una incidencia registrada en nuestro sistema todavía.",
     },
+    "asignar_ua": {
+        "label": "Asignar UA de Check", "accion": "ver",
+        "ayuda": "La incidencia no tiene UA y Check ya tiene una UA libre de ese producto en la Bodega 13: asígnasela para que Check y nuestra base "
+                 "hablen de la misma unidad.",
+    },
     "fuera_de_bodega": {
         "label": "Salió de la bodega", "accion": "ver",
         "ayuda": "La incidencia sigue abierta acá, pero la UA ya no está "
@@ -68991,12 +68996,16 @@ def _inc_unidades_hallazgo(h, incs, repetible):
 
     Daniel (28-oct): «la idea de esta bodega es separar: 90 pisos van en una línea, pero 2 máquinas van separadas porque cada una tiene un motivo
     distinto. Necesito que al abrir la diferencia me diga: esta tiene motivo, esta tiene motivo, falta agregar uno».
-    `incs` = las incidencias abiertas de ese SKU [{id, ua, motivo, cantidad, ubicacion}]. `repetible` = el producto se puede agrupar (pisos,
-    accesorios). Devuelve {"tarjetas": [...], "faltan": n, "sobran": n, "unidades": n, "con_motivo": n}; cada tarjeta lleva su `clase`:
+    29-oct (ILUS Rower Pro: el ERP la tiene en la bodega 13 y Check no): «si en la bodega 13 está y en Check no está, hay que hacer un ingreso en Check; y si
+    en nuestra bodega tampoco está, hay que hacer un ingreso y declarar motivo, pedir repuesto y toda la gestión».
+    `incs` = las incidencias abiertas de ese SKU [{id, ua, motivo, cantidad, ubicacion}]. `repetible` = el producto se puede agrupar (pisos, accesorios).
+    Devuelve {"tarjetas": [...], "faltan": n, "sobran": n, "unidades": n, "con_motivo": n, "sin_check": n}; cada tarjeta lleva su `clase`:
       · «incidencia»        una incidencia ya registrada (con `con_motivo` True/False: el motivo debe tener al menos 10 caracteres);
       · «libre»             una UA que Check tiene en la Bodega 13 y que no tiene incidencia: falta agregarla (un equipo = una línea por UA);
       · «faltan_repetible»  un producto repetible al que le faltan N unidades: se registra en UNA línea con la cantidad;
-      · «sin_ua»            faltan unidades pero Check no tiene otra UA libre que proponer (hay que separarlas en Check)."""
+      · «sin_ua»            faltan unidades, Check las tiene pero no hay otra UA libre que proponer (hay que separarlas en Check);
+      · «falta_check»       el ERP las tiene en la Bodega 13, Check NO, y nosotros tampoco las declaramos: hay que pedir el ingreso en Check Y registrarlas;
+      · «check_pendiente»   ya las declaramos, pero Check todavía no las tiene: solo falta el ingreso en Check."""
     tarjetas, con_motivo, declaradas = [], 0, 0
     for i in incs or []:
         try:
@@ -69015,17 +69024,37 @@ def _inc_unidades_hallazgo(h, incs, repetible):
         dif = 0
     faltan = int(round(dif)) if dif > 0.001 else 0
     sobran = int(round(-dif)) if dif < -0.001 else 0
+    # Diferencias de UA (Daniel, 29-oct: «también tiene que identificar diferencias de la UA, si corresponde que se gestione una UA en el WMS»): una incidencia
+    # SIN UA (declarada mientras Check no ingresaba la unidad) se cruza con las UA libres que Check ya tiene de ese SKU: se le sugiere la UA que le toca.
     libres = list(h.get("uas_libres") or [])
+    por_asignar = 0
+    for c, u in zip([c for c in tarjetas if c["clase"] == "incidencia" and not c.get("ua")], libres):
+        c["ua_sugerida"], c["ubicacion_sugerida"] = u.get("ua"), u.get("ubicacion")
+        por_asignar += 1
+    libres = libres[por_asignar:]
+    # lo que el ERP tiene en la Bodega 13 y Check NO tiene (ni siquiera sin UA): hay que hacer el ingreso en Check
+    try:
+        sin_check = max(0, int(round(float(h.get("erp")) - float(h.get("wms") or 0)))) if h.get("erp") is not None else 0
+    except (TypeError, ValueError):
+        sin_check = 0
+    falta_check = min(faltan, sin_check) if h.get("tipo") == "dif_erp" else 0     # sin declarar Y ausentes de Check
+    en_check = faltan - falta_check                                                # sin declarar pero Check sí las tiene
     if faltan and repetible:
         primera = libres[0] if libres else {}
         tarjetas.append({"clase": "faltan_repetible", "cantidad": faltan, "ua": primera.get("ua"), "ubicacion": primera.get("ubicacion")})
-    elif faltan:
-        for u in libres[:faltan]:
+    else:
+        for u in libres[:en_check]:
             tarjetas.append({"clase": "libre", "ua": u.get("ua"), "ubicacion": u.get("ubicacion"), "cantidad": 1})
-        resto = faltan - min(len(libres), faltan)
+        resto = en_check - min(len(libres), en_check)
         if resto:
             tarjetas.append({"clase": "sin_ua", "cantidad": resto})
-    return {"tarjetas": tarjetas, "faltan": faltan, "sobran": sobran, "unidades": declaradas + faltan, "con_motivo": con_motivo}
+        if falta_check:
+            tarjetas.append({"clase": "falta_check", "cantidad": falta_check, "ua": None, "ubicacion": None})
+    pendientes = sin_check if repetible else sin_check - falta_check
+    if pendientes > 0:
+        tarjetas.append({"clase": "check_pendiente", "cantidad": pendientes, "ua": None, "ubicacion": None})
+    return {"tarjetas": tarjetas, "faltan": faltan, "sobran": sobran, "unidades": declaradas + faltan, "con_motivo": con_motivo,
+            "sin_check": sin_check, "por_asignar": por_asignar}
 
 
 def _inc_consolidar_por_sku(hallazgos):
@@ -69649,7 +69678,12 @@ def _inc_calcular_hallazgos(forzar=False):
             reg = inc_por_sku.get(sku, {}).get("cant", 0)
             w = wms_por_sku.get(sku)
             if w is None:
-                continue
+                # 2026-10-29 (Daniel, ILUS Rower Pro: «si en la bodega 13 está —en el ERP— y en Check no está, hay que hacer un ingreso en Check»): antes un SKU que Check
+                # no tenía se saltaba en silencio. Si el ERP lo tiene en la bodega 13, Check queda en 0 y es una diferencia más.
+                if erp_ok and (erp_por_sku.get(sku) or 0) > 0:
+                    w = {"cant": 0, "desc": None, "uas": [], "ubicacion": None}
+                else:
+                    continue
             if abs(w["cant"] - reg) > 0.001:
                 _libres_w = _inc_uas_libres(w.get("uas"), inc_por_ua, wms_por_ua)
                 hallazgos.append({
@@ -69667,6 +69701,23 @@ def _inc_calcular_hallazgos(forzar=False):
                     "detalle": (f"CheckWMS (Bodega {INC_BODEGA_WMS.split()[-1]}) dice {w['cant']:g} "
                                 f"y nosotros tenemos {reg:g} declarada(s)."),
                 })
+
+    # ── P2b) UA: una incidencia SIN UA y Check ya tiene una UA libre de ese SKU (aunque los números cuadren) ──
+    if wms_ok:
+        _con_dif = {h.get("sku") for h in hallazgos if h.get("tipo") in ("dif_erp", "dif_wms")}
+        for sku, e in sorted(inc_por_sku.items()):
+            if sku in _con_dif or _es_servicio(sku) or not any(not x.get("ua") for x in e.get("incs", [])):
+                continue
+            w = wms_por_sku.get(sku) or {}
+            libres = _inc_uas_libres(w.get("uas"), inc_por_ua, wms_por_ua)
+            if not libres:
+                continue
+            hallazgos.append({
+                "tipo": "asignar_ua", "gravedad": "warn", "orden": 3, "sku": sku, "descripcion": w.get("desc"),
+                "nuestra_bd": e.get("cant", 0), "erp": erp_por_sku.get(sku) if erp_ok else None, "wms": w.get("cant"),
+                "ids": e.get("ids", []), "cantidad": 1, "uas_libres": libres, "ua": libres[0]["ua"], "ubicacion": libres[0]["ubicacion"],
+                "detalle": (f"La incidencia no tiene UA y Check ya tiene la UA {libres[0]['ua']} de este SKU en la Bodega 13 sin incidencia: "
+                            "asígnala para que Check y nuestra base hablen de la misma unidad.")})
 
     # ── P3) SIN MOTIVO — lo esencial para poder gestionar ──
     for i in incs:
@@ -69721,12 +69772,17 @@ def _inc_calcular_hallazgos(forzar=False):
 
     # 2026-10-28 (Daniel): cada diferencia de cantidad trae su detalle POR UNIDAD (tarjetas «con motivo / falta el motivo / falta agregar») y si el
     # producto se puede agrupar o va una línea por equipo. Una sola consulta batch a la clasificación; nada nuevo contra el ERP ni Check.
-    _skus_dif = sorted({h.get("sku") for h in hallazgos if h.get("tipo") in ("dif_erp", "dif_wms") and h.get("sku")})
+    _skus_dif = sorted({h.get("sku") for h in hallazgos if h.get("tipo") in ("dif_erp", "dif_wms", "asignar_ua") and h.get("sku")})
     _clasif_dif = _inc_clasificacion_skus_batch(_skus_dif) if _skus_dif else {}
     for h in hallazgos:
-        if h.get("tipo") in ("dif_erp", "dif_wms"):
+        if h.get("tipo") in ("dif_erp", "dif_wms", "asignar_ua"):
             h["repetible"] = (_clasif_dif.get((h.get("sku") or "").strip()) or {}).get("repetible") is True
             h["unidades"] = _inc_unidades_hallazgo(h, inc_por_sku.get(h.get("sku"), {}).get("incs", []), h["repetible"])
+            _sc = h["unidades"].get("sin_check") or 0
+            h["falta_ingreso_check"] = _sc > 0
+            h["falta_asignar_ua"] = (h["unidades"].get("por_asignar") or 0) > 0
+            if _sc:
+                h["detalle"] = (h.get("detalle") or "") + f" Está en el ERP, pero todavía no está hecha la gestión en Check ({_sc:g} unidad(es)): hay que hacer el ingreso en Check."
 
     # 2026-10-28: UNA fila por SKU y la marca «pendiente de dividir en UA en Check».
     hallazgos = _inc_consolidar_por_sku(hallazgos)
@@ -69786,40 +69842,43 @@ def _inc_doc_texto(docs, ref, sku_q=""):
     return " ".join(partes)
 
 
-def _inc_diagnostico_texto(sku_erp, check_b13, incs, bajas=0, doc_txt=""):
-    """PURA. En palabras simples, POR QUÉ un SKU no sale (o sí) en «Revisar diferencias».
-    `sku_erp` = filas del ERP [{bodega, fisico}] (todas las bodegas con stock); `check_b13` = filas de Check en la Bodega 13 [{ua, cant}];
-    `incs` = incidencias abiertas [{id, cantidad}]. Daniel (28-oct): «se hizo un traslado hoy a la bodega 13 en el ERP y no salen las diferencias»."""
-    erp13 = sum(float(r.get("fisico") or 0) for r in sku_erp if str(r.get("bodega") or "").strip() == "13")
-    otras = sorted({str(r.get("bodega") or "").strip() for r in sku_erp
-                    if str(r.get("bodega") or "").strip() not in ("13", "") and float(r.get("fisico") or 0) != 0})
-    chk = sum(float(r.get("cant") or 0) for r in check_b13)
-    nuestra = sum(int(i.get("cantidad") or 0) for i in incs)
-    pre = (doc_txt + " ") if doc_txt else ""
-    if not sku_erp and not check_b13 and not incs:
-        return pre + "No aparece en ningún lado: ni en el ERP con stock, ni en Check, ni en nuestras incidencias. Revisa que el código esté bien escrito."
-    if erp13 <= 0 and chk <= 0 and not incs:
-        return (pre + "El ERP no tiene stock de este SKU en la bodega 13" + (f" (sí lo tiene en la bodega {', '.join(otras)})" if otras else "")
-                + " y Check tampoco lo tiene ahí: por eso no hay diferencia. Si ya hiciste el traslado, revisa que el documento esté recepcionado en Random: "
-                "el stock de la bodega 13 recién se mueve cuando se recepciona.")
-    if abs(erp13 - nuestra) < 0.001 and abs(chk - nuestra) < 0.001:
-        return pre + f"Cuadra: el ERP ({erp13:g}), Check ({chk:g}) y nosotros ({nuestra:g}) dicen lo mismo, por eso no sale como diferencia."
-    partes = [f"Hay diferencia: ERP {erp13:g}, Check {chk:g}, nosotros {nuestra:g}."]
-    if bajas:
-        partes.append("Ojo: alguien la dio de baja y se oculta mientras sus números no cambien.")
-    partes.append("Debería salir en «Revisar diferencias»; si no la ves, pulsa «Actualizar» (la lista usa datos guardados hasta 15 min del ERP y 1 hora de Check).")
-    return pre + " ".join(partes)
+def _inc_veredicto_producto(erp13, chk13, nuestra, otras=()):
+    """PURA. En palabras simples, qué pasa con UN producto en la BODEGA 13 (las otras bodegas del ERP NO cuentan para esta bodega).
+    `otras` = [(bodega, stock)] del ERP fuera de la 13. Daniel (29-oct, ILUS Rower Pro): «en el ERP no son todas las bodegas, es la bodega 13. Si en la 13 está y en
+    Check no está, hay que hacer un ingreso en Check; y si en nuestra bodega tampoco está, hay que hacer un ingreso y declarar motivo, pedir repuesto y toda la gestión»."""
+    otras_txt = ""
+    if otras:
+        otras_txt = " (Random lo tiene en otras bodegas, que no cuentan para esta: " + ", ".join(f"{b}: {n:g}" for b, n in otras) + ")"
+    if erp13 <= 0 and chk13 <= 0 and nuestra <= 0:
+        return ("El ERP no tiene stock de este producto en la bodega 13" + otras_txt + " y Check tampoco lo tiene ahí: no hay nada que comparar. Si ya hiciste el "
+                "traslado, revisa que el documento esté recepcionado en Random: el stock de la bodega 13 recién se mueve cuando se recepciona.")
+    if abs(erp13 - chk13) < 0.001 and abs(erp13 - nuestra) < 0.001:
+        return f"Cuadra en la bodega 13: ERP {erp13:g}, Check {chk13:g} y nosotros {nuestra:g}." + otras_txt
+    partes = [f"Bodega 13: ERP {erp13:g}, Check {chk13:g}, nosotros {nuestra:g}."]
+    if erp13 > chk13 + 0.001:
+        partes.append(f"Está en el ERP (bodega 13) pero todavía no está hecha la gestión en Check: hay que hacer el ingreso en Check de {erp13 - chk13:g} unidad(es).")
+    elif chk13 > erp13 + 0.001:
+        partes.append(f"Check tiene {chk13 - erp13:g} más que el ERP: revisa en Random (puede faltar recepcionar un traslado).")
+    ref = max(erp13, chk13)
+    if nuestra + 0.001 < ref:
+        partes.append(f"Nosotros tenemos declaradas {nuestra:g}: hay que registrar {ref - nuestra:g} en incidencias, con su motivo (y pedir repuesto si hace falta).")
+    elif nuestra > ref + 0.001:
+        partes.append(f"Nosotros declaramos {nuestra - ref:g} de más.")
+    partes.append("Debería salir en «Revisar diferencias»; si no la ves, usa «Actualizar la lista y buscar este SKU».")
+    return " ".join(partes) + otras_txt
 
 
 @app.route("/mantenciones/api/incidencias/diagnostico", methods=["GET"])
 @_mant_required
 @_no_tecnico_salvo_taller
 def mant_api_incidencias_diagnostico():
-    """«¿Por qué no aparece?»: mira EN VIVO (sin caché) un SKU o una UA en el ERP Random (todas las bodegas, SOLO LECTURA: REGLA #4.1), en Check (SOLO
-    LECTURA: REGLA #4.4) y en nuestras incidencias. `q` puede ser el SKU completo, el final del SKU («termina en 101054») o una UA. Nunca escribe nada."""
-    q = re.sub(r"[\s.\-]", "", (request.args.get("q") or "")).upper()[:30]
-    if len(q) < 4 or not re.fullmatch(r"[A-Z0-9]+", q):
-        return jsonify({"ok": False, "error": "Escribe al menos 4 letras o números del SKU, de la UA o de un documento (por ejemplo GRI 2721)."}), 400
+    """«¿Por qué no aparece?»: mira EN VIVO (sin caché) por NOMBRE («rower»), SKU (o su final: «termina en 101054»), UA o DOCUMENTO («GRI 2721»): el ERP Random (SOLO
+    LECTURA: REGLA #4.1), Check (SOLO LECTURA: REGLA #4.4) y nuestras incidencias, producto por producto. Para esta bodega solo cuenta la BODEGA 13: el stock de las
+    otras bodegas del ERP se muestra aparte y no entra en la comparación. Nunca escribe nada."""
+    texto_q = re.sub(r"\s+", " ", (request.args.get("q") or "").strip()).upper()[:40]
+    q = re.sub(r"[\s.\-]", "", texto_q)
+    if len(q) < 4 or not re.fullmatch(r"[A-Z0-9ÁÉÍÓÚÜÑ]+", q):
+        return jsonify({"ok": False, "error": "Escribe al menos 4 letras o números del nombre, del SKU, de la UA o de un documento (por ejemplo GRI 2721)."}), 400
     # 2026-10-28 («se hizo un traslado hoy… está bajo la GRI 2721»): si lo escrito parece un DOCUMENTO («GRI 2721»), además se busca en el ERP ese documento,
     # su estado y a qué bodega ingresó cada línea. `sku` (opcional) acota las líneas a ese producto, por ejemplo «termina en 101054».
     ref = _inc_doc_ref(q)
@@ -69851,38 +69910,61 @@ def mant_api_incidencias_diagnostico():
         except Exception as e:
             docs_ok = False
             print(f"[inc diagnostico] documento: {type(e).__name__}", flush=True)
-    erp, erp_ok, nombres = [], True, {}
+    # ── los productos: por nombre o por final de SKU en el maestro de Random, más lo que Check y nuestras incidencias tengan con ese texto ──
+    erp_ok, maestro, stock_erp = True, {}, {}
     try:
+        like_nombre = "%" + re.sub(r"[%_\[\]]", "", texto_q).replace(" ", "%") + "%"
         filas = _random_sql_query(
-            "SELECT LTRIM(RTRIM(KOPR)) AS sku, LTRIM(RTRIM(KOBO)) AS bodega, STFI1 AS fisico FROM MAEST "
-            " WHERE LTRIM(RTRIM(KOPR)) LIKE %s AND STFI1 <> 0 ORDER BY KOPR, KOBO", ("%" + q,), max_rows=60) or []
-        erp = [{"sku": r.get("sku"), "bodega": r.get("bodega"), "fisico": float(r.get("fisico") or 0)} for r in filas]
-        if erp:
-            try:
-                nom = _random_sql_query(
-                    "SELECT LTRIM(RTRIM(KOPR)) AS sku, LTRIM(RTRIM(NOKOPR)) AS nombre FROM MAEPR WHERE LTRIM(RTRIM(KOPR)) LIKE %s",
-                    ("%" + q,), max_rows=20) or []
-                nombres = {r.get("sku"): r.get("nombre") for r in nom}
-            except Exception as _e:
-                print(f"[inc diagnostico] nombres: {type(_e).__name__}", flush=True)
+            "SELECT TOP 15 LTRIM(RTRIM(KOPR)) AS sku, LTRIM(RTRIM(NOKOPR)) AS nombre FROM MAEPR "
+            " WHERE LTRIM(RTRIM(KOPR)) LIKE %s OR NOKOPR LIKE %s ORDER BY KOPR", ("%" + q, like_nombre), max_rows=15) or []
+        maestro = {(r.get("sku") or "").strip(): (r.get("nombre") or "").strip() for r in filas if (r.get("sku") or "").strip()}
+        if maestro:
+            st = _random_sql_query(
+                "SELECT LTRIM(RTRIM(KOPR)) AS sku, LTRIM(RTRIM(KOBO)) AS bodega, STFI1 AS fisico FROM MAEST "
+                " WHERE LTRIM(RTRIM(KOPR)) IN (" + ",".join(["%s"] * len(maestro)) + ") AND STFI1 <> 0 ORDER BY KOPR, KOBO",
+                tuple(maestro), max_rows=300) or []
+            for r in st:
+                stock_erp.setdefault((r.get("sku") or "").strip(), []).append(
+                    {"bodega": (r.get("bodega") or "").strip(), "fisico": float(r.get("fisico") or 0)})
     except Exception as e:
         erp_ok = False
         print(f"[inc diagnostico] ERP: {type(e).__name__}", flush=True)
     stock = _checkwms_stock_rows(forzar=True) or []
-    check = [{"sku": (r.get("codigo") or "").strip(), "ua": (r.get("ua") or "").strip(), "bodega": r.get("bodega"), "ubicacion": r.get("ubicacion"),
+    check = [{"sku": (r.get("codigo") or "").strip(), "ua": (r.get("ua") or "").strip(), "bodega": (r.get("bodega") or "").strip(), "ubicacion": r.get("ubicacion"),
               "cant": float(r.get("stFisico") or 0), "descripcion": r.get("descripcion")}
              for r in stock
-             if (r.get("codigo") or "").strip().upper().endswith(q) or q in (r.get("ua") or "").strip().upper()]
+             if (r.get("codigo") or "").strip() in maestro or (r.get("codigo") or "").strip().upper().endswith(q)
+             or q in (r.get("ua") or "").strip().upper() or texto_q in (r.get("descripcion") or "").upper()]
     incs = mysql_fetchall(
         "SELECT id, sku, descripcion, cantidad, motivo, recomendacion, ubicacion FROM mant_incidencias "
-        " WHERE estado='abierta' AND COALESCE(eliminada,0)=0 AND (sku LIKE %s OR recomendacion LIKE %s)", ("%" + q, "%" + q)) or []
-    check13 = [c for c in check if (c.get("bodega") or "").strip().upper() == INC_BODEGA_WMS]
+        " WHERE estado='abierta' AND COALESCE(eliminada,0)=0 AND (sku LIKE %s OR recomendacion LIKE %s OR UPPER(descripcion) LIKE %s)",
+        ("%" + q, "%" + q, "%" + texto_q + "%")) or []
+    skus = sorted(set(maestro) | {c["sku"] for c in check if c["sku"]} | {(i.get("sku") or "").strip() for i in incs if (i.get("sku") or "").strip()})
+    productos = []
+    for sku in skus[:12]:
+        er = stock_erp.get(sku, [])
+        erp13 = sum(r["fisico"] for r in er if r["bodega"] == INC_BODEGA_ERP)
+        otras = [(r["bodega"], r["fisico"]) for r in er if r["bodega"] != INC_BODEGA_ERP]
+        c13 = [c for c in check if c["sku"] == sku and c["bodega"].upper() == INC_BODEGA_WMS]
+        c_otras = [c for c in check if c["sku"] == sku and c["bodega"].upper() != INC_BODEGA_WMS]
+        mis = [dict(i) for i in incs if (i.get("sku") or "").strip() == sku]
+        nuestra = sum(int(i.get("cantidad") or 0) for i in mis)
+        nombre = maestro.get(sku) or next((c["descripcion"] for c in check if c["sku"] == sku and c.get("descripcion")), None) \
+            or next((i.get("descripcion") for i in mis if i.get("descripcion")), None)
+        productos.append({
+            "sku": sku, "nombre": nombre, "erp_b13": erp13, "erp_otras": [{"bodega": b, "fisico": n} for b, n in otras],
+            "check_b13": [{"ua": c["ua"], "ubicacion": c["ubicacion"], "cant": c["cant"]} for c in c13],
+            "check_otras": [{"ua": c["ua"], "bodega": c["bodega"], "ubicacion": c["ubicacion"], "cant": c["cant"]} for c in c_otras][:6],
+            "nuestra": nuestra,
+            "incidencias": [{"id": i["id"], "ua": i.get("recomendacion"), "cantidad": i.get("cantidad"), "motivo": i.get("motivo")} for i in mis],
+            "veredicto": _inc_veredicto_producto(erp13, sum(c["cant"] for c in c13), nuestra, otras)})
     doc_txt = _inc_doc_texto(docs, ref, sku_q) if (ref and docs_ok) else ""
-    texto = _inc_diagnostico_texto(erp, check13, [dict(i) for i in incs], doc_txt=doc_txt)
-    return jsonify({"ok": True, "q": q, "documentos": docs, "documento_ok": docs_ok, "erp_ok": erp_ok,
-                    "erp": [dict(e, nombre=nombres.get(e["sku"])) for e in erp], "check": check[:40],
-                    "incidencias": [{"id": i["id"], "sku": i.get("sku"), "ua": i.get("recomendacion"), "cantidad": i.get("cantidad"), "motivo": i.get("motivo")} for i in incs],
-                    "bodega_incidencias": {"erp": INC_BODEGA_ERP, "check": INC_BODEGA_WMS}, "explicacion": texto})
+    if not productos and not docs:
+        resumen = "No encontré nada con «" + texto_q + "»: ni un producto del ERP, ni una UA o producto en Check, ni nuestras incidencias. Prueba con otra parte del nombre, el SKU o la UA."
+    else:
+        resumen = (doc_txt + " " if doc_txt else "") + (f"Encontré {len(productos)} producto(s) para «{texto_q}»." if productos else "")
+    return jsonify({"ok": True, "q": q, "texto": texto_q, "explicacion": resumen.strip(), "documentos": docs, "documento_ok": docs_ok, "erp_ok": erp_ok,
+                    "productos": productos, "bodega_incidencias": {"erp": INC_BODEGA_ERP, "check": INC_BODEGA_WMS}})
 
 
 @app.route("/mantenciones/api/incidencias/conciliacion", methods=["GET"])
@@ -69918,6 +70000,8 @@ def mant_api_incidencias_conciliacion():
             "no_en_erp":      sum(1 for h in hallazgos if h["tipo"] == "no_en_erp"),
             "dif_wms":        sum(1 for h in hallazgos if h["tipo"] == "dif_wms" or h.get("tambien_wms")),
             "dividir_ua":     sum(1 for h in hallazgos if h.get("pendiente_dividir")),
+            "ingreso_check":  sum(1 for h in hallazgos if h.get("falta_ingreso_check")),
+            "asignar_ua":     sum(1 for h in hallazgos if h.get("falta_asignar_ua")),
             "sin_motivo":     sum(1 for h in hallazgos if h["tipo"] == "sin_motivo"),
             "falta_registrar": sum(1 for h in hallazgos if h["tipo"] == "falta_registrar"),
             "fuera_de_bodega": sum(1 for h in hallazgos if h["tipo"] == "fuera_de_bodega"),

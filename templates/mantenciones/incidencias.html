@@ -1465,6 +1465,11 @@
 /* ══ 🗄️ 2026-09-30 · Dar de baja + tabla de Pendientes con el formato de Retiros ══ */
 .inc-kpi.k-baja .inc-kpi-n{color:#475569} .inc-kpi.k-baja.sel{border-color:#475569}
 .inc-kpi.k-div .inc-kpi-n{color:#b45309} .inc-kpi.k-div.sel{border-color:#b45309}
+.inc-kpi.k-ing .inc-kpi-n{color:#0e7490} .inc-kpi.k-ing.sel{border-color:#0e7490}
+.inc-kpi.k-asg .inc-kpi-n{color:#0369a1} .inc-kpi.k-asg.sel{border-color:#0369a1}
+/* «¿Por qué no aparece?»: una tarjeta por producto, con la bodega 13 a la vista y lo demás en gris */
+.inc-pq-card{text-align:left;background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:12px 14px;margin-top:10px}
+.inc-pq-nom{font-weight:900;font-size:1rem;color:#0f172a;line-height:1.25;overflow-wrap:anywhere}
 /* 2026-10-28: las unidades de un SKU, diferenciadas por UA y por estado del motivo, dentro de la misma fila (una sola fila por SKU) */
 .inc-uchips{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
 .inc-uchip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:99px;font-size:.72rem;font-weight:800;border:1px solid transparent;white-space:nowrap}
@@ -1993,8 +1998,10 @@
 
   // Verde por campo (Daniel 2026-08-03). Cada campo obligatorio se marca
   // apenas queda válido, sin esperar a "Siguiente".
+  // 2026-10-29: una unidad que el ERP tiene y Check todavía no ingresa se puede registrar SIN UA (la UA se agrega cuando Check la ingrese).
+  var incAltaSinUaOk = false;
   var INC_REGLAS = {
-    incRecomendacion: function(v){ return v.trim().length > 0; },
+    incRecomendacion: function(v){ return incAltaSinUaOk || v.trim().length > 0; },
     incSku:           function(v){ return v.trim().length > 0; },
     incDescripcion:   function(v){ return v.trim().length > 0; },
     incCantidad:      function(v){ var n = parseInt(v, 10); return !!n && n >= 1; },
@@ -2111,7 +2118,7 @@
   function validarPaso(n){
     if(n === 1){
       var ua = $('incRecomendacion');
-      if(!ua.value.trim()){
+      if(!ua.value.trim() && !incAltaSinUaOk){
         marcarError(ua);
         ilusToast('La Unidad de Almacenamiento es obligatoria', {type:'warning'});
         return false;
@@ -2447,7 +2454,7 @@
   // errores y gestionar lo que deba; el stock solo se arregla haciendo la
   // gestión". Por eso cada hallazgo con incidencia asociada es clicable y
   // abre esa incidencia para corregirla en el acto.
-  var incConcData = null, incConcFiltro = '', incConcPage = 1, incConcSize = 10, incConcQ = '';
+  var incConcData = null, incConcFiltro = '', incConcPage = 1, incConcSize = 10, incConcQ = '', incPorQueTimer = null, incPorQueCache = {q: '', html: ''};
 
   // 🔎 2026-10-28: búsqueda sin tildes ni mayúsculas en UA, SKU, producto, ubicación y la frase de «qué significa».
   function incConcNorm(s){
@@ -2468,6 +2475,7 @@
     sin_motivo:     {ico:'bi-chat-left-dots',           t:'Sin motivo declarado'},
     falta_registrar:{ico:'bi-plus-square-dotted',       t:'Falta registrar'},
     fuera_de_bodega:{ico:'bi-box-arrow-up-right',       t:'Salió de la bodega'},
+    asignar_ua:     {ico:'bi-upc-scan',                 t:'Asignar UA de Check'},
   };
 
   // 2026-10-28: «UA UA1014361» salía repetido: el código de la UA ya empieza con «UA». Se muestra una sola vez.
@@ -2479,11 +2487,17 @@
   // Las unidades de un SKU como fichas chicas: una por UA/línea, con el estado de su motivo (verde con motivo · ámbar falta el motivo · rojo falta agregar).
   function incUnidadesChips(tarjetas){
     return '<div class="inc-uchips">' + tarjetas.map(function(c){
-      var cls = c.clase === 'incidencia' ? (c.con_motivo ? 'ok' : 'warn') : (c.clase === 'sin_ua' ? 'gris' : 'falta');
-      var ico = c.clase === 'incidencia' ? (c.con_motivo ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill') : (c.clase === 'sin_ua' ? 'bi-question-circle-fill' : 'bi-plus-circle-fill');
+      var cls = c.clase === 'incidencia' ? (c.con_motivo ? 'ok' : 'warn') : (c.clase === 'sin_ua' ? 'gris' : (c.clase === 'check_pendiente' ? 'warn' : 'falta'));
+      var ico = c.clase === 'incidencia' ? (c.con_motivo ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill')
+              : (c.clase === 'sin_ua' ? 'bi-question-circle-fill' : (c.clase === 'falta_check' || c.clase === 'check_pendiente' ? 'bi-box-arrow-in-down' : 'bi-plus-circle-fill'));
       var txt = c.clase === 'incidencia' ? (c.con_motivo ? 'con motivo' : 'falta el motivo')
-              : (c.clase === 'sin_ua' ? 'dividir en UA (Check)' : (c.clase === 'faltan_repetible' ? 'falta registrar ' + c.cantidad : 'falta agregar'));
-      return '<span class="inc-uchip ' + cls + '"><i class="bi ' + ico + '"></i>' + (c.ua ? incEsc(c.ua) : (c.clase === 'sin_ua' ? c.cantidad + ' u.' : 'sin UA')) + ' · ' + txt + '</span>';
+              : (c.clase === 'sin_ua' ? 'dividir en UA (Check)'
+              : (c.clase === 'faltan_repetible' ? 'falta registrar ' + c.cantidad
+              : (c.clase === 'falta_check' ? 'ingresar en Check y registrar'
+              : (c.clase === 'check_pendiente' ? 'ingresar en Check' : 'falta agregar'))));
+      var quien = c.ua ? incEsc(c.ua) : (c.clase === 'sin_ua' || c.clase === 'falta_check' || c.clase === 'check_pendiente' ? c.cantidad + ' u.' : 'sin UA');
+      if(c.clase === 'incidencia' && !c.ua && c.ua_sugerida){ txt += ' → asignar ' + incEsc(c.ua_sugerida); cls = 'warn'; ico = 'bi-upc-scan'; }
+      return '<span class="inc-uchip ' + cls + '"><i class="bi ' + ico + '"></i>' + quien + ' · ' + txt + '</span>';
     }).join('') + '</div>';
   }
 
@@ -2521,6 +2535,10 @@
       ['fuera_de_bodega', 'k-fue', 'Salió de bodega',   (r.fuera_de_bodega || 0), ayudaDe('fuera_de_bodega')],
       // 2026-10-28: unidades juntas en una misma UA de Check que hay que dividir en una UA por unidad: es una diferencia más.
       ['dividir',         'k-div', 'Dividir UA en Check',(r.dividir_ua || 0), 'Hay unidades juntas en una misma UA (o faltan unidades y Check no tiene otra UA libre): pide en Check que las dividan en una UA por unidad para poder darle su propio motivo a cada una.'],
+      // 2026-10-29: el ERP la tiene en la bodega 13 y Check no (o Check tiene menos): hay que hacer el ingreso en Check.
+      // 2026-10-29: diferencias de UA: una incidencia sin UA a la que Check ya le tiene una UA libre del mismo producto.
+      ['asignar',         'k-asg', 'Asignar UA',         (r.asignar_ua || 0), 'Una incidencia no tiene UA y Check ya tiene una UA libre de ese producto en la bodega 13: asígnasela para que Check y nuestra base hablen de la misma unidad.'],
+      ['ingreso',         'k-ing', 'Ingresar en Check',  (r.ingreso_check || 0), 'El ERP tiene unidades en la bodega 13 que Check todavía no tiene: hay que pedir el ingreso en Check (y, si nosotros tampoco las declaramos, registrarlas con su motivo).'],
       // 🗄️ 2026-09-30: el historial de bajas (motivo, quién, cuándo) -- nada se borra.
       ['bajas',           'k-baja','Dadas de baja',     (r.dadas_de_baja || 0), 'Historial de lo que se dio de baja, con su motivo, quién y cuándo. Nada se borra y se puede reactivar.'],
     ];
@@ -2546,6 +2564,8 @@
       if(!incConcFiltro) return true;
       if(incConcFiltro === 'dif_erp') return h.tipo === 'dif_erp' || h.tipo === 'no_en_erp';
       if(incConcFiltro === 'dividir') return !!h.pendiente_dividir;
+      if(incConcFiltro === 'ingreso') return !!h.falta_ingreso_check;
+      if(incConcFiltro === 'asignar') return !!h.falta_asignar_ua;
       if(incConcFiltro === 'dif_wms') return h.tipo === 'dif_wms' || !!h.tambien_wms;
       return h.tipo === incConcFiltro;
     });
@@ -2553,6 +2573,7 @@
     var lista = delTipo.filter(function(h){ return incConcCoincide(h, qn); });
     $('incConcCount').textContent = qn ? (lista.length + ' de ' + delTipo.length) : '';
     $('incConcQx').hidden = !incConcQ;
+    clearTimeout(incPorQueTimer);
     if(!lista.length){
       $('incConcLista').innerHTML = '<div class="empty-state" style="padding:26px">'
         + (qn
@@ -2563,6 +2584,16 @@
             : '<i class="bi bi-check-circle" style="color:#16a34a"></i>'
               + (incConcFiltro ? 'Sin pendientes de este tipo.' : 'Todo cuadra entre los tres sistemas.'))
         + '</div>';
+      // Daniel (29-oct: «al buscar la Rower quiero que me indique que está en el ERP pero falta la gestión en Check»): si lo buscado no está en la lista, la
+      // consulta en vivo se hace sola, una vez por búsqueda (~0,7 s después de dejar de escribir); si la pantalla se redibuja con la misma búsqueda, se
+      // reutiliza el último resultado (no se vuelve a forzar a Check). «Actualizar» lo descarta.
+      if(qn.length >= 4){
+        if(incPorQueCache.q === incConcQ && $('incConcPorQueRes')) $('incConcPorQueRes').innerHTML = incPorQueCache.html;
+        else {
+          var q0 = incConcQ;
+          incPorQueTimer = setTimeout(function(){ if(incConcQ === q0 && $('incConcPorQueRes')) incPorQue(); }, 700);
+        }
+      }
       return;
     }
 
@@ -2593,10 +2624,7 @@
     // si no tiene incidencia, se da de baja el pendiente; si la tiene, la incidencia.
     function accionesHtml(h, idx){
       var principal = '', items = '';
-      if(h.accion === 'registrar'){
-        principal = '<button type="button" class="btn btn-sm btn-ilus inc-h-accion" data-idx="'+idx+'" data-accion="registrar">'
-                  + '<i class="bi bi-plus-lg me-1"></i>Registrar</button>';
-      } else if(h.accion === 'ver' && h.unidades){
+      if(h.unidades){
         // 2026-10-28 (Daniel: «cuando yo vea una diferencia, que me abra la diferencia y me diga: esta tiene motivo, esta tiene motivo, falta agregar
         // uno»): la acción principal abre el panel por unidad. «Ver / corregir» sigue disponible en el menú ⋮ y dentro de cada tarjeta.
         var falt = h.unidades.faltan || 0, sinMot = h.unidades.tarjetas.filter(function(c){ return c.clase === 'incidencia' && !c.con_motivo; }).length;
@@ -2605,8 +2633,13 @@
                   + '<i class="bi bi-diagram-3 me-1"></i>Gestionar'
                   + (falt ? ' <span class="badge text-bg-light ms-1">falta'+(falt > 1 ? 'n '+falt : ' 1')+'</span>' : (sinMot ? ' <span class="badge text-bg-light ms-1">sin motivo</span>' : ''))
                   + '</button>';
-        items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="ver"><i class="bi bi-search me-2"></i>Ver / corregir la incidencia</button></li>';
-        items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="repuesto"><i class="bi bi-tools me-2"></i>Solicitar repuesto</button></li>';
+        if(h.ids && h.ids.length){
+          items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="ver"><i class="bi bi-search me-2"></i>Ver / corregir la incidencia</button></li>';
+          items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="repuesto"><i class="bi bi-tools me-2"></i>Solicitar repuesto</button></li>';
+        }
+      } else if(h.accion === 'registrar'){
+        principal = '<button type="button" class="btn btn-sm btn-ilus inc-h-accion" data-idx="'+idx+'" data-accion="registrar">'
+                  + '<i class="bi bi-plus-lg me-1"></i>Registrar</button>';
       } else if(h.accion === 'ver'){
         // 2026-10-28 (Daniel: «¿por qué solo dice Ver y corregir y no Registrar?»): si faltan unidades por declarar (ej. el ERP dice 2 y
         // tenemos 1) se ofrece Registrar la que falta, además de corregir la que ya existe.
@@ -2655,7 +2688,8 @@
           '<table class="inc-por-ua"><thead><tr><th>UA</th><th>Unidades</th><th>Estado</th><th>Motivo</th></tr></thead><tbody>'
           + h.unidades.tarjetas.map(function(c){
               var est = c.clase === 'incidencia' ? (c.con_motivo ? 'Con motivo' : 'Falta el motivo')
-                      : (c.clase === 'libre' ? 'Falta agregar' : (c.clase === 'faltan_repetible' ? 'Falta registrar' : 'Pendiente dividir en UA en Check'));
+                      : (c.clase === 'libre' ? 'Falta agregar' : (c.clase === 'faltan_repetible' ? 'Falta registrar'
+                      : (c.clase === 'falta_check' ? 'Falta ingreso en Check y registrar' : (c.clase === 'check_pendiente' ? 'Falta ingreso en Check' : 'Pendiente dividir en UA en Check'))));
               return '<tr><td>' + (c.ua ? incEsc(c.ua) : '<span class="rm-sub">sin UA</span>') + '</td><td>' + c.cantidad + '</td><td>' + est + '</td><td>'
                 + (c.motivo ? incEsc(c.motivo) : '<span class="rm-sub">—</span>') + '</td></tr>';
             }).join('') + '</tbody></table>', true);
@@ -2686,6 +2720,7 @@
         + '<td data-label="Pendiente"><div class="rm-cell"><span class="rm-pill '+nivel+'" style="margin-top:0"><i class="bi '+m.ico+'"></i>'+m.t+'</span>'
         +   (h.baja_previa ? '<div><span class="rm-pill gris inc-pill-baja" style="margin-top:4px" title="Alguien ya la dio de baja con otros números. Abre el detalle para ver quién, cuándo y por qué."><i class="bi bi-archive"></i>Antes dada de baja</span></div>' : '')
         +   (h.pendiente_dividir ? '<div><span class="inc-pill-dividir" title="Hay unidades juntas en una misma UA de Check (o faltan y no hay otra UA libre): hay que dividirlas en una UA por unidad."><i class="bi bi-signpost-split-fill"></i>Pendiente dividir en UA en Check</span></div>' : '')
+        +   (h.falta_ingreso_check ? '<div><span class="inc-pill-dividir" title="Está en el ERP (bodega 13), pero todavía no está hecha la gestión en Check: hay que pedir el ingreso en Check."><i class="bi bi-box-arrow-in-down"></i>En el ERP · falta la gestión en Check</span></div>' : '')
         +   (h.tambien_wms ? '<div><span class="rm-pill gris" style="margin-top:4px" title="Check (WMS) también tiene esta diferencia: es la misma unidad, no otra."><i class="bi bi-box-arrow-in-down"></i>Check también difiere</span></div>' : '')
         + '</div></td>'
         + '<td data-label="SKU"><div class="rm-cell"><span class="rm-code">'+incEsc(h.sku || h.ua || '—')+'</span></div></td>'
@@ -2726,7 +2761,7 @@
       if(subaccion === 'baja'){ incBajaDesdeHallazgo(h); return; }
       if(subaccion === 'desglosar'){ incDesgloseDesdeHallazgo(h); return; }
       if(subaccion === 'registrar' && h.puede_registrar){ incRegistrarFaltante(h); return; }
-      if(subaccion === 'gestionar' || (!subaccion && h.unidades && h.accion === 'ver')){ incAbrirDiferencia(h); return; }
+      if(subaccion === 'gestionar' || (!subaccion && h.unidades)){ incAbrirDiferencia(h); return; }
       if(!h.accion) return;
       if(h.accion === 'registrar'){ incRegistrarConPregunta(h); return; }
       if(h.accion !== 'ver' || !h.ids || !h.ids.length) return;
@@ -2775,11 +2810,12 @@
   // `abrirRepuesto=true` (2026-09-26, acción "Solicitar repuesto" directo
   // desde Revisar diferencias) además dispara el flujo de solicitud ya
   // existente apenas el modal termina de poblarse.
-  function incAbrirPorId(id, abrirRepuesto){
+  function incAbrirPorId(id, abrirRepuesto, alAbrir){
     fetch('/mantenciones/api/incidencias?page=1&page_size=500')
       .then(function(r){return r.json();}).then(function(d){
         if(!d || !d.ok) return;
         abrirEdicion(id, d.rows || []);
+        if(typeof alAbrir === 'function') alAbrir();
         if(abrirRepuesto){
           setTimeout(function(){ document.getElementById('incBtnSolicitarRepuesto').click(); }, 350);
         }
@@ -3335,6 +3371,12 @@
     // a que la incidencia se guarde para recién ahí pedir el cuadre.
     incPintarChipsErpWms(h.nuestra_bd, h.erp, h.wms);
     incPintarUasAlternas(h);
+    incAltaSinUaOk = !!h.falta_ingreso_check && !(h.ua || '').trim();
+    if(incAltaSinUaOk){
+      document.getElementById('incUaResultado').innerHTML = '<div class="inc-aviso"><i class="bi bi-box-arrow-in-down"></i><span class="txt">El <strong>ERP</strong> tiene esta unidad en la '
+        + '<strong>bodega 13</strong> pero <strong>Check todavía no la tiene</strong>: pide el ingreso en Check. Puedes registrar la incidencia ahora, <strong>sin UA</strong>, con su motivo '
+        + '(y pedir repuesto); cuando Check la ingrese le agregas la UA aquí mismo.</span></div>';
+    }
     refrescarVerdeTodos();
     incCargarEvidencia();
     irAPaso(2);
@@ -3353,6 +3395,7 @@
   // para que no se vea "colgado" sin decir nada.
   var incConcToken = 0;
   function incConcCargar(forzar){
+    if(forzar === true) incPorQueCache = {q: '', html: ''};
     var miToken = ++incConcToken;
     $('incConciliacion').hidden = false;
     $('incConcLista').innerHTML = '<div class="empty-state" style="padding:26px">'
@@ -3389,7 +3432,11 @@
     function aplicar(){ incConcQ = q.value; incConcPage = 1; if(incConcData) incConcPintar(); }
     q.addEventListener('input', function(){ $('incConcQx').hidden = !q.value; clearTimeout(t); t = setTimeout(aplicar, 120); });
     $('incConcQx').addEventListener('click', function(){ q.value = ''; q.focus(); aplicar(); });
-    $('incConcLista').addEventListener('click', function(ev){ if(ev.target.closest('#incConcPorQue')) incPorQue(); });
+    $('incConcLista').addEventListener('click', function(ev){
+      if(ev.target.closest('#incConcPorQue')) incPorQue();
+      var b = ev.target.closest('[data-porque-sku]');
+      if(b){ q.value = b.dataset.porqueSku; incConcQ = q.value; $('incConcQx').hidden = false; incConcData = null; incConcCargar(true); }   // actualiza (sin caché) y filtra por ese SKU
+    });
   })();
 
   // 🔎 2026-10-28 (Daniel: «se hizo un traslado hoy a la bodega 13 y no salen las diferencias… yo quiero saber»): cuando la búsqueda no encuentra nada, se
@@ -3397,8 +3444,9 @@
   function incPorQue(){
     var cont = $('incConcPorQueRes');
     if(!cont) return;
+    var qPedida = incConcQ;
     cont.innerHTML = '<div class="rm-sub mt-2"><i class="bi bi-hourglass-split me-1"></i>Consultando el ERP y Check en vivo…</div>';
-    fetch('/mantenciones/api/incidencias/diagnostico?q=' + encodeURIComponent(incConcQ))
+    fetch('/mantenciones/api/incidencias/diagnostico?q=' + encodeURIComponent(qPedida))
       .then(function(r){ return r.json(); }).then(function(d){
         if(!d.ok){ cont.innerHTML = '<div class="text-danger mt-2">' + incEsc(d.error || 'No se pudo consultar.') + '</div>'; return; }
         function tabla(cab, filas){
@@ -3406,18 +3454,33 @@
             + filas.map(function(f){ return '<tr>' + f.map(function(c){ return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>'
             : '<div class="rm-sub mb-2">Sin registros.</div>';
         }
+        function chip(lbl, val){ return '<span class="inc-chip"><span class="lbl">' + lbl + '</span><span class="val">' + incNum(val) + '</span></span>'; }
         var docsHtml = (d.documentos || []).map(function(doc){
-          return '<b>Documento ' + incEsc(doc.tido) + ' ' + incEsc(String(parseInt(doc.nudo, 10) || doc.nudo)) + '</b> · ' + incEsc(doc.fecha || '') + ' · ' + incEsc(doc.estado || '')
+          return '<div class="text-start mt-2"><b>Documento ' + incEsc(doc.tido) + ' ' + incEsc(String(parseInt(doc.nudo, 10) || doc.nudo)) + '</b> · ' + incEsc(doc.fecha || '') + ' · ' + incEsc(doc.estado || '')
             + tabla(['SKU', 'Cantidad', 'Despachada', 'Bodegas'], (doc.lineas || []).map(function(l){
                 return [incEsc(l.sku), incNum(l.cant), incNum(l.cant_despachada), incEsc(Object.keys(l.bodegas || {}).map(function(k){ return k + '=' + l.bodegas[k]; }).join(' · ') || '—')];
-              }));
+              })) + '</div>';
         }).join('');
-        cont.innerHTML = '<div class="inc-dif-nota mt-2"><i class="bi bi-info-circle-fill"></i><span>' + incEsc(d.explicacion) + '</span></div>' + (docsHtml ? '<div class="text-start">' + docsHtml + '</div>' : '')
-          + '<div class="text-start"><b>ERP Random</b> (todas las bodegas con stock)' + (d.erp_ok ? '' : ' <span class="text-danger">— no respondió</span>')
-          + tabla(['SKU', 'Producto', 'Bodega', 'Stock'], d.erp.map(function(e){ return [incEsc(e.sku), incEsc(e.nombre || '—'), incEsc(e.bodega) + (String(e.bodega) === String(d.bodega_incidencias.erp) ? ' <b>(incidencias)</b>' : ''), incNum(e.fisico)]; }))
-          + '<b>CheckWMS</b>' + tabla(['UA', 'SKU', 'Bodega', 'Ubicación', 'Unidades'], d.check.map(function(c){ return [incEsc(c.ua || '—'), incEsc(c.sku), incEsc(c.bodega || '—'), incEsc(c.ubicacion || '—'), incNum(c.cant)]; }))
-          + '<b>Nuestras incidencias abiertas</b>' + tabla(['N°', 'SKU', 'UA', 'Cant.', 'Motivo'], d.incidencias.map(function(i){ return ['#' + i.id, incEsc(i.sku || '—'), incEsc(i.ua || '—'), i.cantidad, incEsc(i.motivo || '—')]; }))
-          + '</div>';
+        // una tarjeta por producto: la BODEGA 13 a la vista (ERP · Check · nosotros) y lo de otras bodegas aparte, en gris (no cuenta para esta comparación)
+        var prods = (d.productos || []).map(function(p){
+          var chk = p.check_b13 || [], chkTot = chk.reduce(function(a, c){ return a + (Number(c.cant) || 0); }, 0);
+          var otrasErp = (p.erp_otras || []).length ? '<div class="rm-sub">Otras bodegas del ERP (no cuentan para la 13): '
+            + p.erp_otras.map(function(o){ return incEsc(o.bodega) + ': ' + incNum(o.fisico); }).join(' · ') + '</div>' : '';
+          var otrasChk = (p.check_otras || []).length ? '<div class="rm-sub">Check en otras bodegas: '
+            + p.check_otras.map(function(c){ return incEsc(c.ua || 'sin UA') + ' → ' + incEsc(c.bodega || '—') + (c.ubicacion ? ' · ' + incEsc(c.ubicacion) : ''); }).join(' | ') + '</div>' : '';
+          var enChk = chk.length ? '<div class="rm-sub">Check, bodega 13: ' + chk.map(function(c){ return incEsc(c.ua || 'sin UA') + (c.ubicacion ? ' · ' + incEsc(c.ubicacion) : ''); }).join(' | ') + '</div>'
+                                 : '<div class="rm-sub">Check: no está en la bodega 13.</div>';
+          var mis = (p.incidencias || []).length ? '<div class="rm-sub">Nuestras incidencias: ' + p.incidencias.map(function(i){ return '#' + i.id + (i.ua ? ' (' + incEsc(i.ua) + ')' : ' (sin UA)'); }).join(' · ') + '</div>'
+                                                 : '<div class="rm-sub">Nosotros: sin incidencias abiertas.</div>';
+          return '<div class="inc-pq-card"><div class="inc-pq-nom">' + incEsc(p.nombre || p.sku) + '</div><div class="inc-dif-sub">SKU ' + incEsc(p.sku) + '</div>'
+            + '<div class="inc-chip-row" style="display:flex;margin-top:6px">' + chip('ERP bodega 13', p.erp_b13) + chip('Check bodega 13', chkTot) + chip('Nosotros', p.nuestra) + '</div>'
+            + '<div class="inc-dif-nota mt-2"><i class="bi bi-info-circle-fill"></i><span>' + incEsc(p.veredicto) + '</span></div>'
+            + enChk + mis + otrasErp + otrasChk
+            + '<div class="mt-2"><button type="button" class="btn btn-sm btn-ilus" data-porque-sku="' + incEsc(p.sku) + '"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar la lista y buscar este SKU</button></div></div>';
+        }).join('');
+        cont.innerHTML = (d.explicacion ? '<div class="inc-dif-nota mt-2"><i class="bi bi-info-circle-fill"></i><span>' + incEsc(d.explicacion) + '</span></div>' : '')
+          + (d.erp_ok ? '' : '<div class="text-danger mt-2">El ERP no respondió: lo que ves del ERP puede estar incompleto.</div>') + docsHtml + prods;
+        incPorQueCache = {q: qPedida, html: cont.innerHTML};
       }).catch(function(){ cont.innerHTML = '<div class="text-danger mt-2">No se pudo conectar con el servidor.</div>'; });
   }
 
@@ -3471,11 +3534,27 @@
   var INC_DIF_CLASES = {
     incidencia_ok:   {cls:'ok',    ico:'bi-check-circle-fill',        t:'Con motivo'},
     incidencia_warn: {cls:'warn',  ico:'bi-exclamation-triangle-fill', t:'Falta el motivo'},
+    incidencia_ua:   {cls:'warn',  ico:'bi-upc-scan',                  t:'Falta asignar la UA'},
     libre:           {cls:'falta', ico:'bi-plus-circle-fill',          t:'Falta agregar'},
     faltan_repetible:{cls:'falta', ico:'bi-plus-circle-fill',          t:'Falta registrar'},
-    sin_ua:          {cls:'gris',  ico:'bi-question-circle-fill',      t:'Sin UA en Check'}
+    sin_ua:          {cls:'gris',  ico:'bi-question-circle-fill',      t:'Sin UA en Check'},
+    falta_check:     {cls:'falta', ico:'bi-box-arrow-in-down',         t:'Falta ingreso en Check'},
+    check_pendiente: {cls:'warn',  ico:'bi-box-arrow-in-down',         t:'Falta ingreso en Check'}
   };
   function incDifModal(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('incDifModal')); }
+
+  // 📋 2026-10-29: ILUS no escribe en Check (REGLA #4.4); el ingreso lo hace la gente de Check. Esto deja el pedido listo para pegarlo en un mensaje.
+  function incCopiarPedidoCheck(h, c){
+    var n = c.cantidad || 1;
+    var txt = 'Hola, necesitamos el INGRESO EN CHECK de ' + n + ' × ' + (h.descripcion || h.sku) + ' (SKU ' + (h.sku || '') + ') en la BODEGA 13. '
+            + 'El ERP (Random) ya la tiene en la bodega 13 y Check no. Por favor ingrésenla y avísennos la UA y la ubicación para registrarla en la bodega de incidencias.';
+    function listo(){ ilusToast('✓ Pedido copiado: pégalo en el mensaje para Check', {type: 'success'}); }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(listo, function(){ ilusPrompt({title: 'Copia el pedido', message: 'Selecciona y copia este texto:', defaultValue: txt}); });
+    } else {
+      ilusPrompt({title: 'Copia el pedido', message: 'Selecciona y copia este texto:', defaultValue: txt});
+    }
+  }
 
   function incAbrirDiferencia(h){
     var u = h.unidades || {tarjetas: [], unidades: 0, con_motivo: 0};
@@ -3496,12 +3575,17 @@
           : '<div class="inc-dif-nota eq"><i class="bi bi-diagram-3"></i><span>Es un <b>equipo</b>: cada máquina va en su propia línea, con su propia UA y su propio motivo.</span></div>')
       + '<div class="inc-dif-grid">';
     u.tarjetas.forEach(function(c, i){
-      var k = c.clase === 'incidencia' ? (c.con_motivo ? 'incidencia_ok' : 'incidencia_warn') : c.clase;
+      var k = c.clase === 'incidencia' ? (!c.con_motivo ? 'incidencia_warn' : (!c.ua && c.ua_sugerida ? 'incidencia_ua' : 'incidencia_ok')) : c.clase;
       var d = INC_DIF_CLASES[k] || INC_DIF_CLASES.sin_ua;
       var cuerpo = '', acc = '';
       if(c.clase === 'incidencia'){
         cuerpo = '<div class="motivo">' + (c.motivo ? incEsc(c.motivo) : '<span class="meta">Sin motivo declarado.</span>') + '</div>';
-        acc = '<button type="button" class="btn btn-sm btn-outline-dark" data-dif="ver" data-i="' + i + '"><i class="bi bi-search me-1"></i>'
+        if(!c.ua && c.ua_sugerida){
+          cuerpo += '<div class="motivo mt-1"><i class="bi bi-upc-scan me-1"></i>Esta incidencia <b>no tiene UA</b> y Check ya tiene la <b>' + incEsc(c.ua_sugerida) + '</b>'
+                  + (c.ubicacion_sugerida ? ' (' + incEsc(c.ubicacion_sugerida) + ')' : '') + ' libre de este producto. ¿Es esta? Asígnala para que Check y nuestra base hablen de la misma unidad.</div>';
+        }
+        acc = ((!c.ua && c.ua_sugerida) ? '<button type="button" class="btn btn-sm btn-ilus" data-dif="asignar" data-i="' + i + '"><i class="bi bi-upc-scan me-1"></i>Asignar ' + incEsc(c.ua_sugerida) + '</button>' : '')
+            + '<button type="button" class="btn btn-sm btn-outline-dark" data-dif="ver" data-i="' + i + '"><i class="bi bi-search me-1"></i>'
             + (c.con_motivo ? 'Ver / corregir' : 'Agregar el motivo') + '</button>'
             + '<button type="button" class="btn btn-sm btn-outline-secondary" data-dif="baja" data-i="' + i + '"><i class="bi bi-archive me-1"></i>Dar de baja</button>';
       } else if(c.clase === 'libre'){
@@ -3510,6 +3594,15 @@
       } else if(c.clase === 'faltan_repetible'){
         cuerpo = '<div class="motivo">Faltan <b>' + c.cantidad + '</b> unidad' + (c.cantidad === 1 ? '' : 'es') + ' por declarar. Se registran juntas en una sola línea.</div>';
         acc = '<button type="button" class="btn btn-sm btn-ilus" data-dif="registrar" data-i="' + i + '"><i class="bi bi-plus-lg me-1"></i>Registrar ' + c.cantidad + '</button>';
+      } else if(c.clase === 'falta_check'){
+        cuerpo = '<div class="motivo">El <b>ERP</b> tiene ' + (c.cantidad === 1 ? 'esta unidad' : 'estas <b>' + c.cantidad + '</b> unidades') + ' en la <b>bodega 13</b>, pero <b>Check no</b> y nosotros tampoco la declaramos. '
+               + '1) Pide el ingreso en Check. 2) Registra la incidencia ahora, con su motivo (y pide repuesto si hace falta); la UA se la agregas cuando Check la ingrese.</div>';
+        acc = '<button type="button" class="btn btn-sm btn-ilus" data-dif="registrar" data-i="' + i + '"><i class="bi bi-plus-lg me-1"></i>Registrar ' + (c.cantidad > 1 ? c.cantidad + ' ' : '') + 'sin UA aún</button>'
+            + '<button type="button" class="btn btn-sm btn-outline-dark" data-dif="copiar" data-i="' + i + '"><i class="bi bi-clipboard me-1"></i>Copiar pedido para Check</button>';
+      } else if(c.clase === 'check_pendiente'){
+        cuerpo = '<div class="motivo">Ya ' + (c.cantidad === 1 ? 'la declaramos' : 'declaramos ' + c.cantidad) + ', pero <b>Check todavía no ' + (c.cantidad === 1 ? 'la tiene' : 'las tiene') + '</b> en la bodega 13. '
+               + 'Falta el ingreso en Check; cuando tenga UA se la agregas a la incidencia.</div>';
+        acc = '<button type="button" class="btn btn-sm btn-outline-dark" data-dif="copiar" data-i="' + i + '"><i class="bi bi-clipboard me-1"></i>Copiar pedido para Check</button>';
       } else {
         cuerpo = '<div class="motivo">Faltan <b>' + c.cantidad + '</b> unidad' + (c.cantidad === 1 ? '' : 'es') + ' pero Check no tiene otra UA libre de este SKU. '
                + 'Pide en Check que las separen en una UA por unidad y vuelve a revisar.</div>';
@@ -3527,10 +3620,17 @@
     cuerpoEl.querySelectorAll('[data-dif]').forEach(function(b){
       b.addEventListener('click', function(){
         var c = u.tarjetas[parseInt(b.dataset.i, 10)], quehacer = b.dataset.dif;
+        if(quehacer === 'copiar'){ incCopiarPedidoCheck(h, c); return; }
         incDifModal().hide();
         if(quehacer === 'ver') incAbrirPorId(c.id);
+        else if(quehacer === 'asignar') incAbrirPorId(c.id, false, function(){
+          // la UA queda puesta en la incidencia; la persona revisa y guarda
+          $('incRecomendacion').value = c.ua_sugerida; incPintarUbicacionCheck('coincide', c.ubicacion_sugerida || ''); incAltaSinUaOk = false;
+          refrescarVerdeTodos(); pintarPasos();
+          ilusToast('Revisa y guarda para asignar la ' + c.ua_sugerida, {type: 'info'});
+        });
         else if(quehacer === 'baja') incAbrirBaja({origen:'incidencia', id:c.id, sku:h.sku, descripcion:h.descripcion, ua:c.ua, cantidad:c.cantidad, sub:'Incidencia #'+c.id});
-        else incRegistrarConPregunta(Object.assign({}, h, {ua: c.ua, ubicacion: c.ubicacion, cantidad: c.cantidad, uas_libres: c.clase === 'faltan_repetible' ? (h.uas_libres || []) : (c.ua ? [{ua: c.ua, ubicacion: c.ubicacion}] : [])}));
+        else incRegistrarConPregunta(Object.assign({}, h, {ua: c.ua, ubicacion: c.ubicacion, cantidad: c.cantidad, falta_ingreso_check: c.clase === 'falta_check', uas_libres: c.clase === 'faltan_repetible' ? (h.uas_libres || []) : (c.ua ? [{ua: c.ua, ubicacion: c.ubicacion}] : [])}));
       });
     });
     incDifModal().show();
@@ -3663,6 +3763,7 @@
   }
 
   function limpiarModal(){
+    incAltaSinUaOk = false;
     ['incId','incSku','incDescripcion','incMotivo','incDescripcionRepuesto',
      'incObservacion','incRecomendacion','incFechaResolucion','incFechaIngreso','incUbicacion',
      'incUbicacionCheck','incSugerencia','incRepuestoStockId'].forEach(function(id){
@@ -3703,6 +3804,7 @@
     if(!r) return;
     limpiarModal();
     document.getElementById('incModalTitulo').innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Editar incidencia';
+    incAltaSinUaOk = !((r.recomendacion || '').trim());     // una incidencia que aún no tiene UA se puede seguir gestionando (motivo, repuestos) mientras Check la ingresa
     document.getElementById('incId').value = r.id;
     document.getElementById('incSku').value = r.sku || '';
     document.getElementById('incDescripcion').value = r.descripcion || '';
