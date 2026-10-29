@@ -1125,8 +1125,14 @@ def excel_bytes(d):
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
+    import xlsx_fechas as XF     # 📅 2026-10-29: fechas reales de Excel, hora Chile, formato español (un solo helper)
+
     wb = openpyxl.Workbook()
     NEGRO, GRIS = "0A0A0A", "F3F4F6"
+    # Encabezados de las columnas de apoyo (Año, N° mes, Semana…): son números, pero NO plata ni cantidades con miles.
+    _apoyo_cierre = XF.encabezados_apoyo("de la fecha de cierre")
+    _apoyo_semana = XF.encabezados_apoyo("del lunes de la semana")
+    _sin_miles = set(_apoyo_cierre) | set(_apoyo_semana)
 
     def hoja(titulo, encabezados, filas, anchos=None, nota=None, primera=False):
         ws = wb.active if primera else wb.create_sheet()
@@ -1144,13 +1150,21 @@ def excel_bytes(d):
             for ci, val in enumerate(fila, 1):
                 c = ws.cell(row=ri, column=ci, value=val)
                 c.alignment = Alignment(vertical="top", wrap_text=isinstance(val, str) and len(val) > 40)
-                if (isinstance(val, float) or (isinstance(val, int) and not isinstance(val, bool))) and ci <= len(encabezados):
+                if XF.formato(val):                  # 📅 2026-10-29: fecha real, dd/mm/yyyy [hh:mm]
+                    c.number_format = XF.formato(val)
+                elif ci <= len(encabezados) and encabezados[ci - 1] in _sin_miles:
+                    c.number_format = "0" if isinstance(val, int) and not isinstance(val, bool) else "General"
+                elif (isinstance(val, float) or (isinstance(val, int) and not isinstance(val, bool))) and ci <= len(encabezados):
                     c.number_format = '"$"#,##0' if "$" in encabezados[ci - 1] else "0.0" if "%" in encabezados[ci - 1] else "#,##0"
                 if (ri - fila0) % 2 == 0:
                     c.fill = PatternFill("solid", fgColor=GRIS)
         for ci in range(1, len(encabezados) + 1):
             ws.column_dimensions[get_column_letter(ci)].width = (anchos or {}).get(ci, max(14, min(48, len(str(encabezados[ci - 1])) + 6)))
         ws.freeze_panes = ws.cell(row=fila0 + 1, column=1)
+        # 📅 2026-10-29: filtro automático sobre la PRIMERA tabla de la hoja (hasta la primera fila vacía: «Por cliente», «Casos»…
+        # son tablas aparte y un filtro que las mezcle las desordenaría).
+        n_tabla = next((i for i, f in enumerate(filas) if not f), len(filas))
+        ws.auto_filter.ref = f"A{fila0}:{get_column_letter(max(1, len(encabezados)))}{fila0 + n_tabla}"
         return ws
 
     r = d["resumen"]
@@ -1165,8 +1179,12 @@ def excel_bytes(d):
         ["OT sin medir (fuera de las cifras)", r["n_sin_medir"], "Falta el costo del técnico o del despacho"],
         ["Veredicto", d["veredicto"]["titulo"], d["veredicto"]["texto"]],
     ], {1: 38, 2: 22, 3: 90}, primera=True)
-    hoja("Tendencia", ["Semana", "OT medidas", "Cobré ($)", "Me cobraron ($)", "Neto ($)", "Margen %"],
-         [[s["etiqueta"], s["n_medidas"], s["cobre"], s["me_cobraron"], s["neto"], s["pct"]] for s in d["tendencia"]], {1: 34})
+    # 📅 2026-10-29: al final, el lunes y el domingo de cada semana como fechas reales y Año · Mes · Semana… para filtrar por mes.
+    hoja("Tendencia", ["Semana", "OT medidas", "Cobré ($)", "Me cobraron ($)", "Neto ($)", "Margen %",
+                       "Desde (lunes)", "Hasta (domingo)"] + _apoyo_semana,
+         [[s["etiqueta"], s["n_medidas"], s["cobre"], s["me_cobraron"], s["neto"], s["pct"],
+           XF.a_fecha_excel(s.get("lunes")), XF.a_fecha_excel(s.get("domingo"))] + XF.columnas_apoyo(XF.a_fecha_excel(s.get("lunes")))
+          for s in d["tendencia"]], {1: 34})
     ds = d["donde_se_va"]
     filas = []
     for corte, lista in (("Tipo de OT", ds["por_tipo"]), ("Centro de costo", ds["por_centro"]), ("Proveedor", ds["por_proveedor"])):
@@ -1181,14 +1199,17 @@ def excel_bytes(d):
          + [[], ["Por mes"]] + [[x["etiqueta"], x["n"], x["valor"], x["costo"], None, x["n_sin_costo"]] for x in g["por_mes"]],
          {1: 44})
     a = d["atribucion"]
+    # 📅 2026-10-29: «Cuándo autorizó» como fecha y hora real (hora Chile) y, al final, la fecha de cierre de la OT con Año · Mes ·
+    # Semana… (todas las OT del costeo están cerradas: la fecha que manda es la de cierre).
     hoja("A nombre de quién",
          ["OT", "Cliente", "Qué es", "Monto ($)", "Área que asume", "Intención", "Centro de costo", "Originó", "Fuente (originó)",
-          "Autorizó", "Cuándo autorizó", "Argumento guardado", "Lleva", "Ejecutó"],
+          "Autorizó", "Cuándo autorizó", "Argumento guardado", "Lleva", "Ejecutó", "Fecha de cierre"] + _apoyo_cierre,
          [[c["numero"], c["cliente"], c["cobertura_txt"], c["monto"], c["asume_area"] or SIN_CLASIFICAR, c["intencion"] or SIN_CLASIFICAR,
            c["centro_txt"], (c["origino"]["nombre"] or "sin registrar"), c["origino"]["fuente"],
-           c["autorizo"]["nombre"] or "Sin autorización registrada", fecha_hora_chile_txt(c["autorizo"]["at"]),
-           c["argumento"] or "", c["lleva"]["nombre"] or "Sin responsable", c["ejecuto"]["nombre"] or "Sin técnico"] for c in a["casos"]],
-         {2: 30, 8: 24, 9: 30, 10: 24, 12: 60, 13: 24, 14: 26},
+           c["autorizo"]["nombre"] or "Sin autorización registrada", XF.a_fecha_excel(c["autorizo"]["at"]),
+           c["argumento"] or "", c["lleva"]["nombre"] or "Sin responsable", c["ejecuto"]["nombre"] or "Sin técnico",
+           XF.a_fecha_excel(c.get("cerrada_at"))] + XF.columnas_apoyo(XF.a_fecha_excel(c.get("cerrada_at"))) for c in a["casos"]],
+         {2: 30, 8: 24, 9: 30, 10: 24, 12: 60, 13: 24, 14: 26, 15: 17},
          nota="Cuatro roles separados: quién originó, quién autorizó, quién lleva y quién ejecutó. Cada uno sale de su propia fuente.")
     t = d["tecnicos"]
     hoja("Técnicos y proveedores",
@@ -1201,9 +1222,11 @@ def excel_bytes(d):
              ["Empresa externa", "OT cerradas", "Evaluadas", "En observación", "Con reincidencia", "Tasa %", "Volvió la misma empresa"],
              [[x["nombre"], x["n_cerradas"], x["n_evaluadas"], x["n_en_observacion"], x["n_reincidentes"], x["tasa"], x["n_repite_visita"]]
               for x in ri["por_empresa"]]
-             + [[], ["Casos"], ["OT cerrada", "OT posterior", "Cliente", "Días después", "Nivel", "Quién fue", "Misma empresa"]]
+             + [[], ["Casos"], ["OT cerrada", "OT posterior", "Cliente", "Días después", "Nivel", "Quién fue", "Misma empresa",
+                                "Cerrada el"]]
              + [[c["x_numero"], c["y_numero"], c["cliente"], c["dias_despues"], "mismo equipo" if c["nivel"] == "equipo" else "mismo cliente",
-                 c["y_ejecutor"] or "", "sí" if c["misma_empresa"] else "no"] for c in ri["casos"]],
+                 c["y_ejecutor"] or "", "sí" if c["misma_empresa"] else "no",
+                 XF.a_fecha_excel(c.get("cerrada_at"))] for c in ri["casos"]],     # 📅 2026-10-29: fecha real, hora Chile
              {1: 40},
              nota=f"Reincidencia = OT correctiva o de garantía sobre el mismo equipo (o cliente) dentro de {ri['dias']} días de que un externo cerró una OT. "
                   "Es un indicador para revisar, no una sentencia.")

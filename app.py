@@ -109931,6 +109931,7 @@ def repstock_solicitudes_ot_export():
     except Exception:
         return jsonify({"ok": False, "error": "openpyxl no está instalado en el servidor."}), 500
     from io import BytesIO
+    import xlsx_fechas as _xf     # 📅 2026-10-29: fechas reales de Excel en hora Chile, formato español
 
     where_sql, params = _otrep_filtros_query()
     LIM = 5000
@@ -109957,6 +109958,11 @@ def repstock_solicitudes_ot_export():
     _cols_ok = [i for i, h in enumerate(headers)
                 if not (_oculta_proveedores() and h in ("Proveedor", "N° OC"))]
     headers = [headers[i] for i in _cols_ok]
+    # 📅 2026-10-29: «Creado (hora Chile)» salía como el DATETIME crudo de MySQL (UTC y en formato aaaa-mm-dd: «gringo»); ahora
+    # es una fecha y hora real de Excel en hora Chile, y al final van Año · Mes · N° mes · Semana · Día · Año-Mes para filtrar.
+    _col_creado = headers.index("Creado (hora Chile)") + 1
+    _n_base = len(headers)
+    headers = headers + _xf.encabezados_apoyo("de la fecha de creación")
     for ci, h in enumerate(headers, 1):
         cell = ws.cell(1, ci, h)
         cell.font = HDR_FONT
@@ -109965,6 +109971,7 @@ def repstock_solicitudes_ot_export():
     ws.freeze_panes = "A2"
     _ORIGEN_XLS = {"ot": "OT", "manual": "Manual", "incidencia": "Incidencia", "ticket": "Ticket directo"}
     for s in sols:
+        _creado_x = _xf.a_fecha_excel(s.get("created_at"), utc=True)
         _fila_xls = [
             s.get("id"), s.get("estado_label"), _ORIGEN_XLS.get(s.get("contexto"), s.get("contexto")),
             s.get("cliente_nombre") or ("Reposición de stock propio" if s.get("es_reposicion") else "—"),
@@ -109972,9 +109979,11 @@ def repstock_solicitudes_ot_export():
             s.get("repuesto_nombre") or "", s.get("repuesto_sku") or "",
             s.get("cantidad"), s.get("proveedor_nombre") or "", s.get("oc_numero") or "",
             (s.get("motivo") or "")[:500], s.get("solicitado_por") or "",
-            s.get("created_at") or "", s.get("dias_transcurridos"),
+            _creado_x, s.get("dias_transcurridos"),
         ]
         ws.append([_fila_xls[i] for i in _cols_ok])
+        _xf.formatear(ws.cell(row=ws.max_row, column=_col_creado))
+        _xf.escribir_apoyo(ws, ws.max_row, _n_base + 1, _creado_x)
     for i in range(1, len(headers) + 1):
         ws.column_dimensions[get_column_letter(i)].width = 18
     # ⚠️ 2026-09-25 (revisión adversarial post-commit f5db174b): si el
@@ -109990,6 +109999,9 @@ def repstock_solicitudes_ot_export():
         warn.font = Font(color="B45309", bold=True)
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
         ws.freeze_panes = "A3"
+    # 📅 2026-10-29: filtro automático sobre toda la tabla (encabezado en la fila 2 si arriba va el aviso del techo).
+    _fila_enc = 2 if truncado else 1
+    ws.auto_filter.ref = f"A{_fila_enc}:{get_column_letter(len(headers))}{max(_fila_enc, ws.max_row)}"
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -122687,6 +122699,7 @@ def ot2_reporte_xlsx():
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         from openpyxl.utils import get_column_letter
         from io import BytesIO
+        import xlsx_fechas as _xf     # 📅 2026-10-29: fechas reales de Excel, hora Chile, formato español (un solo helper)
     except Exception:
         flash("Falta la librería openpyxl para generar el Excel.", "danger")
         return redirect(url_for("ot2_panel"))
@@ -122754,19 +122767,23 @@ def ot2_reporte_xlsx():
         cell.border = border
 
     def _d(v):
-        """DATE/TIME puro: sin conversión de zona (no la tiene)."""
+        """DATE/TIME puro: sin conversión de zona (no la tiene). TEXTO: solo para frases (columna «Relación»)."""
         try:
             return v.strftime("%d/%m/%Y") if v else ""
         except Exception:
             return ""
 
+    # 📅 2026-10-29 (Daniel: «la fecha viene con formato gringo… que en el Excel, en español, pueda filtrar por meses»): las
+    # columnas de fecha ya no son TEXTO: son fechas reales de Excel (el filtro las agrupa por año → mes → día) en hora Chile y
+    # con formato dd/mm/yyyy [hh:mm]. Vacío = celda vacía; un valor que no es fecha queda con su texto original (xlsx_fechas).
+    def _dx(v):
+        """DATE puro (fecha programada / realizada) → fecha de Excel, sin conversión de zona (no la tiene)."""
+        return _xf.a_fecha_excel(v, utc=False)
+
     def _dt_cl(v):
-        """DATETIME en UTC → hora Chile (REGLA #6). NO usar _d() acá: escribiría
+        """DATETIME en UTC → fecha y hora de Excel en hora Chile (REGLA #6). NO usar _d() acá: escribiría
         UTC crudo y rompería la regla."""
-        try:
-            return chile_fmt_filter(v) if v else ""
-        except Exception:
-            return ""
+        return _xf.a_fecha_excel(v, utc=True)
 
     wb = openpyxl.Workbook()
 
@@ -122800,6 +122817,10 @@ def ot2_reporte_xlsx():
     # 🧩 2026-10-19: «Relación» va AL FINAL, para no correr ninguna columna que ya existía.
     headers += ["Relación (instalación ↔ desinstalación)"]
     headers += ["Responsable de la OT"]     # 🙋 2026-10-21 (REGLA #36): al final, para no correr ninguna columna que ya existía
+    # 📅 2026-10-29: columnas de apoyo para filtrar por año, mes, semana y día sin fórmulas (de la fecha PROGRAMADA: es la que
+    # manda en este reporte, la del filtro desde/hasta y la del orden). Al final, para no correr ninguna columna que ya existía.
+    _COL_APOYO = len(headers) + 1
+    headers += _xf.encabezados_apoyo("de la fecha programada")
     NCOLS = len(headers)
     # Columnas por NOMBRE (no por número fijo): agregar una columna no corre los formatos.
     _COLS_CLP = {headers.index(h) + 1 for h in (
@@ -122937,6 +122958,8 @@ def ot2_reporte_xlsx():
                 obs.append("Margen negativo")
         obs.extend(_fin["avisos"])
 
+        # 🧭 OT pendiente por falta de stock (fecha centinela) = «Sin fecha»; si no, la fecha real de Excel (📅 2026-10-29).
+        _fprog_x = ("Sin fecha" if _qp.es_sin_fecha(f.get("fecha_programada")) else _dx(f.get("fecha_programada")))
         vals = [
             f.get("numero_ot") or "", f.get("numero_ticket") or "",
             f.get("razon_social") or "", f.get("cliente_rut") or "",
@@ -122947,9 +122970,9 @@ def ot2_reporte_xlsx():
             f.get("prioridad") or "", estado_label,
             _OT2_FASE_LABELS.get(fase, fase), tec,
             "Externo" if externo else "Interno",
-            ("Sin fecha" if _qp.es_sin_fecha(f.get("fecha_programada")) else _d(f.get("fecha_programada"))),   # 🧭 OT pendiente por falta de stock
+            _fprog_x,
             _ot_tv_hhmm(f.get("hora_inicio")) or "",
-            _d(f.get("fecha_realizada")), f"{n_c}/{n_t}" if n_t else "",
+            _dx(f.get("fecha_realizada")), f"{n_c}/{n_t}" if n_t else "",
             pct, _LBL_CC.get(f.get("centro_costo"), f.get("centro_costo") or ""),
             f.get("zz_codigo") or "",
             float(f.get("zz_monto")) if f.get("zz_monto") is not None else None,
@@ -123021,6 +123044,8 @@ def ot2_reporte_xlsx():
             _rel_xl = ""
         vals += [_rel_xl]
         vals += [f.get("responsable_nombre") or ""]     # 🙋 2026-10-21 (REGLA #36)
+        # 📅 2026-10-29: Año · Mes · N° mes · Semana · Día · Año-Mes de la fecha programada (vacías si la OT no tiene fecha).
+        vals += _xf.columnas_apoyo(_fprog_x)
 
         bg = LGRAY if r % 2 == 0 else "FFFFFF"
         for ci, val in enumerate(vals, 1):
@@ -123049,6 +123074,10 @@ def ot2_reporte_xlsx():
                     cell.font = Font(size=9, bold=True, color="DC2626")
             elif ci == _COL_PCT and val is not None:
                 cell.number_format = '0.0"%"'
+            elif _xf.formato(val):           # 📅 2026-10-29: fecha real de Excel, dd/mm/yyyy [hh:mm]
+                cell.number_format = _xf.formato(val)
+            elif ci >= _COL_APOYO:
+                cell.alignment = Alignment(horizontal="center", vertical="center")
         r += 1
 
         # Agregados en Python — sin consultas extra. Reusa _cprov/_cdesp ya
@@ -123116,9 +123145,13 @@ def ot2_reporte_xlsx():
 
     widths = [15, 12, 30, 13, 15, 34, 30, 18, 11, 16, 14, 22, 10, 15, 8, 15,
               9, 9, 16, 16, 13, 14, 13, 14, 14, 14, 14, 14, 11, 14, 26, 17, 16, 16, 16, 16, 40]
-    if _xl_sa and len(widths) == NCOLS - 2:
+    # 📅 2026-10-29: con «Responsable» al final la condición vieja (`len(widths) == NCOLS - 2`) ya no se cumplía y los anchos
+    # quedaban corridos una columna en la versión del superadmin: se inserta siempre que la columna existe.
+    if _xl_sa:
         widths.insert(len(widths) - 1, 46)   # 🏷️ 2026-10-12: «Clasificación (cómo nació)», antes de Observaciones
     widths += [36]   # 🧩 2026-10-19: «Relación», al final (2026-10-21: se quitó «Evento»)
+    widths += [24]   # 🙋 «Responsable de la OT»
+    widths += list(_xf.ANCHOS_APOYO)   # 📅 2026-10-29: Año · Mes · N° mes · Semana · Día · Año-Mes
     for ci, w in enumerate(widths[:NCOLS], 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
     ws.freeze_panes = "C3"
@@ -123148,6 +123181,7 @@ def ot2_reporte_xlsx():
     for ci, w in enumerate([26, 10, 12, 11, 11, 14, 14, 11, 16, 16, 20], 1):
         ws2.column_dimensions[get_column_letter(ci)].width = w
     ws2.freeze_panes = "A2"
+    ws2.auto_filter.ref = f"A1:{get_column_letter(len(h2))}{max(1, r2 - 1)}"   # 📅 2026-10-29: filtro en toda tabla
 
     # ── Hoja 3: Por centro de costo ───────────────────────────────────
     # La que sustenta el informe de Daniel: cuánto se va en trabajos que NO
@@ -123188,6 +123222,7 @@ def ot2_reporte_xlsx():
             _fuera_sstt["margen"] += b["margen"]
             _fuera_sstt["garantia"] += b["garantia"]
             _fuera_sstt["aparte"] += b["aparte"]
+    ws3.auto_filter.ref = f"A1:{get_column_letter(len(h3))}{max(1, r3 - 1)}"   # 📅 2026-10-29: sin la fila TOTAL
     r3 += 1
     for ci, val in enumerate(
         ["TOTAL fuera de Servicio Técnico", _fuera_sstt["total"],
@@ -123232,6 +123267,7 @@ def ot2_reporte_xlsx():
             if ci in (3, 4, 5, 6, 8):
                 c.number_format = '"$"#,##0'
         r3b += 1
+    ws3b.auto_filter.ref = f"A1:{get_column_letter(len(h3b))}{max(1, r3b - 1)}"   # 📅 2026-10-29: sin la fila TOTAL
     r3b += 1
     _tot_tipo = {"total": sum(t["total"] for t in por_tipo.values()),
                  "monto": sum(t["monto"] for t in por_tipo.values()),
@@ -123318,7 +123354,8 @@ def ot2_reporte_xlsx():
             _hdr(ws6.cell(row=_r6, column=ci), h)
         _r6 += 1
         for _fd in sorted(det_cob, key=lambda x: (_ord_lbl.get(x[0], 99), x[1], str(x[2]))):
-            _fila6 = _fd[:9] + [_int_txt6(_fd[12])] + ([_fd[9], _fd[10], _fd[14], _fd[11]] if _xl_sa else [])
+            # 📅 2026-10-29: «Cuándo autorizó» como fecha y hora real de Excel (llega como texto dd/mm/aaaa hh:mm en hora Chile).
+            _fila6 = _fd[:9] + [_int_txt6(_fd[12])] + ([_fd[9], _fd[10], _xf.a_fecha_excel(_fd[14]), _fd[11]] if _xl_sa else [])
             for ci, val in enumerate(_fila6, 1):
                 c6 = _txt_xl(ws6.cell(row=_r6, column=ci, value=val))
                 c6.font = Font(size=9, bold=(ci == 3))
@@ -123329,6 +123366,8 @@ def ot2_reporte_xlsx():
                     else LGRAY if _r6 % 2 == 0 else "FFFFFF"))
                 if ci in (4, 5) and val is not None:
                     c6.number_format = '"$"#,##0'
+                elif _xf.formato(val):
+                    c6.number_format = _xf.formato(val)
             _r6 += 1
         ws6.auto_filter.ref = f"A{_r6_det}:{get_column_letter(len(_h6d))}{max(_r6_det, _r6 - 1)}"
         for ci, w in enumerate([24, 30, 16, 16, 20, 28, 34, 18, 30, 34, 46, 24, 20, 50], 1):
@@ -123484,6 +123523,7 @@ def ot2_reporte_xlsx():
         for ci, w in enumerate([46, 10, 16, 16, 16], 1):
             ws5.column_dimensions[get_column_letter(ci)].width = w
         ws5.freeze_panes = "A2"
+        ws5.auto_filter.ref = f"A1:{get_column_letter(len(_h5))}{max(1, _r5 - 1)}"   # 📅 2026-10-29
 
     buf = BytesIO()
     wb.save(buf)
@@ -125797,6 +125837,7 @@ def ot_saldo_facturas_excel():
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
+    import xlsx_fechas as _xf     # 📅 2026-10-29: fechas reales de Excel en hora Chile, formato español
     ROJO, NEGRO = "DC2626", "0A0A0A"
     hdr_font = Font(bold=True, color="FFFFFF", name="Arial", size=10)
     hdr_fill = PatternFill("solid", fgColor=NEGRO)
@@ -125822,6 +125863,9 @@ def ot_saldo_facturas_excel():
         for row in ws.iter_rows(min_row=2):
             for c in row:
                 c.font, c.border = base, borde
+                _xf.formatear(c)          # 📅 2026-10-29: una fecha real queda dd/mm/yyyy [hh:mm]
+                if isinstance(c.value, str) and c.value[:1] == "=":
+                    c.data_type = "s"     # un texto escrito por una persona nunca se ejecuta como fórmula (este libro no usa fórmulas)
 
     try:
         docs = mysql_fetchall("SELECT * FROM ot_fac_doc ORDER BY FIELD(estado," +
@@ -125892,14 +125936,18 @@ def ot_saldo_facturas_excel():
     ws = wb.create_sheet("Facturas")
     filas = []
     for f in filas_docs:
-        filas.append([f["titulo"], f["cliente"], f["cliente_rut"], f["fecha"], f["total_doc"] or None,
+        # 📅 2026-10-29: «Fecha» (del documento de Random, guardada como texto dd/mm/aaaa) y «Revisada» (ya en hora Chile) van
+        # como fechas reales de Excel; al final, Año · Mes · N° mes · Semana · Día · Año-Mes de la fecha del documento.
+        _f_doc = _xf.a_fecha_excel(f["fecha"])
+        filas.append([f["titulo"], f["cliente"], f["cliente_rut"], _f_doc, f["total_doc"] or None,
                       f["servicio"]["total"], f["servicio"]["usado"], f["servicio"]["saldo"],
                       f["despacho"]["total"], f["despacho"]["usado"], f["despacho"]["saldo"],
-                      f["estado"]["txt"], f["n_ot"], f["ots"], f["familia_de"] or "", f["revisada"]])
+                      f["estado"]["txt"], f["n_ot"], f["ots"], f["familia_de"] or "", _xf.a_fecha_excel(f["revisada"])]
+                     + _xf.columnas_apoyo(_f_doc))
     hoja(ws, ["Documento", "Cliente", "RUT", "Fecha", "Total documento", "Servicio: monto", "Servicio: usado",
               "Servicio: saldo", "Despacho: monto", "Despacho: usado", "Despacho: saldo", "Estado", "N° OT",
-              "OT que la usan", "Nota de venta de", "Revisada (hora Chile)"],
-         filas, [16, 34, 14, 12, 15, 15, 15, 15, 15, 15, 15, 18, 7, 40, 18, 18])
+              "OT que la usan", "Nota de venta de", "Revisada (hora Chile)"] + _xf.encabezados_apoyo("de la fecha del documento"),
+         filas, [16, 34, 14, 12, 15, 15, 15, 15, 15, 15, 15, 18, 7, 40, 18, 18] + list(_xf.ANCHOS_APOYO))
     for i, f in enumerate(filas_docs, 2):
         for col in range(5, 12):
             ws.cell(row=i, column=col).number_format = clp_fmt
@@ -126008,14 +126056,17 @@ def ot_saldo_facturas_excel():
     filas = []
     for r in libro:
         tu, nu = _ot_doc_real_a_usuario(*_ot_saldo_real((r["doc_tido"], r["doc_nudo"])))
-        filas.append([r["id"], chile_fmt_filter(r["creado_el"]) if r.get("creado_el") else "", f"{tu} {nu}".strip(),
+        # 📅 2026-10-29: fecha y hora REAL de Excel en hora Chile (creado_el se guarda en UTC) y, al final, Año · Mes · Semana…
+        _f_mov = _xf.a_fecha_excel(r.get("creado_el"), utc=True)
+        filas.append([r["id"], _f_mov, f"{tu} {nu}".strip(),
                       _saldo.CATEGORIA_TXT.get(r["categoria"], r["categoria"]),
                       "Consumo" if r["movimiento"] == "consumo" else "Liberación", int(r["monto"]), int(r["acumulado_ot"]),
                       r.get("numero_ot") or "", r.get("cliente") or "",
                       _FAC_ORIGEN_TXT.get(r.get("origen") or "", r.get("origen") or ""), r.get("usuario") or "Sistema",
-                      r.get("detalle") or ""])
+                      r.get("detalle") or ""] + _xf.columnas_apoyo(_f_mov))
     hoja(ws, ["N°", "Fecha (hora Chile)", "Documento", "Categoría", "Movimiento", "Monto", "La OT queda tomando",
-              "OT", "Cliente", "Por qué", "Quién", "Detalle"], filas, [8, 17, 16, 20, 12, 14, 18, 16, 32, 34, 22, 50])
+              "OT", "Cliente", "Por qué", "Quién", "Detalle"] + _xf.encabezados_apoyo("de la fecha del movimiento"),
+         filas, [8, 17, 16, 20, 12, 14, 18, 16, 32, 34, 22, 50] + list(_xf.ANCHOS_APOYO))
     for i in range(2, ws.max_row + 1):
         ws.cell(row=i, column=6).number_format = clp_fmt
         ws.cell(row=i, column=7).number_format = clp_fmt
@@ -147670,6 +147721,7 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
+    import xlsx_fechas as _xf     # 📅 2026-10-29: fechas reales de Excel en hora Chile, formato español
 
     tot = _mfp_totales_lote(factura.get("monto_total"), items)
     n = len(items)
@@ -147708,12 +147760,17 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
     ws_h = wb.create_sheet("Historial")
 
     # ── OT del lote ───────────────────────────────────────────────────────────
+    # 📅 2026-10-29: «Fecha» (la de cierre o, si no cerró, la programada) y «Asignada el» van como fechas REALES de Excel en
+    # hora Chile (antes eran texto); al final, Año · Mes · N° mes · Semana · Día · Año-Mes de esa fecha para filtrar por mes.
     cols_o = ["N° OT", "Fecha", "Técnico", "Proveedor de la OT", "Cliente", "Tipo de trabajo", "Cobertura",
               "Estado", "N° de anexo", "Anexo firmado", "Pago instalación", "Pago despacho",
               "Total que paga esta factura", "Cobrado instalación", "Cobrado despacho", "Cobrado total",
               "Margen (con respaldo)", "Margen %", "Observación", "Asignada por", "Asignada el",
               "Cobrado con respaldo de su factura", "Punto de equilibrio"]
-    _encabezar(ws_o, cols_o, [16, 11, 22, 26, 32, 18, 22, 16, 11, 14, 15, 15, 18, 15, 15, 15, 14, 10, 44, 18, 17, 18, 60])
+    _col_apoyo_o = len(cols_o) + 1
+    cols_o = cols_o + _xf.encabezados_apoyo("de la fecha de la OT")
+    _encabezar(ws_o, cols_o, [16, 11, 22, 26, 32, 18, 22, 16, 11, 14, 15, 15, 18, 15, 15, 15, 14, 10, 44, 18, 17, 18, 60]
+               + list(_xf.ANCHOS_APOYO))
     for it in items:
         cobra = it["sugerido"] if it.get("fac_monto") is None else it["fac_monto"]
         cobertura = ((it.get("cobertura_txt") or it.get("cobertura_corta") or "No se cobra")
@@ -147724,16 +147781,18 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
             anexo_n, anexo_f = "", "Sin anexo"
         estado = (it.get("estado") or "").replace("_", " ") + (" (no cerrada)" if it.get("no_cerrada") else "")
         pct_fila = it.get("margen_fila_pct")
+        # La fila ya trae las fechas en hora Chile como texto dd/mm/aaaa [hh:mm] (las mismas de la pantalla): se leen tal cual.
+        _f_ot = _xf.a_fecha_excel(it.get("fecha") or "")
         ws_o.append([
-            it.get("numero_ot"), it.get("fecha") or "", it.get("tecnico_nombre") or "", it.get("proveedor") or "",
+            it.get("numero_ot"), _f_ot, it.get("tecnico_nombre") or "", it.get("proveedor") or "",
             it.get("cliente") or "", it.get("tipo_label") or "", cobertura, estado, anexo_n, anexo_f,
             float(it.get("servicio") or 0), float(it.get("despacho") or 0), float(cobra or 0),
             float(it.get("cobrado_cliente_serv") or 0), float(it.get("cobrado_cliente_envio") or 0),
             float(it.get("cobrado_cliente") or 0), float(it.get("margen_fila") or 0),
             (pct_fila / 100.0) if pct_fila is not None else "",
-            it.get("observacion") or "", it.get("usuario") or "", it.get("asignada") or "",
+            it.get("observacion") or "", it.get("usuario") or "", _xf.a_fecha_excel(it.get("asignada") or ""),
             float(it["cobrado_respaldado"] if it.get("cobrado_respaldado") is not None else (it.get("cobrado_cliente") or 0)),
-            _mfp_eq_texto(it.get("eq"))])
+            _mfp_eq_texto(it.get("eq"))] + _xf.columnas_apoyo(_f_ot))
     for r in range(2, n + 2):
         for c in range(1, len(cols_o) + 1):
             cel = ws_o.cell(row=r, column=c)
@@ -147746,6 +147805,10 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
                 cel.alignment = Alignment(wrap_text=True, vertical="top")
             elif c == 22:
                 cel.number_format = clp
+            elif c in (2, 21):
+                _xf.formatear(cel)                     # 📅 dd/mm/yyyy · dd/mm/yyyy hh:mm
+            elif c >= _col_apoyo_o:
+                cel.alignment = Alignment(horizontal="center")
         if items[r - 2].get("no_cerrada"):
             ws_o.cell(row=r, column=8).font = f_rojo
         if not items[r - 2].get("anexo_firmado"):
@@ -147791,7 +147854,7 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
         ("Estado de pago", estado_txt, meta.get("pagada_txt") or "", None),
         ("N° de orden de compra", factura.get("numero_oc") or "(sin N° de OC)", "", None),
         ("Documento del proveedor", doc_txt, "", None),
-        ("Fecha del documento", meta.get("fecha_doc") or "", "", None),
+        ("Fecha del documento", _xf.a_fecha_excel(meta.get("fecha_doc") or "") or "", "", None),   # 📅 fecha real
         ("Lote creado", meta.get("creado_txt") or "", "", None),
         ("Monto declarado del lote", tot["monto_total"], origen_monto, clp),
         ("Suma de las OT", f"=SUM({rng('M')})", "Lo que cobra cada OT de este lote (hoja «OT del lote»)", clp),
@@ -147816,6 +147879,8 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
         ws_r.cell(row=r, column=3).alignment = Alignment(wrap_text=True)
         if fmt:
             ws_r.cell(row=r, column=2).number_format = fmt
+        else:
+            _xf.formatear(ws_r.cell(row=r, column=2))      # 📅 2026-10-29: «Fecha del documento» como fecha real
     for r in (11, 12, 14):
         ws_r.cell(row=r, column=1).fill = fill_t
         ws_r.cell(row=r, column=2).fill = fill_t
@@ -147824,12 +147889,16 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
     # ── Historial ─────────────────────────────────────────────────────────────
     _encabezar(ws_h, ["Fecha y hora (Chile)", "Usuario", "Acción", "Detalle"], [20, 26, 36, 100])
     for ev in eventos:
-        ws_h.append([ev.get("fecha") or "", ev.get("usuario") or "", ev.get("accion_txt") or "", ev.get("detalle") or ""])
+        # 📅 2026-10-29: fecha y hora real de Excel (el evento ya trae el texto en hora Chile; se lee tal cual).
+        ws_h.append([_xf.a_fecha_excel(ev.get("fecha") or ""), ev.get("usuario") or "", ev.get("accion_txt") or "",
+                     ev.get("detalle") or ""])
     for r in range(2, len(eventos) + 2):
         for c in range(1, 5):
             cel = ws_h.cell(row=r, column=c)
             cel.font = f_n
             cel.alignment = Alignment(wrap_text=True, vertical="top")
+            if c == 1:
+                _xf.formatear(cel)
     ws_h.auto_filter.ref = f"A1:D{max(len(eventos) + 1, 1)}"
     _neutralizar_texto(ws_h, 2, len(eventos) + 1)
 
@@ -149226,15 +149295,12 @@ def mant_factura_proveedor_archivo(fid):
 
 def _mfp_xl_dt(dt):
     """DATETIME guardado en UTC (NOW()) → datetime naive en hora Chile para
-    escribirlo como fecha real en Excel (REGLA #6). None si viene vacío."""
+    escribirlo como fecha real en Excel (REGLA #6). None si viene vacío.
+    📅 2026-10-29: la conversión es la del helper único de los Excel (xlsx_fechas), no una copia propia."""
     if not dt:
         return None
-    try:
-        from zoneinfo import ZoneInfo as _ZI
-        from datetime import timezone as _tz
-        return dt.replace(tzinfo=_tz.utc).astimezone(_ZI("America/Santiago")).replace(tzinfo=None)
-    except Exception:
-        return dt
+    import xlsx_fechas as _xf
+    return _xf.a_fecha_excel(dt, utc=True)
 
 
 @app.route("/mantenciones/facturas-proveedor/por-facturar.xlsx")
@@ -149262,6 +149328,7 @@ def mant_facturas_proveedor_por_facturar_xlsx():
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
+    import xlsx_fechas as _xf     # 📅 2026-10-29: fechas reales de Excel en hora Chile, formato español
 
     f_prov = (request.args.get("proveedor") or "").strip()[:120]
     prov_id = None
@@ -149462,13 +149529,20 @@ def mant_facturas_proveedor_por_facturar_xlsx():
         anchos = anchos_op + [16, 15, 16, 34]
         _i_pago = len(cols_op) + 1
         cols_clp, col_pct, col_anx, col_rev = tuple(range(_i_pago, _i_pago + 3)), None, len(cols_op), None
+    # 📅 2026-10-29: al final (las dos versiones), Año · Mes · N° mes · Semana · Día · Año-Mes de la fecha programada.
+    cols = cols + _xf.encabezados_apoyo("de la fecha programada")
+    anchos = anchos + list(_xf.ANCHOS_APOYO)
 
     def _fila_ot(d):
-        base = [d["numero_ot"], d.get("fecha_programada") or d["fecha"], d.get("hora") or "",
-                d.get("fecha_realizada") or "", d.get("fecha_cierre") or "", _estado_txt(d),
+        # 📅 2026-10-29: las fechas van como fechas REALES de Excel (antes texto). La fila ya las trae en hora Chile como
+        # dd/mm/aaaa [hh:mm] (las mismas de la pantalla): se leen tal cual, sin volver a convertir.
+        _fprog = _xf.a_fecha_excel(d.get("fecha_programada") or d["fecha"])
+        base = [d["numero_ot"], _fprog, d.get("hora") or "",
+                _xf.a_fecha_excel(d.get("fecha_realizada") or ""), _xf.a_fecha_excel(d.get("fecha_cierre") or ""), _estado_txt(d),
                 _t(d["cliente"]), _rut_xl(d.get("cliente_rut")), _t(d.get("comuna")), _t(d.get("direccion")),
                 _t(d.get("titulo")), _t(d["tipo_label"]), _t(d["tecnico_nombre"]), _anexo_txt(d)]
         pago = [d["servicio"], d["despacho"], d["sugerido"]]
+        apoyo = _xf.columnas_apoyo(_fprog)
         if not interno:
             if d.get("sin_costo"):
                 obs = "Costo pendiente de confirmar por ILUS"
@@ -149476,7 +149550,7 @@ def mant_facturas_proveedor_por_facturar_xlsx():
                 obs = "Sin cobro ($0)"
             else:
                 obs = ""
-            return base + pago + [obs]
+            return base + pago + [obs] + apoyo
         # 2026-10-07: condición y cobertura con la regla única (cuenta de la OT), no con cubierto_por suelto.
         _cond = ((d.get("cobertura_corta") or "Garantía") if d["es_garantia"] else
                  ("Sin cobro declarado" if d.get("sin_cobro_declarado") else
@@ -149490,7 +149564,8 @@ def mant_facturas_proveedor_por_facturar_xlsx():
                 + [d["cobrado_cliente_serv"], d["cobrado_cliente_envio"], d["cobrado_cliente"],
                    d["margen"] if _comparable else None, d["margen_pct"] if _comparable else None,
                    _t(d["proveedor"]), _rut_xl(d.get("proveedor_rut")), _t(d.get("created_by")),
-                   d.get("creada") or "", _flags(d)])
+                   _xf.a_fecha_excel(d.get("creada") or ""), _flags(d)]
+                + apoyo)
 
     def _total_fila(lst, etiqueta):
         rs = _mfp_resumen_filas(lst)
@@ -149508,6 +149583,8 @@ def mant_facturas_proveedor_por_facturar_xlsx():
         for d in lst:
             wsx.append(_fila_ot(d))
             _fila_estilo(wsx, r_, cols_clp, col_pct)
+            for _cel in wsx[r_]:
+                _xf.formatear(_cel)                    # 📅 2026-10-29: dd/mm/yyyy · dd/mm/yyyy hh:mm
             if not d.get("anexo_firmado"):
                 wsx.cell(row=r_, column=col_anx).font = _rojo
             if d.get("no_cerrada"):
@@ -149590,6 +149667,7 @@ def mant_facturas_proveedor_xlsx():
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
+    import xlsx_fechas as _xf     # 📅 2026-10-29: formato español y columnas de apoyo (un solo helper)
 
     # ── Filtros ─────────────────────────────────────────────────────────
     try:
@@ -149697,8 +149775,9 @@ def mant_facturas_proveedor_xlsx():
     _rojo = Font(color="B91C1C", bold=True)
     _verde = Font(color="15803D", bold=True)
     _FMT_CLP = '"$"#,##0;[Red]-"$"#,##0'
-    _FMT_D = "DD-MM-YYYY"
-    _FMT_DT = "DD-MM-YYYY HH:MM"
+    # 📅 2026-10-29: el formato español único de los Excel (dd/mm/yyyy · dd/mm/yyyy hh:mm), antes DD-MM-YYYY propio.
+    _FMT_D = _xf.FORMATO_FECHA
+    _FMT_DT = _xf.FORMATO_FECHA_HORA
 
     def _encabezar(ws, cols, anchos):
         ws.append(cols)
@@ -149734,6 +149813,11 @@ def mant_facturas_proveedor_xlsx():
             "Pagada", "Pagada por", "Referencia de pago", "Respaldo"]
     anchos = [14, 6, 22, 20, 34, 16, 11, 16, 16, 20, 12, 10, 18, 26, 40, 9,
               16, 16, 16, 16, 16, 16, 14, 40, 22, 16, 16, 17, 20, 17, 20, 18, 10]
+    # 📅 2026-10-29: al final, Año · Mes · N° mes · Semana · Día · Año-Mes de la fecha que manda (la programada = «Fecha de
+    # instalación»), para filtrar por mes sin fórmulas. «Sem» se conserva (REGLA #4.2).
+    _col_apoyo_d = len(cols) + 1
+    cols = cols + _xf.encabezados_apoyo("de la fecha de instalación")
+    anchos = anchos + list(_xf.ANCHOS_APOYO)
     _encabezar(ws, cols, anchos)
 
     prov_tot = {}
@@ -149820,7 +149904,7 @@ def mant_facturas_proveedor_xlsx():
             _mfp_xl_dt(r.get("fac_created_at")), r.get("fac_created_by") or "",
             _mfp_xl_dt(r.get("fac_pagada_at")), r.get("fac_pagada_por") or "",
             r.get("fac_ref") or "", ("Sí" if r.get("fac_archivo") else ""),
-        ])
+        ] + _xf.columnas_apoyo(_xf.a_fecha_excel(fecha, utc=False)))
         ri = ws.max_row
         _fmt_fila(ws, ri, cols_clp=(17, 18, 19, 20, 21, 22, 23, 27), cols_d=(1,), cols_dt=(13, 28, 30))
         ws.cell(row=ri, column=23).font = _rojo if ganancia < 0 else _verde
@@ -150003,9 +150087,12 @@ def mant_facturacion_proveedores_xlsx():
 
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    import xlsx_fechas as _xf     # 📅 2026-10-29: fechas reales de Excel en hora Chile, formato español
     wb = Workbook()
     _fill = PatternFill("solid", fgColor="0A0A0A")
     _font = Font(color="FFFFFF", bold=True, size=10)
+    _FMT_CLP = '"$"#,##0;[Red]-"$"#,##0'     # 📅 2026-10-29: montos con miles (antes sin formato)
 
     def _encabezar(ws, cols):
         ws.append(cols)
@@ -150013,7 +150100,7 @@ def mant_facturacion_proveedores_xlsx():
             cel = ws.cell(row=1, column=i)
             cel.fill = _fill
             cel.font = _font
-            cel.alignment = Alignment(vertical="center")
+            cel.alignment = Alignment(vertical="center", wrap_text=True)
         ws.freeze_panes = "A2"
 
     ws = wb.active
@@ -150028,6 +150115,7 @@ def mant_facturacion_proveedores_xlsx():
                    x["cobrado"], x["margen"],
                    (round(x["margen_pct"], 1) if x.get("margen_pct") is not None else ""),
                    x["n_sin_cobro"]])
+    _fin_datos_res = ws.max_row          # 📅 2026-10-29: última fila de datos (el filtro no incluye el TOTAL)
     ws.append(["TOTAL", "", tot["n_ot"], tot["instalacion"], tot["mantencion"],
                tot["otros"], tot["despacho"], tot["total"], tot["cobrado"],
                tot["margen"],
@@ -150038,26 +150126,43 @@ def mant_facturacion_proveedores_xlsx():
     for col, anchura in zip("ABCDEFGHIJKL",
                             (34, 14, 7, 14, 14, 15, 13, 15, 18, 14, 10, 20)):
         ws.column_dimensions[col].width = anchura
+    # 📅 2026-10-29: montos con separador de miles y el margen % (ya en puntos porcentuales) con su signo, sin cambiar la cifra.
+    for _fila_r in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        for _c in _fila_r[3:10]:
+            _c.number_format = _FMT_CLP
+        _fila_r[10].number_format = '0.0"%"'
+    ws.auto_filter.ref = f"A1:L{max(1, _fin_datos_res)}"
 
     ws2 = wb.create_sheet("Detalle por OT")
-    _encabezar(ws2, ["OT", "Cerrada", "Proveedor", "Cliente", "Servicio",
-                     "Documento del cliente", "Costo servicio", "Costo despacho",
-                     "Total pagado", "Cobrado servicio (ZZ)",
-                     "Cobrado envio (ZZENVIO)", "Cobrado total", "Margen",
-                     "Origen del cobro"])
+    # 📅 2026-10-29: «Cerrada» como fecha real de Excel (antes texto) y, al final, Año · Mes · N° mes · Semana · Día · Año-Mes de
+    # la fecha de cierre (este informe es de OT CERRADAS: es la fecha que manda).
+    _cols2 = (["OT", "Cerrada", "Proveedor", "Cliente", "Servicio",
+               "Documento del cliente", "Costo servicio", "Costo despacho",
+               "Total pagado", "Cobrado servicio (ZZ)",
+               "Cobrado envio (ZZENVIO)", "Cobrado total", "Margen",
+               "Origen del cobro"] + _xf.encabezados_apoyo("de la fecha de cierre"))
+    _encabezar(ws2, _cols2)
     for d in detalle:
         # 2026-10-07: origen del cobro según la cuenta única de la OT.
         _origen = ((d.get("cobertura_txt") or "No se le cobra") if d["garantia"]
                    else "Cobro declarado (documento o a mano)" if d["fuente_cobro"] == "zz"
                    else "Precio al cliente anotado (OT antigua)" if d["fuente_cobro"] == "valor_ot"
                    else "SIN COBRO DECLARADO")
-        ws2.append([d["numero_ot"], d["cerrada"], d["proveedor"], d["cliente"],
+        # La fila trae la fecha de cierre ya en hora Chile como dd/mm/aaaa (la de la pantalla): se lee tal cual.
+        _cerr_x = _xf.a_fecha_excel(d.get("cerrada") or "")
+        ws2.append([d["numero_ot"], _cerr_x, d["proveedor"], d["cliente"],
                     d["tipo_label"], d["documento"], d["servicio"], d["despacho"],
                     d["total"], d["cobrado_servicio"], d["cobrado_envio"],
-                    d["cobrado"], d["margen"], _origen])
+                    d["cobrado"], d["margen"], _origen] + _xf.columnas_apoyo(_cerr_x))
+        _xf.formatear(ws2.cell(row=ws2.max_row, column=2))
+        for _c in ws2[ws2.max_row][6:13]:
+            _c.number_format = _FMT_CLP
     for col, anchura in zip("ABCDEFGHIJKLMN",
                             (16, 11, 30, 30, 20, 20, 14, 14, 14, 18, 20, 14, 14, 24)):
         ws2.column_dimensions[col].width = anchura
+    for _i, _w in enumerate(_xf.ANCHOS_APOYO, 15):
+        ws2.column_dimensions[get_column_letter(_i)].width = _w
+    ws2.auto_filter.ref = f"A1:{get_column_letter(len(_cols2))}{max(1, ws2.max_row)}"
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -174825,23 +174930,25 @@ def _acta_xlsx_bytes(datos):
     """Excel del acta (openpyxl): encabezado, totales por resultado y una fila por producto."""
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
+    import xlsx_fechas as _xf     # 📅 2026-10-29: fechas reales de Excel en hora Chile, formato español
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Acta de recepción"
     negro, rojo = "0A0A0A", "DC2626"
     ws.cell(row=1, column=1, value=f"{ILUS_BRAND} · Acta de recepción de la revisión").font = Font(
         bold=True, size=14, color=rojo)
+    # 📅 2026-10-29: las fechas del acta van como fechas y horas REALES de Excel en hora Chile (naive = UTC, como _acta_fecha).
     info = [
         ("OT", datos.get("numero_ot")), ("Tipo de trabajo", datos.get("tipo_nombre")),
         ("Documento", ", ".join(datos.get("documentos") or []) or "—"),
         ("Revisó", ", ".join(datos.get("revisores") or []) or (datos.get("ot") or {}).get("tecnico_nombre") or "—"),
-        ("Última revisión", _acta_fecha(datos.get("ultima_revision")) or "—"),
-        ("Generada", _acta_fecha(datos.get("generado_en"))),
+        ("Última revisión", _xf.a_fecha_excel(datos.get("ultima_revision")) or "—"),
+        ("Generada", _xf.a_fecha_excel(datos.get("generado_en")) or ""),
     ]
     fila = 3
     for k, val in info:
         ws.cell(row=fila, column=1, value=k).font = Font(bold=True)
-        _acta_xl_celda(ws, fila, 2, val)
+        _xf.formatear(_acta_xl_celda(ws, fila, 2, val))
         fila += 1
     fila += 1
     ws.cell(row=fila, column=1, value="Totales por resultado").font = Font(bold=True, color=rojo)
@@ -174860,17 +174967,22 @@ def _acta_xlsx_bytes(datos):
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor=negro)
         c.alignment = Alignment(vertical="center", wrap_text=True)
+    fila_cab = fila
     fila += 1
     for n, pr in enumerate(datos.get("productos") or [], start=1):
         valores = [n, pr.get("sku") or "", pr.get("nombre") or "", pr.get("cantidad"), pr.get("resultado"),
                    pr.get("observacion") or "", pr.get("faltantes") or "", pr.get("revisado_por") or "",
-                   _acta_fecha(pr.get("revisado_en"))]
+                   _xf.a_fecha_excel(pr.get("revisado_en"))]
         for i, val in enumerate(valores, start=1):
             c = _acta_xl_celda(ws, fila, i, val)
             c.alignment = Alignment(vertical="top", wrap_text=True)
+            _xf.formatear(c)
         fila += 1
     for col, ancho in zip("ABCDEFGHI", (6, 16, 46, 14, 22, 50, 34, 22, 18)):
         ws.column_dimensions[col].width = ancho
+    # 📅 2026-10-29: filtro automático sobre la tabla de productos. Sin inmovilizar filas: el acta es un documento y arriba de
+    # la tabla van el encabezado y los totales (~15 filas); congelarlas dejaría media pantalla fija.
+    ws.auto_filter.ref = f"A{fila_cab}:I{max(fila_cab, fila - 1)}"
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
