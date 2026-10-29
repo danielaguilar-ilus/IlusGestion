@@ -146,10 +146,18 @@
           <option value="sin_ubicacion_nuestra">Sin ubic. nuestra</option>
           <option value="sin_datos">Check no disponible</option>
         </select>
+        {#- 🏷️ 2026-10-29 (gestión de motivos): filtra por el TIPO de motivo. Las opciones las llena incMotRefrescarSelectores() con el catálogo. -#}
+        <select id="incFMotivo" class="rm-select" aria-label="Filtrar por tipo de motivo">
+          <option value="">Tipo de motivo: todos</option>
+          <option value="sin">Sin clasificar</option>
+        </select>
         <button type="button" class="rm-btn rm-btn-rojo" id="incBtnLimpiar"><i class="bi bi-x-circle"></i>Limpiar filtros</button>
         {#- 🗄️ 2026-09-30: acceso directo al historial de bajas (mismo panel de "Revisar diferencias"). -#}
         <button type="button" class="rm-btn" id="incBtnBajas"
                 title="Historial de lo que se dio de baja, con su motivo, quién y cuándo"><i class="bi bi-archive"></i>Dadas de baja</button>
+        {#- 🏷️ 2026-10-29 (Daniel: «sí, quiero la gestión de motivos»): resumen por tipo de motivo, lo que falta clasificar y el catálogo. -#}
+        <button type="button" class="rm-btn" id="incBtnMotivos"
+                title="Ver la bodega por tipo de motivo, clasificar lo que falta y administrar los tipos"><i class="bi bi-tags"></i>Motivos<span class="inc-mot-badge" id="incMotBadge" hidden></span></button>
       </div>
     </div>
   </div>
@@ -167,6 +175,101 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
       <div class="modal-body" id="incDifCuerpo"></div>
+      <div class="modal-footer" style="border-top:1px solid #f1f5f9">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="min-height:44px">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal «Motivos de la bodega» (2026-10-29, Daniel: «sí, quiero la gestión de motivos»). Tres pestañas: Resumen por tipo de motivo (clic = filtra
+   la tabla), Por clasificar (lo que aún no tiene tipo, con el tipo SUGERIDO y su porqué; lo elige la persona) y Catálogo (agregar, renombrar,
+   desactivar: solo admin; nunca se borra un tipo). El contenido lo arma incMotAbrir(). ── #}
+<style>
+  .inc-mot-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;margin-left:6px;border-radius:999px;
+    background:#dc2626;color:#fff;font-size:.72rem;font-weight:800;font-variant-numeric:tabular-nums}
+  .inc-mot-tabs{border-bottom:2px solid #e5e7eb;margin-bottom:14px;flex-wrap:nowrap;overflow-x:auto}
+  .inc-mot-tabs .nav-link{min-height:44px;font-weight:700;color:#374151;white-space:nowrap;border:0;border-bottom:3px solid transparent;border-radius:0}
+  .inc-mot-tabs .nav-link.active{color:#dc2626;border-bottom-color:#dc2626;background:transparent}
+  .inc-mot-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:14px}
+  .inc-mot-kpi{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px}
+  .inc-mot-kpi b{display:block;font-size:1.55rem;line-height:1.1;font-variant-numeric:tabular-nums;color:#111827}
+  .inc-mot-kpi span{font-size:.8rem;color:#4b5563;font-weight:600}
+  .inc-mot-bar{height:8px;border-radius:99px;background:#e5e7eb;overflow:hidden;margin-top:8px}
+  .inc-mot-bar i{display:block;height:100%;background:#16a34a}
+  .inc-mot-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+  .inc-mot-card{text-align:left;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px;min-height:44px;cursor:pointer;
+    display:flex;flex-direction:column;gap:6px;font:inherit;transition:border-color .15s,box-shadow .15s}
+  .inc-mot-card:hover,.inc-mot-card:focus-visible{border-color:#dc2626;box-shadow:0 4px 14px rgba(220,38,38,.12);outline:none}
+  .inc-mot-card .nom{font-weight:800;color:#111827;overflow-wrap:anywhere;line-height:1.3}
+  .inc-mot-card .num{font-size:1.7rem;font-weight:900;font-variant-numeric:tabular-nums;color:#111827;line-height:1}
+  .inc-mot-card .sub{font-size:.82rem;color:#4b5563;line-height:1.35}
+  .inc-mot-card.off{opacity:.7}
+  .inc-mot-card.sin{border-style:dashed;border-color:#f59e0b;background:#fff8e1}
+  .inc-mot-ayuda{font-size:.84rem;color:#4b5563;margin:0 0 12px}
+  .inc-mot-barra{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+  .inc-mot-barra .form-control,.inc-mot-barra .form-select{min-height:44px;max-width:280px}
+  .inc-mot-fila{display:grid;grid-template-columns:auto 1fr;gap:12px;padding:12px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;margin-bottom:8px}
+  .inc-mot-fila input[type=checkbox]{width:22px;height:22px;margin:0;accent-color:#dc2626}
+  /* La casilla es chica: el área táctil es la etiqueta que la envuelve (44 px, REGLA #3). */
+  .inc-mot-ckw{display:flex;align-items:flex-start;justify-content:center;min-width:44px;min-height:44px;margin:-10px 0 0 -10px;padding:10px;cursor:pointer}
+  .inc-mot-fila .tit{font-weight:800;color:#111827;overflow-wrap:anywhere}
+  .inc-mot-fila .meta{font-size:.8rem;color:#6b7280;margin:2px 0 6px}
+  .inc-mot-fila .mot{font-size:.9rem;color:#1f2937;overflow-wrap:anywhere;white-space:pre-wrap}
+  .inc-mot-acc{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+  .inc-mot-acc .form-select{min-height:44px;max-width:300px}
+  .inc-mot-sug{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 10px;border-radius:10px;background:#fff8e1;border:1px solid #fde68a;
+    color:#92400e;font-size:.82rem}
+  .inc-mot-sug i{flex:0 0 auto}
+  .inc-mot-sug > span{flex:1 1 200px;min-width:0}
+  .inc-mot-sug button{min-height:44px;padding:0 12px}
+  .inc-tipo-chip{display:inline-block;max-width:100%;margin-top:4px;padding:2px 9px;border-radius:10px;background:#f3f4f6;border:1px solid #e5e7eb;color:#374151;
+    font-size:.74rem;font-weight:700;line-height:1.3;overflow-wrap:break-word}
+  /* El filtro por tipo toma el ancho de su opción más larga: se acota para que no se salga de la pantalla (celular) ni estire la fila. */
+  #incFMotivo{max-width:min(100%,300px);min-width:0}
+  .inc-mot-cat{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px 14px;border:1px solid #e5e7eb;border-radius:12px;
+    background:#fff;margin-bottom:8px}
+  .inc-mot-cat.off{background:#f9fafb}
+  .inc-mot-cat .nom{font-weight:800;color:#111827;overflow-wrap:anywhere}
+  .inc-mot-cat .sub{font-size:.8rem;color:#6b7280}
+  .inc-mot-foot{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-top:10px;font-size:.84rem;color:#4b5563}
+  .inc-mot-form-sug{margin-top:8px}
+  @media (max-width:576px){.inc-mot-barra .form-control,.inc-mot-barra .form-select{max-width:none;flex:1 1 100%}}
+</style>
+<div class="modal fade" id="incMotModal" tabindex="-1" aria-labelledby="incMotTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-xl inc-modal-ancho modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red,#dc2626);box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red,#dc2626)">
+        <h5 class="modal-title fw-bold" id="incMotTitulo"><i class="bi bi-tags me-2" style="color:var(--ilus-red,#dc2626)"></i>Motivos de la bodega</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" style="background:#f8fafc">
+        <ul class="nav nav-tabs inc-mot-tabs" role="tablist">
+          <li class="nav-item" role="presentation"><button class="nav-link active" type="button" role="tab" data-bs-toggle="tab" data-bs-target="#incMotTabResumen">Resumen</button></li>
+          <li class="nav-item" role="presentation"><button class="nav-link" type="button" role="tab" data-bs-toggle="tab" data-bs-target="#incMotTabPend">Por clasificar<span class="inc-mot-badge" id="incMotTabPendN" hidden></span></button></li>
+          <li class="nav-item" role="presentation"><button class="nav-link" type="button" role="tab" data-bs-toggle="tab" data-bs-target="#incMotTabCat">Catálogo</button></li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane fade show active" id="incMotTabResumen" role="tabpanel"><div id="incMotResumen"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div></div>
+          <div class="tab-pane fade" id="incMotTabPend" role="tabpanel">
+            <p class="inc-mot-ayuda">El motivo de cada incidencia sigue siendo el texto detallado. Acá solo le pones el <b>tipo</b>, para poder contar y analizar la bodega por causa.
+              Te sugerimos uno leyendo el texto, con las palabras que lo motivaron: <b>tú decides</b>.</p>
+            <div class="inc-mot-barra">
+              <input type="search" class="form-control" id="incMotQ" placeholder="Buscar por SKU, UA, producto o motivo…" aria-label="Buscar lo que falta clasificar" autocomplete="off">
+              <button type="button" class="btn btn-outline-dark" id="incMotTodo" style="min-height:44px"><i class="bi bi-check-all me-1"></i>Seleccionar / deseleccionar todo</button>
+              <select class="form-select" id="incMotAsignarSel" aria-label="Tipo para las marcadas"><option value="">Asignar a las marcadas…</option></select>
+              <button type="button" class="btn btn-ilus" id="incMotAsignarGo" style="min-height:44px" disabled>Asignar</button>
+              <span class="text-muted" id="incMotSelN" style="font-size:.84rem"></span>
+            </div>
+            <div id="incMotPend"></div>
+            <div class="inc-mot-foot" id="incMotPendPie"></div>
+          </div>
+          <div class="tab-pane fade" id="incMotTabCat" role="tabpanel">
+            <p class="inc-mot-ayuda">Los tipos de motivo de la bodega. Un tipo <b>nunca se borra</b>: si ya no se usa, se desactiva y las incidencias que lo tienen lo conservan.</p>
+            <div id="incMotCat"></div>
+          </div>
+        </div>
+      </div>
       <div class="modal-footer" style="border-top:1px solid #f1f5f9">
         <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="min-height:44px">Cerrar</button>
       </div>
@@ -344,6 +447,13 @@
               <div class="form-text mb-0">Mínimo 30 caracteres. Sé concreto: qué pieza, qué lado, qué falla.</div>
               <span class="inc-contador" id="incMotivoCount">0</span>
             </div>
+          </div>
+          {#- 🏷️ 2026-10-29 (gestión de motivos): el TIPO de motivo. Opcional («alertar, no trabar»): sin tipo queda en «Por clasificar». El sistema solo
+              SUGIERE (con las palabras que lo motivaron); lo elige la persona. El texto del motivo de arriba no cambia. -#}
+          <div class="mt-3" id="incMotivoTipoBox">
+            <label class="form-label" for="incMotivoTipo">Tipo de motivo <small class="text-muted fw-normal">(opcional · sirve para contar y analizar la bodega)</small></label>
+            <select class="form-select" id="incMotivoTipo"><option value="">Sin clasificar</option></select>
+            <div class="inc-mot-form-sug" id="incMotivoTipoSug" hidden></div>
           </div>
           {#- 🔧 2026-09-21 (Fase 2 -- Daniel: "la bodega de incidencias en la
               gestión de productos y motivos se puede solicitar un
@@ -1552,6 +1662,10 @@
   // columnas de la tabla principal que tengan dato filtrable"). f_ua/
   // f_cantidad/f_fecha/f_chk se suman a los 3 de la primera vuelta.
   var incFChk = '';
+  // 🏷️ 2026-10-29 (gestión de motivos): filtro por TIPO de motivo ('' todos · 'sin' sin clasificar · código del catálogo).
+  var incFMotivo = '';
+  var incMotCatListo = false;       // ya cargó el catálogo de tipos (si no, el formulario no toca el tipo que tenía la incidencia)
+  var incMotCat = [];               // catálogo [{codigo, nombre, orden, activo}]
   // Se resuelve una sola vez en el render (no en cada fila) para no meter
   // una condición de Jinja adentro de un string de JS -- más frágil de
   // leer y de mantener que una bandera booleana simple.
@@ -1721,7 +1835,8 @@
             : (x.origen === 'manual' ? 'ingreso escrito a mano el '+fmtFecha(x.base)
                                      : 'el registro en el sistema, '+fmtFecha(x.base)+' <span class="rm-sub">(no se encontró la GRI)</span>'))+'</p>' : '');
     return '<tr class="rm-detail" hidden><td colspan="'+ncols+'"><div class="rm-panels">'
-      + panel('chat-square-quote', 'Motivo', p(r.motivo), true)
+      + panel('chat-square-quote', 'Motivo', p(r.motivo)
+          + '<p><b>Tipo:</b> '+(r.motivo_tipo_nombre ? incEsc(r.motivo_tipo_nombre) : '<span class="rm-sub">Sin clasificar</span>')+'</p>', true)
       + panel('lightbulb', 'Sugerencia', p(r.sugerencia))
       + panel('journal-text', 'Observación', p(r.observacion))
       + panel('tools', 'Repuesto', rep)
@@ -1817,7 +1932,7 @@
   function render(data){
     var rows = data.rows || [];
     var box = document.getElementById('incLista');
-    var hayFiltros = incQ || incEstado || incFChk;
+    var hayFiltros = incQ || incEstado || incFChk || incFMotivo;
     var cnt = document.getElementById('incCount');
     if(cnt) cnt.textContent = (data.total || 0) + ' incidencia' + (data.total === 1 ? '' : 's');
     var tabla = '<div class="rm-wrap"><div class="table-responsive">'
@@ -1840,7 +1955,8 @@
         + '<td data-label="SKU"><div class="rm-cell" style="font-weight:600">'+incEsc(r.sku || '—')+'</div></td>'
         + '<td data-label="Descripción"><div class="rm-cell"><div class="rm-cli-name">'+incEsc(r.descripcion || '')+'</div></div></td>'
         + '<td data-label="Cant."><div class="rm-cell"><div class="rm-carga-main">'+(r.cantidad || 0)+'</div></div></td>'
-        + '<td data-label="Motivo"><div class="rm-cell">'+incEsc(r.motivo || '—')+'</div></td>'
+        + '<td data-label="Motivo"><div class="rm-cell">'+incEsc(r.motivo || '—')
+        +   (r.motivo_tipo_nombre ? '<div><span class="inc-tipo-chip" title="Tipo de motivo">'+incEsc(r.motivo_tipo_nombre)+'</span></div>' : '')+'</div></td>'
         + '<td data-label="Repuesto"><div class="rm-cell">'+incRepCelda(r)+'</div></td>'
         + incChkCelda(r, checkwmsOk)
         + '<td data-label="Días en bodega"><div class="rm-cell">'+incDiasBodegaCelda(r)+'</div></td>'
@@ -1974,6 +2090,9 @@
     var url = '/mantenciones/api/incidencias?page='+incPage+'&page_size='+incSize
       + '&q='+encodeURIComponent(incQ)+'&estado='+encodeURIComponent(incEstado);
     if(incFChk) url += '&f_chk='+encodeURIComponent(incFChk);
+    // 🏷️ Al filtrar por tipo de motivo se ve TODO lo de ese tipo (ver_todo=1), no solo lo que ya cuadra: así la tabla coincide con los
+    // números del resumen de «Motivos».
+    if(incFMotivo) url += '&f_motivo='+encodeURIComponent(incFMotivo)+'&ver_todo=1';
     if(incOrderBy) url += '&order_by='+encodeURIComponent(incOrderBy)+'&order_dir='+encodeURIComponent(incOrderDir);
     fetch(url).then(function(r){return r.json();}).then(function(data){
       if(!data.ok){ box.innerHTML = '<div class="empty-state text-danger">'+(data.error||'Error al cargar.')+'</div>'; return; }
@@ -3785,6 +3904,7 @@
     incPintarAvisoUa(null);
     $('incMotivoCount').textContent = '0';
     $('incMotivoCount').classList.remove('ok');
+    incMotFormSet('');          // 🏷️ tipo de motivo: vuelve a «Sin clasificar» y sin sugerencia
     var btnDel = document.getElementById('incBtnEliminar');
     if(btnDel) btnDel.style.display = 'none';
     // 🛠️ 2026-09-30: el botón lleva a la tarjeta 5 (Gestión de repuestos); si la incidencia todavía
@@ -3840,6 +3960,7 @@
       incRepSelLimpiar();
     }
     document.getElementById('incMotivo').dispatchEvent(new Event('input'));
+    incMotFormSet(r.motivo_tipo || '');     // 🏷️ el tipo que ya tenía (la sugerencia se pide sola si no tiene)
     refrescarVerdeTodos();
     var btnDel = document.getElementById('incBtnEliminar');
     if(btnDel) btnDel.style.display = '';
@@ -3895,6 +4016,8 @@
       fecha_resolucion: document.getElementById('incFechaResolucion').value,
       fecha_ingreso: document.getElementById('incFechaIngreso').value,
     };
+    // 🏷️ Tipo de motivo: solo se manda si el catálogo cargó (si no, no se toca el que ya tenía la incidencia).
+    if(incMotCatListo) payload.motivo_tipo = $('incMotivoTipo').value;
     // Revalidar TODOS los pasos antes de guardar: alguien pudo volver
     // atrás y vaciar un campo ya validado. Si algo falla, se salta al
     // paso culpable en vez de mostrar un error genérico.
@@ -4199,6 +4322,261 @@
     });
   }
 
+  // ══════════ 🏷️ Gestión de motivos (2026-10-29, Daniel: «sí, quiero la gestión de motivos») ══════════
+  // El MOTIVO de cada incidencia sigue siendo el texto detallado (mín. 30 caracteres). Acá se maneja el TIPO de motivo: resumen por tipo, lo que falta
+  // clasificar y el catálogo. El sistema solo SUGIERE (con las palabras que lo motivaron); la persona decide (REGLA #32). Opcional: «alertar, no trabar».
+  var incMotPag = {page: 1, size: 10, q: ''}, incMotSel = {}, incMotPuede = false, incMotSugTimer = null, incMotQTimer = null;
+  function incMotModal(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('incMotModal')); }
+  function incMotJson(url, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF_TOKEN || ''}, opts.headers || {});
+    return fetch(url, opts).then(function(r){ return r.json(); });
+  }
+  function incMotPl(n, uno, varios){ return n + ' ' + (n === 1 ? uno : varios); }
+
+  // Lee el catálogo y el resumen, y llena el filtro de la tabla, el selector del formulario y la insignia del botón «Motivos».
+  function incMotRefrescarSelectores(){
+    return incMotJson('/mantenciones/api/incidencias/motivos').then(function(d){
+      if(!d.ok) return d;
+      incMotCat = d.catalogo || [];
+      incMotPuede = !!d.puede_editar;
+      incMotCatListo = d.listo !== false && incMotCat.length > 0;
+      var f = $('incFMotivo'), vf = f.value, h = '<option value="">Tipo de motivo: todos</option><option value="sin">Sin clasificar</option>';
+      incMotCat.forEach(function(t){ h += '<option value="'+incEsc(t.codigo)+'">'+incEsc(t.nombre)+(t.activo ? '' : ' (desactivado)')+'</option>'; });
+      f.innerHTML = h; f.value = vf;
+      var s = $('incMotivoTipo'), vs = s.value, hs = '<option value="">Sin clasificar</option>';
+      incMotCat.forEach(function(t){ if(t.activo || t.codigo === vs) hs += '<option value="'+incEsc(t.codigo)+'">'+incEsc(t.nombre)+(t.activo ? '' : ' (desactivado)')+'</option>'; });
+      s.innerHTML = hs; s.value = vs;
+      var n = (d.sin_clasificar || {}).n || 0, b = $('incMotBadge');
+      b.textContent = n; b.hidden = !n;
+      return d;
+    }).catch(function(){});
+  }
+
+  // ── Formulario: el tipo se elige a mano; la sugerencia aparece con su porqué ──
+  function incMotFormSet(codigo){
+    var s = $('incMotivoTipo');
+    if(!s) return;
+    if(codigo && !Array.prototype.some.call(s.options, function(o){ return o.value === codigo; })){
+      var t = incMotCat.find(function(x){ return x.codigo === codigo; }), o = document.createElement('option');
+      o.value = codigo; o.textContent = (t ? t.nombre : codigo) + ' (desactivado)'; s.appendChild(o);
+    }
+    s.value = codigo || '';
+    var sug = $('incMotivoTipoSug'); sug.hidden = true; sug.innerHTML = '';
+    if(!codigo) incMotPedirSugerencia();
+  }
+  function incMotPedirSugerencia(){
+    clearTimeout(incMotSugTimer);
+    incMotSugTimer = setTimeout(function(){
+      var sug = $('incMotivoTipoSug'), txt = ($('incMotivo').value || '').trim();
+      if(!incMotCatListo || $('incMotivoTipo').value || txt.length < 15){ sug.hidden = true; sug.innerHTML = ''; return; }
+      incMotJson('/mantenciones/api/incidencias/motivos/sugerir?texto=' + encodeURIComponent(txt)).then(function(d){
+        if($('incMotivoTipo').value || !d.ok || !d.sugerido){ sug.hidden = true; sug.innerHTML = ''; return; }
+        var s = d.sugerido, pistas = (s.pistas || []).map(incEsc).join('», «');
+        sug.innerHTML = '<span class="inc-mot-sug"><i class="bi bi-lightbulb"></i><span>Sugerido: <b>'+incEsc(s.nombre)+'</b>'
+          + (pistas ? ' · porque dice «'+pistas+'»' : '')+'</span>'
+          + '<button type="button" class="btn btn-sm btn-outline-dark" id="incMotivoTipoUsar" data-codigo="'+incEsc(s.codigo)+'">Usar este</button></span>';
+        sug.hidden = false;
+        $('incMotivoTipoUsar').addEventListener('click', function(){ $('incMotivoTipo').value = this.dataset.codigo; sug.hidden = true; sug.innerHTML = ''; });
+      }).catch(function(){});
+    }, 600);
+  }
+  $('incMotivo').addEventListener('input', incMotPedirSugerencia);
+  $('incMotivoTipo').addEventListener('change', function(){
+    if(this.value){ var sug = $('incMotivoTipoSug'); sug.hidden = true; sug.innerHTML = ''; } else incMotPedirSugerencia();
+  });
+
+  // ── Pantalla «Motivos»: Resumen · Por clasificar · Catálogo ──
+  function incMotAbrir(){
+    incMotSel = {}; incMotPag.page = 1;
+    incMotModal().show();
+    incMotCargarTodo();
+  }
+  function incMotCargarTodo(){
+    $('incMotResumen').innerHTML = '<div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div>';
+    return incMotRefrescarSelectores().then(function(d){
+      if(!d || !d.ok){
+        $('incMotResumen').innerHTML = '<div class="empty-state text-danger">'+incEsc((d && d.error) || 'No se pudo cargar el resumen de motivos.')+'</div>';
+        return;
+      }
+      incMotPintarResumen(d); incMotPintarCatalogo(d); incMotCargarPendientes();
+    });
+  }
+  function incMotPintarResumen(d){
+    var box = $('incMotResumen'), tn = $('incMotTabPendN'), sin = d.sin_clasificar || {n: 0, unidades: 0, abiertas: 0};
+    tn.textContent = sin.n; tn.hidden = !sin.n;
+    if(d.listo === false){
+      box.innerHTML = '<div class="empty-state"><i class="bi bi-tools"></i>La gestión de motivos se está preparando en esta base. Cierra y vuelve a abrir en un minuto.</div>';
+      return;
+    }
+    var pct = d.total ? Math.round(100 * d.clasificadas / d.total) : 0;
+    var html = '<div class="inc-mot-kpis">'
+      + '<div class="inc-mot-kpi"><b>'+d.total+'</b><span>incidencias en la bodega</span></div>'
+      + '<div class="inc-mot-kpi"><b>'+pct+'%</b><span>con tipo de motivo ('+d.clasificadas+' de '+d.total+')</span><div class="inc-mot-bar"><i style="width:'+pct+'%"></i></div></div>'
+      + '<div class="inc-mot-kpi"><b>'+sin.n+'</b><span>sin clasificar</span></div></div>'
+      + '<p class="inc-mot-ayuda">Toca un tipo para ver sus incidencias en la tabla.</p><div class="inc-mot-cards">';
+    (d.tipos || []).forEach(function(t){
+      html += '<button type="button" class="inc-mot-card'+(t.activo ? '' : ' off')+'" data-codigo="'+incEsc(t.codigo)+'">'
+        + '<span class="nom">'+incEsc(t.nombre)+(t.activo ? '' : ' <small class="text-muted">(desactivado)</small>')+'</span>'
+        + '<span class="num">'+t.n+'</span>'
+        + '<span class="sub">'+incMotPl(t.unidades, 'unidad', 'unidades')+' · '+incMotPl(t.abiertas, 'abierta', 'abiertas')+' · '+incMotPl(t.resueltas, 'resuelta', 'resueltas')
+        + (t.dias_prom != null ? '<br>En bodega: '+incMotPl(t.dias_prom, 'día', 'días')+' en promedio · la más antigua lleva '+incMotPl(t.dias_max, 'día', 'días') : '')
+        + '</span></button>';
+    });
+    html += '<button type="button" class="inc-mot-card sin" data-codigo="sin"><span class="nom">Sin clasificar</span><span class="num">'+sin.n+'</span>'
+      + '<span class="sub">'+incMotPl(sin.unidades, 'unidad', 'unidades')+' · '+incMotPl(sin.abiertas, 'abierta', 'abiertas')+'</span></button></div>';
+    box.innerHTML = html;
+    box.querySelectorAll('.inc-mot-card').forEach(function(b){
+      b.addEventListener('click', function(){
+        incFMotivo = b.dataset.codigo; $('incFMotivo').value = incFMotivo; incPage = 1; cargar(); incMotModal().hide();
+      });
+    });
+  }
+
+  function incMotCargarPendientes(){
+    var box = $('incMotPend');
+    var url = '/mantenciones/api/incidencias/motivos/por-clasificar?page='+incMotPag.page+'&page_size='+incMotPag.size+'&q='+encodeURIComponent(incMotPag.q);
+    return incMotJson(url).then(function(d){
+      if(!d.ok){ box.innerHTML = '<div class="empty-state text-danger">'+incEsc(d.error || 'No se pudo cargar.')+'</div>'; return; }
+      incMotPintarPendientes(d);
+    }).catch(function(){ box.innerHTML = '<div class="empty-state text-danger">No se pudo conectar con el servidor.</div>'; });
+  }
+  function incMotSelCuenta(){
+    var n = Object.keys(incMotSel).length;
+    $('incMotSelN').textContent = n ? (incMotPl(n, 'marcada', 'marcadas')) : '';
+    $('incMotAsignarGo').disabled = !(n && $('incMotAsignarSel').value);
+  }
+  function incMotPintarPendientes(d){
+    var box = $('incMotPend'), pie = $('incMotPendPie'), rows = d.rows || [];
+    var activos = incMotCat.filter(function(t){ return t.activo; });
+    var opts = '<option value="">Elegir tipo…</option>' + activos.map(function(t){ return '<option value="'+incEsc(t.codigo)+'">'+incEsc(t.nombre)+'</option>'; }).join('');
+    var sel = $('incMotAsignarSel'), vs = sel.value;
+    sel.innerHTML = '<option value="">Asignar a las marcadas…</option>' + activos.map(function(t){ return '<option value="'+incEsc(t.codigo)+'">'+incEsc(t.nombre)+'</option>'; }).join('');
+    sel.value = vs;
+    if(!rows.length){
+      box.innerHTML = '<div class="empty-state"><i class="bi bi-check2-circle"></i>'+(incMotPag.q ? 'Nada coincide con lo que buscas.' : 'No queda nada por clasificar.')+'</div>';
+      pie.innerHTML = ''; incMotSelCuenta(); return;
+    }
+    box.innerHTML = rows.map(function(r){
+      var sug = r.sugerido
+        ? '<span class="inc-mot-sug"><i class="bi bi-lightbulb"></i><span>Sugerido: <b>'+incEsc(r.sugerido.nombre)+'</b>'
+          + ((r.sugerido.pistas || []).length ? ' · porque dice «'+r.sugerido.pistas.map(incEsc).join('», «')+'»' : '')+'</span>'
+          + '<button type="button" class="btn btn-sm btn-outline-dark inc-mot-usar" data-id="'+r.id+'" data-codigo="'+incEsc(r.sugerido.codigo)+'">Usar este</button></span>'
+        : '<span class="text-muted" style="font-size:.82rem">Sin sugerencia: elige el tipo.</span>';
+      return '<div class="inc-mot-fila" data-id="'+r.id+'">'
+        + '<label class="inc-mot-ckw"><input type="checkbox" class="inc-mot-ck" data-id="'+r.id+'" aria-label="Marcar esta incidencia"'+(incMotSel[r.id] ? ' checked' : '')+'></label>'
+        + '<div><div class="tit">'+incEsc(r.descripcion || '(sin descripción)')+'</div>'
+        + '<div class="meta">'+(r.sku ? 'SKU '+incEsc(r.sku)+' · ' : '')+(r.ua ? 'UA '+incEsc(r.ua)+' · ' : '')+incMotPl(r.cantidad, 'unidad', 'unidades')+' · '+(r.estado === 'resuelta' ? 'resuelta' : 'abierta')+'</div>'
+        + '<div class="mot">'+incEsc(r.motivo || 'Sin motivo escrito')+'</div>'
+        + '<div class="inc-mot-acc">'+sug+'<select class="form-select inc-mot-uno" data-id="'+r.id+'" aria-label="Elegir el tipo de esta incidencia">'+opts+'</select></div></div></div>';
+    }).join('');
+    var desde = ((d.page - 1) * d.page_size) + 1, hasta = Math.min(d.page * d.page_size, d.total);
+    pie.innerHTML = '<span>Mostrando <b>'+desde+'–'+hasta+'</b> de <b>'+d.total+'</b></span>'
+      + '<span class="d-flex gap-2 align-items-center flex-wrap">'
+      + '<select class="form-select" id="incMotSize" style="width:auto;min-height:44px" aria-label="Filas por página">'
+      + [10, 25, 50].map(function(n){ return '<option value="'+n+'"'+(n === incMotPag.size ? ' selected' : '')+'>'+n+' por página</option>'; }).join('')+'</select>'
+      + '<button type="button" class="btn btn-outline-dark" id="incMotPrev" style="min-height:44px"'+(d.page <= 1 ? ' disabled' : '')+'><i class="bi bi-chevron-left"></i> Anterior</button>'
+      + '<span>Página '+d.page+' de '+d.total_pages+'</span>'
+      + '<button type="button" class="btn btn-outline-dark" id="incMotNext" style="min-height:44px"'+(d.page >= d.total_pages ? ' disabled' : '')+'>Siguiente <i class="bi bi-chevron-right"></i></button></span>';
+    $('incMotSize').addEventListener('change', function(){ incMotPag.size = parseInt(this.value, 10) || 10; incMotPag.page = 1; incMotCargarPendientes(); });
+    $('incMotPrev').addEventListener('click', function(){ incMotPag.page = Math.max(1, incMotPag.page - 1); incMotCargarPendientes(); });
+    $('incMotNext').addEventListener('click', function(){ incMotPag.page += 1; incMotCargarPendientes(); });
+    box.querySelectorAll('.inc-mot-ck').forEach(function(ck){
+      ck.addEventListener('change', function(){ if(ck.checked) incMotSel[ck.dataset.id] = true; else delete incMotSel[ck.dataset.id]; incMotSelCuenta(); });
+    });
+    box.querySelectorAll('.inc-mot-usar').forEach(function(b){
+      b.addEventListener('click', function(){ incMotClasificar([parseInt(b.dataset.id, 10)], b.dataset.codigo); });
+    });
+    box.querySelectorAll('.inc-mot-uno').forEach(function(s){
+      s.addEventListener('change', function(){ if(s.value) incMotClasificar([parseInt(s.dataset.id, 10)], s.value); });
+    });
+    incMotSelCuenta();
+  }
+  function incMotClasificar(ids, codigo){
+    return incMotJson('/mantenciones/api/incidencias/clasificar', {method: 'POST', body: JSON.stringify({ids: ids, motivo_tipo: codigo})}).then(function(d){
+      if(!d.ok){ ilusToast(d.error || 'No se pudo clasificar', {type: 'error'}); return false; }
+      ilusToast('✓ ' + incMotPl(d.actualizadas, 'incidencia clasificada', 'incidencias clasificadas'), {type: 'success'});
+      ids.forEach(function(i){ delete incMotSel[i]; });
+      incMotCargarTodo(); cargar();
+      return true;
+    }).catch(function(){ ilusToast('No se pudo conectar con el servidor', {type: 'error'}); return false; });
+  }
+  // «Seleccionar / deseleccionar todo» (REGLA #14): si ALGUNA visible está sin marcar, marca todas; si ya están todas, las desmarca.
+  $('incMotTodo').addEventListener('click', function(){
+    var cks = document.querySelectorAll('#incMotPend .inc-mot-ck');
+    var marcar = Array.prototype.some.call(cks, function(c){ return !c.checked; });
+    cks.forEach(function(c){ c.checked = marcar; if(marcar) incMotSel[c.dataset.id] = true; else delete incMotSel[c.dataset.id]; });
+    incMotSelCuenta();
+  });
+  $('incMotAsignarSel').addEventListener('change', incMotSelCuenta);
+  $('incMotAsignarGo').addEventListener('click', function(){
+    var ids = Object.keys(incMotSel).map(function(i){ return parseInt(i, 10); }), cod = $('incMotAsignarSel').value;
+    if(ids.length && cod) incMotClasificar(ids, cod);
+  });
+  $('incMotQ').addEventListener('input', function(){
+    var v = this.value; clearTimeout(incMotQTimer);
+    incMotQTimer = setTimeout(function(){ incMotPag.q = v.trim(); incMotPag.page = 1; incMotCargarPendientes(); }, 350);
+  });
+
+  function incMotPintarCatalogo(d){
+    var box = $('incMotCat'), cat = d.catalogo || [], cuenta = {};
+    (d.tipos || []).forEach(function(t){ cuenta[t.codigo] = t.n; });
+    var html = incMotPuede
+      ? '<div class="mb-3"><button type="button" class="btn btn-ilus" id="incMotCatNuevo" style="min-height:44px"><i class="bi bi-plus-lg me-1"></i>Agregar tipo de motivo</button></div>'
+      : '<p class="inc-mot-ayuda">Solo un administrador puede cambiar el catálogo.</p>';
+    html += cat.map(function(t){
+      var n = cuenta[t.codigo] || 0;
+      return '<div class="inc-mot-cat'+(t.activo ? '' : ' off')+'" data-codigo="'+incEsc(t.codigo)+'" data-nombre="'+incEsc(t.nombre)+'"><div>'
+        + '<div class="nom">'+incEsc(t.nombre)+(t.activo ? '' : ' <small class="text-muted">(desactivado)</small>')+'</div>'
+        + '<div class="sub">'+incMotPl(n, 'incidencia', 'incidencias')+'</div></div>'
+        + (incMotPuede ? '<div class="d-flex gap-2 flex-wrap"><button type="button" class="btn btn-outline-dark inc-mot-ren" style="min-height:44px">Renombrar</button>'
+          + '<button type="button" class="btn '+(t.activo ? 'btn-outline-secondary' : 'btn-outline-success')+' inc-mot-act" data-activo="'+(t.activo ? 1 : 0)+'" style="min-height:44px">'
+          + (t.activo ? 'Desactivar' : 'Activar')+'</button></div>' : '')
+        + '</div>';
+    }).join('');
+    box.innerHTML = html;
+    var nuevo = $('incMotCatNuevo');
+    if(nuevo) nuevo.addEventListener('click', async function(){
+      var nombre = await ilusPrompt({title: 'Nuevo tipo de motivo', message: 'Escribe el nombre completo del tipo.', placeholder: 'Ej: Daño por humedad',
+                                     okLabel: 'Agregar', required: true});
+      if(!nombre) return;
+      incMotJson('/mantenciones/api/incidencias/motivos', {method: 'POST', body: JSON.stringify({nombre: nombre})}).then(function(r){
+        if(!r.ok){ ilusToast(r.error || 'No se pudo agregar', {type: 'error'}); return; }
+        ilusToast('✓ Tipo de motivo agregado', {type: 'success'}); incMotCargarTodo();
+      }).catch(function(){ ilusToast('No se pudo conectar con el servidor', {type: 'error'}); });
+    });
+    box.querySelectorAll('.inc-mot-ren').forEach(function(b){
+      b.addEventListener('click', async function(){
+        var fila = b.closest('.inc-mot-cat');
+        var nombre = await ilusPrompt({title: 'Renombrar tipo de motivo', message: 'El código no cambia: las incidencias que lo tienen lo conservan.',
+                                       defaultValue: fila.dataset.nombre, okLabel: 'Guardar', required: true});
+        if(!nombre || nombre === fila.dataset.nombre) return;
+        incMotJson('/mantenciones/api/incidencias/motivos/' + encodeURIComponent(fila.dataset.codigo), {method: 'PUT', body: JSON.stringify({nombre: nombre})}).then(function(r){
+          if(!r.ok){ ilusToast(r.error || 'No se pudo guardar', {type: 'error'}); return; }
+          ilusToast('✓ Nombre actualizado', {type: 'success'}); incMotCargarTodo(); cargar();
+        }).catch(function(){ ilusToast('No se pudo conectar con el servidor', {type: 'error'}); });
+      });
+    });
+    box.querySelectorAll('.inc-mot-act').forEach(function(b){
+      b.addEventListener('click', async function(){
+        var fila = b.closest('.inc-mot-cat'), desactivar = b.dataset.activo === '1';
+        if(desactivar){
+          var ok = await ilusConfirm({title: 'Desactivar tipo de motivo', message: '«' + fila.dataset.nombre + '» dejará de ofrecerse al clasificar.',
+                                      sub: 'Las incidencias que ya lo tienen lo conservan. Lo puedes volver a activar cuando quieras.', okLabel: 'Desactivar', cancelLabel: 'Cancelar'});
+          if(!ok) return;
+        }
+        incMotJson('/mantenciones/api/incidencias/motivos/' + encodeURIComponent(fila.dataset.codigo), {method: 'PUT', body: JSON.stringify({activo: !desactivar})}).then(function(r){
+          if(!r.ok){ ilusToast(r.error || 'No se pudo guardar', {type: 'error'}); return; }
+          ilusToast(desactivar ? 'Tipo desactivado' : '✓ Tipo activado', {type: 'success'}); incMotCargarTodo();
+        }).catch(function(){ ilusToast('No se pudo conectar con el servidor', {type: 'error'}); });
+      });
+    });
+  }
+
+  $('incBtnMotivos').addEventListener('click', incMotAbrir);
+  $('incFMotivo').addEventListener('change', function(){ incFMotivo = this.value; incPage = 1; cargar(); });
+  incMotRefrescarSelectores();      // llena el filtro, el selector del formulario y la insignia al cargar la pantalla
+
   document.getElementById('incFQ').addEventListener('input', function(){
     clearTimeout(window.__incDebounce);
     var v = this.value;
@@ -4217,6 +4595,7 @@
     // filtro -- también los de columna y el orden -- la tabla se recarga
     // siempre, nunca se queda con el resultado anterior.
     incFChk = ''; var selChk = document.getElementById('incFChk'); if(selChk) selChk.value = '';
+    incFMotivo = ''; var selMot = document.getElementById('incFMotivo'); if(selMot) selMot.value = '';   // 🏷️ también el filtro por tipo de motivo
     incQ = ''; incEstado = ''; incOrderBy = ''; incOrderDir = ''; incPage = 1; cargar();
   });
 

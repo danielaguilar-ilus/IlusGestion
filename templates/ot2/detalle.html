@@ -3674,9 +3674,13 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          siendo la ÚNICA forma que tiene un técnico de ver el PDF. Se
          restringe a es_tecnico (en vez de borrarlo) para no quitarle
          esa opción -- gestión ya lo tiene siempre disponible abajo. #}
-      {% if es_tecnico and v.estado not in ('programada','en_curso','en_ejecucion') %}
-      <button type="button" class="otd-qabtn" onclick="otdVerPdf()">
-        <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
+      {#- 🖨️ 2026-10-29: el técnico también puede bajar la hoja de trabajo ANTES de la tarea (programada o en ejecución). Sin montos ni
+          proveedores (REGLAS #19/#26: el borrador nunca los lleva). Cerrada: el PDF firmado, como antes. -#}
+      {% if es_tecnico and v.estado not in ('cancelada','anulada') %}
+      {% set _pdf_borr_t = v.estado != 'cerrada' %}
+      <button type="button" class="otd-qabtn" onclick="otdVerPdf()"
+              {% if _pdf_borr_t %}title="Imprime la OT sin firmas, con casillas para completar en terreno"{% endif %}>
+        <i class="bi {{ 'bi-printer-fill' if _pdf_borr_t else 'bi-file-earmark-pdf-fill' }}"></i> {{ 'Imprimir borrador' if _pdf_borr_t else 'Ver PDF' }}</button>
       {% endif %}
       {% if puede_eliminar %}
       <button type="button" class="otd-qabtn del" onclick="otdEliminarOT()">
@@ -5910,8 +5914,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         habitual, sin tocar ningún endpoint ni candado. -#}
     {% if not es_tecnico %}
     <div class="otd-bottom-row">
-      <button type="button" class="b" onclick="otdVerPdf()">
-        <i class="bi bi-file-earmark-pdf-fill"></i> Ver PDF</button>
+      {#- 🖨️ 2026-10-29 (Daniel: «la gestión de impresión de la OT sin necesidad de las firmas»): mientras la OT no está cerrada, el
+          mismo botón imprime la HOJA DE TRABAJO sin firmas (marcada BORRADOR en cada página). Cerrada: el PDF firmado de siempre. -#}
+      {% set _pdf_borr = v.estado != 'cerrada' and v.estado not in ('cancelada','anulada') %}
+      <button type="button" class="b" onclick="otdVerPdf()"
+              {% if _pdf_borr %}title="Imprime la OT sin firmas, con casillas para completar en terreno"{% endif %}>
+        <i class="bi {{ 'bi-printer-fill' if _pdf_borr else 'bi-file-earmark-pdf-fill' }}"></i> {{ 'Imprimir borrador' if _pdf_borr else 'Ver PDF' }}</button>
       {# 📸 El botón "Anexo de fotos" vivió acá desde 2026-09-05. Daniel
          (2026-09-28) pidió quitarlo -- "Videos y documentos" (columna
          izquierda de Información, ver más arriba) ya muestra las fotos
@@ -11367,6 +11375,16 @@ function otdVerAnexoFotos(){
 }
 
 function otdVerPdf(){
+  // 🖨️ 2026-10-29: OT sin cerrar → hoja de trabajo SIN firmas (?borrador=1), marcada BORRADOR en cada página. Cerrada → el PDF
+  // firmado de siempre. El servidor decide igual: sin ?borrador=1 sigue exigiendo OT cerrada y las 3 firmas.
+  if ({{ 'true' if (v.estado != 'cerrada' and v.estado not in ('cancelada','anulada')) else 'false' }}) {
+    openPdf(`/mantenciones/api/visitas/{{ v.id }}/pdf?borrador=1`, {
+      title: 'Borrador de la OT (sin firmas)',
+      downloadName: 'BORRADOR-OT-{{ v.numero_ot or v.id }}.pdf',
+      loadingMessage: 'Armando el borrador de la OT…',
+    });
+    return;
+  }
   openPdf(`/mantenciones/api/visitas/{{ v.id }}/pdf`, {
     title: 'PDF de la OT',
     downloadName: 'OT-{{ v.numero_ot or v.id }}.pdf',

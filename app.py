@@ -70030,6 +70030,403 @@ def _sentence_case(texto: str) -> str:
     return t[:i] + t[i].upper() + t[i + 1:]
 
 
+# ══ Gestión de motivos de la bodega de incidencias (Daniel, 2026-10-29) ═══════════
+# «Sí, quiero la gestión de motivos.» El motivo de cada incidencia SIGUE siendo el texto detallado de siempre (mínimo 30
+# caracteres: Daniel sacó los motivos «rápidos» el 27-sep) -- lo que se suma es el TIPO de motivo, para poder contar, ver y
+# analizar la bodega por causa («cuántas máquinas llegaron golpeadas, cuánto llevan en bodega, qué falta clasificar»).
+#   · El catálogo de tipos lo administra el admin/superadmin (agregar, renombrar, desactivar); NUNCA se borra un tipo: una
+#     incidencia vieja conserva el suyo (REGLA #4.2). Se siembra una lista base solo si la tabla está vacía.
+#   · REGLA #32 (el sistema SUGIERE, la persona DECIDE): el tipo se sugiere leyendo el texto, con las palabras que lo
+#     motivaron a la vista, pero nunca se guarda solo: lo elige la persona.
+#   · «Alertar, no trabar»: el tipo es opcional al guardar. Lo que quede sin tipo aparece en «Por clasificar».
+#   · Cada cambio de tipo queda en la bitácora de la incidencia (mant_incidencia_log): quién, cuándo, de qué a qué.
+INC_MOTIVO_TIPOS_BASE = (
+    ("dano_traslado", "Daño en traslado o transporte"),
+    ("pieza_faltante", "Pieza o accesorio faltante"),
+    ("falla_funcionamiento", "Falla de funcionamiento"),
+    ("defecto_fabrica", "Defecto de fábrica o garantía con el proveedor"),
+    ("dano_uso", "Daño por uso o desgaste"),
+    ("diferencia_inventario", "Sobrante o diferencia de inventario"),
+    ("otro", "Otro motivo"),
+)
+INC_MOTIVO_NOMBRE_MIN = 3
+INC_MOTIVO_NOMBRE_MAX = 80
+INC_MOTIVO_CLASIFICAR_MAX = 200     # incidencias por clasificación masiva
+# Palabras (ya sin tildes ni mayúsculas) que hacen SUGERIR cada tipo base. Es solo una pista: nunca decide.
+_INC_MOTIVO_PISTAS = (
+    ("pieza_faltante", ("falta", "faltan", "faltante", "faltantes", "incompleto", "incompleta", "no trae", "no viene", "sin tornillos", "sin acrílico")),
+    ("dano_traslado", ("golpe", "golpeado", "golpeada", "abollado", "abollada", "rayado", "rayada", "roto", "rota", "quebrado", "quebrada",
+                       "trizado", "trizada", "traslado", "transporte", "embalaje", "llegó dañado", "llegó dañada")),
+    ("falla_funcionamiento", ("no enciende", "no prende", "no funciona", "falla", "fallando", "error", "ruido", "se apaga", "no responde",
+                              "no calibra", "motor", "consola", "pantalla")),
+    ("defecto_fabrica", ("defecto", "fábrica", "garantía", "proveedor", "de origen")),
+    ("dano_uso", ("desgaste", "desgastado", "desgastada", "uso", "usado", "usada", "gastado", "gastada")),
+    ("diferencia_inventario", ("sobrante", "sobra", "diferencia", "inventario", "no cuadra", "duplicado", "duplicada")),
+)
+
+
+def _inc_motivo_norm(texto):
+    """PURA. Minúsculas, sin tildes ni puntuación y con espacios simples: para comparar palabras sin que una tilde, una coma o un punto
+    estorben («transporte,» es la palabra «transporte»)."""
+    import re as _re
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(texto or "")).encode("ascii", "ignore").decode("ascii").lower()
+    return " ".join(_re.sub(r"[^a-z0-9]+", " ", t).split())
+
+
+def _inc_motivo_sugerir(texto, codigos_activos=None):
+    """PURA. Sugiere un tipo de motivo leyendo el texto: (codigo | None, [palabras que lo motivaron]). Gana el tipo con más
+    palabras; si empatan, el primero de la lista. Solo sugiere tipos que estén activos (`codigos_activos`; None = todos). Es una
+    PISTA que se muestra con su origen: nunca se guarda sin que la persona la acepte (REGLA #32)."""
+    norm = _inc_motivo_norm(texto)
+    if not norm:
+        return None, []
+    palabras, marco = set(norm.split()), " " + norm + " "
+    mejor, mejor_pistas = None, []
+    for codigo, pistas in _INC_MOTIVO_PISTAS:
+        if codigos_activos is not None and codigo not in codigos_activos:
+            continue
+        # Una palabra cuenta si está ENTERA en el texto («uso» no coincide con «usuario»); una frase, si aparece completa. Se compara
+        # sin tildes y se devuelve la pista con su ortografía natural (es lo que se le muestra a la persona).
+        hallazgos = [p for p in pistas
+                     if ((" " + _inc_motivo_norm(p) + " ") in marco if " " in p else _inc_motivo_norm(p) in palabras)]
+        if len(hallazgos) > len(mejor_pistas):
+            mejor, mejor_pistas = codigo, hallazgos
+    return mejor, mejor_pistas
+
+
+def _inc_motivo_codigo_de(nombre, existentes=()):
+    """PURA. Código estable de un tipo nuevo, a partir de su nombre: minúsculas, sin tildes, con guiones bajos y de hasta 40
+    caracteres. Si ya existe, se le agrega un número (el código nunca cambia después, aunque se renombre el tipo)."""
+    import re as _re
+    base = _re.sub(r"[^a-z0-9]+", "_", _inc_motivo_norm(nombre)).strip("_")[:40] or "tipo"
+    existentes = set(existentes or ())
+    codigo, n = base, 2
+    while codigo in existentes:
+        sufijo = "_%d" % n
+        codigo = base[:40 - len(sufijo)] + sufijo
+        n += 1
+    return codigo
+
+
+def _inc_motivo_nombre_validar(nombre, otros_nombres=()):
+    """PURA. (nombre_limpio, error). Entre 3 y 80 caracteres y distinto (sin importar mayúsculas ni tildes) de los demás tipos."""
+    limpio = " ".join(str(nombre or "").split())
+    if len(limpio) < INC_MOTIVO_NOMBRE_MIN:
+        return None, "Escribe el nombre del tipo de motivo (mínimo %d caracteres)." % INC_MOTIVO_NOMBRE_MIN
+    if len(limpio) > INC_MOTIVO_NOMBRE_MAX:
+        return None, "El nombre es muy largo (máximo %d caracteres)." % INC_MOTIVO_NOMBRE_MAX
+    if _inc_motivo_norm(limpio) in {_inc_motivo_norm(o) for o in (otros_nombres or ())}:
+        return None, "Ya existe un tipo de motivo con ese nombre."
+    return limpio, None
+
+
+def _inc_motivo_resumen(filas, tipos, hoy):
+    """PURA. Resumen de la bodega por tipo de motivo. `filas`: dicts {motivo_tipo, cantidad, estado, fecha_ingreso, created_at};
+    `tipos`: [{codigo, nombre, activo, orden}]. Cada tipo trae cuántas incidencias y unidades tiene, cuántas siguen abiertas y los
+    días en bodega (promedio y máximo) de las abiertas. Lo que no tiene tipo (o tiene uno que ya no está en el catálogo) va a
+    `sin_clasificar`. Los tipos desactivados se incluyen solo si tienen incidencias."""
+    from datetime import date as _date, datetime as _dt
+
+    def _fecha(v):
+        if isinstance(v, _dt):
+            return v.date()
+        if isinstance(v, _date):
+            return v
+        try:
+            return _dt.strptime(str(v)[:10], "%Y-%m-%d").date() if v else None
+        except Exception:
+            return None
+
+    por_codigo = {t["codigo"]: {"codigo": t["codigo"], "nombre": t["nombre"], "activo": bool(t.get("activo", True)),
+                                "orden": t.get("orden") or 0, "n": 0, "unidades": 0, "abiertas": 0, "resueltas": 0, "_dias": []}
+                  for t in tipos}
+    sin = {"n": 0, "unidades": 0, "abiertas": 0}
+    for f in filas or []:
+        cod = (f.get("motivo_tipo") or "").strip()
+        unidades = int(f.get("cantidad") or 0)
+        abierta = (f.get("estado") or "abierta") != "resuelta"
+        destino = por_codigo.get(cod)
+        if destino is None:
+            sin["n"] += 1
+            sin["unidades"] += unidades
+            sin["abiertas"] += 1 if abierta else 0
+            continue
+        destino["n"] += 1
+        destino["unidades"] += unidades
+        destino["abiertas" if abierta else "resueltas"] += 1
+        if abierta:
+            base = _fecha(f.get("fecha_ingreso")) or _fecha(f.get("created_at"))
+            if base and (hoy - base).days >= 0:
+                destino["_dias"].append((hoy - base).days)
+    salida = []
+    for t in por_codigo.values():
+        dias = t.pop("_dias")
+        t["dias_prom"] = int(round(sum(dias) / len(dias))) if dias else None
+        t["dias_max"] = max(dias) if dias else None
+        if t["activo"] or t["n"]:
+            salida.append(t)
+    salida.sort(key=lambda t: (t["orden"], t["nombre"]))
+    total = sum(t["n"] for t in salida) + sin["n"]
+    return {"tipos": salida, "sin_clasificar": sin, "total": total, "clasificadas": total - sin["n"]}
+
+
+_INC_MOTIVO_COL = {"ok": False}
+
+
+def _inc_motivo_col_ok():
+    """¿Existe la columna mant_incidencias.motivo_tipo? Se recuerda solo el «sí»: si la migración aún no corrió, todo lo de motivos
+    queda dormido y la bodega de incidencias funciona igual que antes (nunca se rompe por esto)."""
+    if _INC_MOTIVO_COL["ok"]:
+        return True
+    try:
+        _INC_MOTIVO_COL["ok"] = bool(mysql_fetchone("SHOW COLUMNS FROM mant_incidencias LIKE 'motivo_tipo'"))
+    except Exception:
+        pass
+    return _INC_MOTIVO_COL["ok"]
+
+
+def _ensure_incidencia_motivos():
+    """Catálogo de tipos de motivo + columna `motivo_tipo` en las incidencias. Se crean SIEMPRE en el arranque, incluso con
+    ILUS_SKIP_MIGRATIONS=1; una sentencia cada una, y la guardia de DDL las salta sin pedir lock si ya existen (REGLA #18).
+    La lista base se siembra solo si el catálogo está vacío (nunca pisa lo que el admin cambió)."""
+    for ddl in (
+        "CREATE TABLE IF NOT EXISTS mant_incidencia_motivo_tipos ("
+        " id INT AUTO_INCREMENT PRIMARY KEY,"
+        " codigo VARCHAR(40) NOT NULL,"
+        " nombre VARCHAR(120) NOT NULL,"
+        " orden INT NOT NULL DEFAULT 0,"
+        " activo TINYINT(1) NOT NULL DEFAULT 1,"
+        " created_by VARCHAR(190) NULL,"
+        " created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        " updated_by VARCHAR(190) NULL,"
+        " updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+        " UNIQUE KEY uq_inc_motivo_codigo (codigo)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "ALTER TABLE mant_incidencias ADD COLUMN motivo_tipo VARCHAR(40) NULL COMMENT 'tipo de motivo (código del catálogo mant_incidencia_motivo_tipos)'",
+        "ALTER TABLE mant_incidencias ADD INDEX idx_inc_motivo_tipo (motivo_tipo)",
+    ):
+        try:
+            mysql_execute(ddl)
+        except Exception as e:
+            print(f"[ensure_incidencia_motivos] {type(e).__name__}", flush=True)
+    try:
+        if not (mysql_fetchone("SELECT 1 AS x FROM mant_incidencia_motivo_tipos LIMIT 1") or {}).get("x"):
+            for orden, (codigo, nombre) in enumerate(INC_MOTIVO_TIPOS_BASE, 1):
+                mysql_execute("INSERT IGNORE INTO mant_incidencia_motivo_tipos (codigo, nombre, orden, created_by) VALUES (%s,%s,%s,%s)",
+                              (codigo, nombre, orden * 10, "sistema"))
+    except Exception as e:
+        print(f"[ensure_incidencia_motivos] siembra: {type(e).__name__}", flush=True)
+
+
+def _inc_motivo_tipos(solo_activos=False):
+    """Catálogo de tipos [{codigo, nombre, orden, activo}] en el orden en que se muestran. [] si la tabla aún no existe."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT codigo, nombre, orden, activo FROM mant_incidencia_motivo_tipos "
+            + ("WHERE activo=1 " if solo_activos else "") + "ORDER BY orden, nombre") or []
+    except Exception as e:
+        print(f"[incidencias] catálogo de motivos: {type(e).__name__}", flush=True)
+        return []
+    return [{"codigo": f["codigo"], "nombre": f["nombre"], "orden": int(f.get("orden") or 0), "activo": bool(f.get("activo"))} for f in filas]
+
+
+def _inc_motivo_puede_editar_catalogo():
+    perms = g.get("permissions") or {}
+    return bool(perms.get("admin") or perms.get("superadmin"))
+
+
+def _inc_motivo_guardar_tipo(iid, codigo):
+    """Guarda el tipo de motivo de UNA incidencia y lo deja en su bitácora. Mejor esfuerzo: nunca rompe el guardado de la incidencia.
+    `codigo` vacío = sin clasificar. Un código que no está en el catálogo se ignora (no se inventa un tipo)."""
+    if not _inc_motivo_col_ok():
+        return
+    try:
+        codigo = (codigo or "").strip()[:40]
+        if codigo and codigo not in {t["codigo"] for t in _inc_motivo_tipos()}:
+            return
+        antes = (mysql_fetchone("SELECT motivo_tipo FROM mant_incidencias WHERE id=%s", (iid,)) or {}).get("motivo_tipo") or ""
+        if antes == codigo:
+            return
+        mysql_execute("UPDATE mant_incidencias SET motivo_tipo=%s WHERE id=%s", (codigo or None, iid))
+        _inc_log(iid, "clasificada", "motivo_tipo", antes or None, codigo or None)
+    except Exception as e:
+        print(f"[incidencias] guardar tipo de motivo iid={iid}: {type(e).__name__}", flush=True)
+
+
+@app.route("/mantenciones/api/incidencias/motivos", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_motivos():
+    """Resumen de la bodega por tipo de motivo + el catálogo (para el selector del formulario y la pantalla «Motivos»).
+    Cuenta las incidencias activas: ni las eliminadas ni las dadas de baja (igual que la tabla principal)."""
+    tipos = _inc_motivo_tipos()
+    puede = _inc_motivo_puede_editar_catalogo()
+    if not _inc_motivo_col_ok():
+        return jsonify({"ok": True, "listo": False, "tipos": [], "sin_clasificar": {"n": 0, "unidades": 0, "abiertas": 0},
+                        "total": 0, "clasificadas": 0, "catalogo": tipos, "puede_editar": puede})
+    where, params = ["COALESCE(eliminada,0) = 0"], []
+    ids_baja = _inc_ids_en_baja()
+    if ids_baja:
+        where.append("id NOT IN (" + ",".join(["%s"] * len(ids_baja)) + ")")
+        params += list(ids_baja)
+    try:
+        filas = mysql_fetchall(
+            "SELECT motivo_tipo, cantidad, estado, fecha_ingreso, created_at FROM mant_incidencias WHERE " + " AND ".join(where),
+            tuple(params)) or []
+    except Exception as e:
+        print(f"[incidencias] resumen de motivos: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo calcular el resumen de motivos."}), 500
+    resumen = _inc_motivo_resumen([dict(f) for f in filas], tipos, _now_chile().date())
+    resumen.update({"ok": True, "listo": True, "catalogo": tipos, "puede_editar": puede})
+    return jsonify(resumen)
+
+
+@app.route("/mantenciones/api/incidencias/motivos/por-clasificar", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_motivos_por_clasificar():
+    """Incidencias activas SIN tipo de motivo, de a pocas (REGLA #4.3), cada una con el tipo que se SUGIERE leyendo su texto y las
+    palabras que lo motivaron. Solo sugiere: la persona decide (REGLA #32)."""
+    if not _inc_motivo_col_ok():
+        return jsonify({"ok": True, "rows": [], "total": 0, "page": 1, "page_size": 10, "total_pages": 1})
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.args.get("page_size", "10"))
+    except (TypeError, ValueError):
+        page_size = 10
+    if page_size not in (10, 25, 50, 100):
+        page_size = 10
+    q = (request.args.get("q") or "").strip()
+    where, params = ["COALESCE(eliminada,0) = 0", "(motivo_tipo IS NULL OR motivo_tipo = '')"], []
+    ids_baja = _inc_ids_en_baja()
+    if ids_baja:
+        where.append("id NOT IN (" + ",".join(["%s"] * len(ids_baja)) + ")")
+        params += list(ids_baja)
+    if q:
+        where.append("(sku LIKE %s OR descripcion LIKE %s OR motivo LIKE %s OR recomendacion LIKE %s)")
+        params += [f"%{q}%"] * 4
+    donde = " AND ".join(where)
+    try:
+        total = int((mysql_fetchone(f"SELECT COUNT(*) AS n FROM mant_incidencias WHERE {donde}", tuple(params)) or {}).get("n") or 0)
+        filas = mysql_fetchall(
+            f"SELECT id, sku, descripcion, cantidad, motivo, recomendacion, estado FROM mant_incidencias WHERE {donde} "
+            f"ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s", tuple(params) + (page_size, (page - 1) * page_size)) or []
+    except Exception as e:
+        print(f"[incidencias] por clasificar: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo consultar lo que falta clasificar."}), 500
+    activos = {t["codigo"]: t["nombre"] for t in _inc_motivo_tipos(solo_activos=True)}
+    rows = []
+    for f in filas:
+        cod, pistas = _inc_motivo_sugerir(f.get("motivo"), set(activos))
+        rows.append({"id": f["id"], "sku": f.get("sku") or "", "descripcion": f.get("descripcion") or "",
+                     "cantidad": int(f.get("cantidad") or 0), "motivo": f.get("motivo") or "", "ua": f.get("recomendacion") or "",
+                     "estado": f.get("estado") or "abierta",
+                     "sugerido": ({"codigo": cod, "nombre": activos[cod], "pistas": pistas} if cod else None)})
+    return jsonify({"ok": True, "rows": rows, "total": total, "page": page, "page_size": page_size,
+                    "total_pages": max(1, (total + page_size - 1) // page_size)})
+
+
+@app.route("/mantenciones/api/incidencias/motivos/sugerir", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_motivos_sugerir():
+    """El tipo que se SUGIERE para un texto de motivo, con las palabras que lo motivaron (para el formulario). Una sola fuente de las
+    pistas: la misma que usa «Por clasificar». Solo sugiere: la persona decide (REGLA #32)."""
+    texto = (request.args.get("texto") or "")[:INC_MOTIVO_MAX * 3]
+    activos = {t["codigo"]: t["nombre"] for t in _inc_motivo_tipos(solo_activos=True)}
+    cod, pistas = _inc_motivo_sugerir(texto, set(activos))
+    return jsonify({"ok": True, "sugerido": ({"codigo": cod, "nombre": activos[cod], "pistas": pistas} if cod else None)})
+
+
+@app.route("/mantenciones/api/incidencias/clasificar", methods=["POST"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_clasificar():
+    """Pone un tipo de motivo a varias incidencias a la vez (o se lo quita con `motivo_tipo` vacío). Lo decide la persona; cada
+    cambio queda en la bitácora de esa incidencia. Solo se acepta un tipo ACTIVO del catálogo."""
+    data = request.get_json(silent=True) or {}
+    ids = [int(i) for i in (data.get("ids") or []) if str(i).isdigit()]
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return jsonify({"ok": False, "error": "Marca al menos una incidencia."}), 400
+    if len(ids) > INC_MOTIVO_CLASIFICAR_MAX:
+        return jsonify({"ok": False, "error": f"Son demasiadas a la vez (máximo {INC_MOTIVO_CLASIFICAR_MAX})."}), 400
+    codigo = (data.get("motivo_tipo") or "").strip()
+    if codigo and codigo not in {t["codigo"] for t in _inc_motivo_tipos(solo_activos=True)}:
+        return jsonify({"ok": False, "error": "Elige un tipo de motivo de la lista."}), 400
+    if not _inc_motivo_col_ok():
+        return jsonify({"ok": False, "error": "La gestión de motivos todavía no está lista en esta base. Reintenta en un minuto."}), 503
+    hechas = 0
+    for iid in ids:
+        fila = mysql_fetchone("SELECT id, motivo_tipo FROM mant_incidencias WHERE id=%s AND COALESCE(eliminada,0)=0", (iid,))
+        if not fila or (fila.get("motivo_tipo") or "") == codigo:
+            continue
+        _inc_motivo_guardar_tipo(iid, codigo)
+        hechas += 1
+    return jsonify({"ok": True, "actualizadas": hechas})
+
+
+@app.route("/mantenciones/api/incidencias/motivos", methods=["POST"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_motivos_crear():
+    """Agrega un tipo de motivo al catálogo. Solo admin/superadmin."""
+    if not _inc_motivo_puede_editar_catalogo():
+        return jsonify({"ok": False, "error_codigo": "SOLO_ADMIN", "error": "Solo un administrador puede cambiar el catálogo de motivos."}), 403
+    data = request.get_json(silent=True) or {}
+    tipos = _inc_motivo_tipos()
+    nombre, err = _inc_motivo_nombre_validar(data.get("nombre"), [t["nombre"] for t in tipos])
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    codigo = _inc_motivo_codigo_de(nombre, [t["codigo"] for t in tipos])
+    orden = (max([t["orden"] for t in tipos] or [0]) // 10 + 1) * 10
+    try:
+        mysql_execute("INSERT INTO mant_incidencia_motivo_tipos (codigo, nombre, orden, created_by) VALUES (%s,%s,%s,%s)",
+                      (codigo, nombre, orden, current_username()))
+    except Exception as e:
+        print(f"[incidencias] crear tipo de motivo: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo agregar el tipo de motivo."}), 500
+    return jsonify({"ok": True, "codigo": codigo})
+
+
+@app.route("/mantenciones/api/incidencias/motivos/<codigo>", methods=["PUT"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_motivos_editar(codigo):
+    """Renombra un tipo o lo activa/desactiva. NUNCA se borra: las incidencias viejas conservan su tipo (REGLA #4.2). El código no
+    cambia al renombrar. Solo admin/superadmin."""
+    if not _inc_motivo_puede_editar_catalogo():
+        return jsonify({"ok": False, "error_codigo": "SOLO_ADMIN", "error": "Solo un administrador puede cambiar el catálogo de motivos."}), 403
+    data = request.get_json(silent=True) or {}
+    tipos = _inc_motivo_tipos()
+    actual = next((t for t in tipos if t["codigo"] == codigo), None)
+    if not actual:
+        return jsonify({"ok": False, "error": "Ese tipo de motivo no existe."}), 404
+    sets, vals = [], []
+    if "nombre" in data:
+        nombre, err = _inc_motivo_nombre_validar(data.get("nombre"), [t["nombre"] for t in tipos if t["codigo"] != codigo])
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        sets.append("nombre=%s")
+        vals.append(nombre)
+    if "activo" in data:
+        sets.append("activo=%s")
+        vals.append(1 if data.get("activo") else 0)
+    if not sets:
+        return jsonify({"ok": False, "error": "No hay nada que cambiar."}), 400
+    try:
+        mysql_execute("UPDATE mant_incidencia_motivo_tipos SET " + ", ".join(sets) + ", updated_by=%s WHERE codigo=%s",
+                      tuple(vals) + (current_username(), codigo))
+    except Exception as e:
+        print(f"[incidencias] editar tipo de motivo: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el cambio."}), 500
+    return jsonify({"ok": True})
+
+
 @app.route("/mantenciones/api/incidencias/motivos-frecuentes", methods=["GET"])
 @_mant_required
 @_no_tecnico_salvo_taller
@@ -70418,6 +70815,14 @@ def mant_api_incidencias_list():
     if estado in ("abierta", "resuelta"):
         where.append("estado = %s")
         params.append(estado)
+    # 🏷️ 2026-10-29 (gestión de motivos): `f_motivo` = código de un tipo, o «sin» para lo que no tiene tipo todavía. Solo si la columna existe.
+    f_motivo = (request.args.get("f_motivo") or "").strip()[:40]
+    if f_motivo and _inc_motivo_col_ok():
+        if f_motivo == "sin":
+            where.append("(motivo_tipo IS NULL OR motivo_tipo = '')")
+        else:
+            where.append("motivo_tipo = %s")
+            params.append(f_motivo)
 
     # 🔧 2026-09-26 (revisión post-merge, Daniel: "select de semáforo si es
     # factible server-side"). El estado del semáforo (chk_estado) no vive
@@ -70517,6 +70922,13 @@ def mant_api_incidencias_list():
         r["foto_principal"] = ("/f/" + gk) if gk else None
         r["video_principal"] = ("/f/" + vk) if (not gk and vk) else None
         r["n_solicitudes"], r["n_solicitudes_abiertas"] = sol_por_inc.get(r["id"], (0, 0))
+    # 🏷️ 2026-10-29: nombre COMPLETO del tipo de motivo de cada fila (el código no se le muestra a nadie).
+    try:
+        _nombres_tipo = {t["codigo"]: t["nombre"] for t in _inc_motivo_tipos()}
+        for r in rows:
+            r["motivo_tipo_nombre"] = _nombres_tipo.get((r.get("motivo_tipo") or "").strip(), "")
+    except Exception as _e_tipo:
+        print(f"[incidencias] nombre del tipo de motivo: {_e_tipo}", flush=True)
 
     # Comparativa UA/Ubicación vs CheckWMS SOLO de la página visible (Daniel
     # 2026-09-26: "no llames una vez por fila... limita a la página"). El
@@ -70631,7 +71043,7 @@ def _inc_excel_bytes(filas, ahora_chile, motivos_baja=None):
     cols = [
         ("ID", 8, "0", False), ("UA", 16, "@", False), ("SKU", 16, "@", False),
         ("Descripción", 42, "@", True), ("Cantidad", 10, "#,##0", False),
-        ("Motivo", 40, "@", True), ("Estado", 11, "@", False),
+        ("Motivo", 40, "@", True), ("Tipo de motivo", 28, "@", True), ("Estado", 11, "@", False),
         ("¿Requiere repuesto?", 13, "@", False), ("Stock del repuesto", 14, "@", False),
         ("Descripción del repuesto", 32, "@", True),
         ("Ubicación (nuestra)", 18, "@", False), ("UA en Check", 16, "@", False),
@@ -70656,7 +71068,7 @@ def _inc_excel_bytes(filas, ahora_chile, motivos_baja=None):
 
     origen_txt = {"manual": "Escrita a mano", "gri": "GRI del ERP", "registro": "Fecha de registro"}
     cuentas = {"estado": Counter(), "rango": Counter(), "repuesto": Counter(),
-               "ubicacion": Counter(), "chk": Counter()}
+               "ubicacion": Counter(), "chk": Counter(), "tipo": Counter()}
     for n, r in enumerate(filas, 2):
         base = _inc_excel_fecha(r.get("ingreso_fecha"))
         dias = (hoy - base).days if base else None
@@ -70675,7 +71087,7 @@ def _inc_excel_bytes(filas, ahora_chile, motivos_baja=None):
         estado_txt = "Resuelta" if r.get("estado") == "resuelta" else "Abierta"
         valores = [
             r.get("id"), r.get("recomendacion") or "", r.get("sku") or "", r.get("descripcion") or "",
-            int(r.get("cantidad") or 0), r.get("motivo") or "", estado_txt,
+            int(r.get("cantidad") or 0), r.get("motivo") or "", r.get("motivo_tipo_nombre") or "", estado_txt,
             req, stock, r.get("descripcion_repuesto") or "",
             ubic, r.get("chk_ua") or "", r.get("chk_ubicacion") or "", chk_txt,
             base, origen_txt.get(r.get("ingreso_origen"), ""), r.get("ingreso_gri") or "",
@@ -70701,6 +71113,7 @@ def _inc_excel_bytes(filas, ahora_chile, motivos_baja=None):
         cuentas["repuesto"][req if req != "Sí" else f"Sí · {stock.lower()}"] += 1
         cuentas["ubicacion"][ubic or "(sin ubicación)"] += 1
         cuentas["chk"][chk_txt] += 1
+        cuentas["tipo"][r.get("motivo_tipo_nombre") or "Sin clasificar"] += 1     # 🏷️ 2026-10-29: gestión de motivos
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(cols))}{max(1, len(filas) + 1)}"
 
@@ -70718,6 +71131,7 @@ def _inc_excel_bytes(filas, ahora_chile, motivos_baja=None):
     orden_rangos = ["0-30 días", "31-90 días", "91-365 días", "Más de 365 días", "Sin fecha"]
     bloques = [
         ("Por estado", ["Abierta", "Resuelta"], cuentas["estado"]),
+        ("Por tipo de motivo", None, cuentas["tipo"]),
         ("Por días en bodega", orden_rangos, cuentas["rango"]),
         ("Por repuesto", None, cuentas["repuesto"]),
         ("Por ubicación (nuestra)", None, cuentas["ubicacion"]),
@@ -70819,6 +71233,13 @@ def mant_api_incidencias_excel():
                         " ORDER BY incidencia_id, orden", lote) or []:
                     n_fotos[f["incidencia_id"]] = n_fotos.get(f["incidencia_id"], 0) + 1
                     fotos.setdefault(f["incidencia_id"], f["gcs_key"])
+        # 🏷️ 2026-10-29 (gestión de motivos): el nombre COMPLETO del tipo de motivo de cada fila. Si falla, el Excel sale igual, sin esa columna llena.
+        try:
+            _nombres_tipo_xl = {t["codigo"]: t["nombre"] for t in _inc_motivo_tipos()}
+            for r in filas:
+                r["motivo_tipo_nombre"] = _nombres_tipo_xl.get((r.get("motivo_tipo") or "").strip(), "")
+        except Exception as _e_tipo_xl:
+            print(f"[incidencias excel] tipo de motivo: {_e_tipo_xl}", flush=True)
         base_url = request.host_url.rstrip("/")
         for r in filas:
             r["baja"] = bajas.get(r["id"])
@@ -70893,6 +71314,9 @@ def mant_api_incidencias_crear():
         db.commit()
         new_id = cur.lastrowid
     _inc_log(new_id, "creada", "sku", None, sku or "(sin SKU)")
+    # 🏷️ 2026-10-29: tipo de motivo (opcional; solo si el formulario lo manda). Aparte y a mejor esfuerzo: no puede romper el alta.
+    if "motivo_tipo" in data:
+        _inc_motivo_guardar_tipo(new_id, data.get("motivo_tipo"))
     return jsonify({"ok": True, "id": new_id})
 
 
@@ -70991,6 +71415,9 @@ def mant_api_incidencias_editar(iid):
             viejo = viejo.strftime("%Y-%m-%d")
         if str(viejo or "") != str(nuevo or ""):
             _inc_log(iid, "editada", campo, viejo, nuevo)
+    # 🏷️ 2026-10-29: tipo de motivo (opcional; solo si el formulario lo manda). Aparte y a mejor esfuerzo: no puede romper la edición.
+    if "motivo_tipo" in data:
+        _inc_motivo_guardar_tipo(iid, data.get("motivo_tipo"))
     return jsonify({"ok": True})
 
 
@@ -95012,6 +95439,8 @@ def ot2_detalle(vid):
         "anexo_reenviado":              ("reenvió el anexo a firmar", "bi-arrow-repeat", "ambar", "envios"),
         "firma_remota_whatsapp_generada": ("generó el link de firma por WhatsApp", "bi-whatsapp", "verde", "envios"),
         "ot_compartida_wa":             ("compartió la OT por WhatsApp", "bi-whatsapp", "verde", "envios"),
+        # 🖨️ 2026-10-29: imprimir la OT sin firmas (hoja de trabajo). Queda quién y cuándo; el técnico no lo ve en su bitácora.
+        "pdf_borrador":                 ("imprimió el borrador de la OT (sin firmas)", "bi-printer-fill", "azul", "archivos"),
         "informe_postservicio":         ("generó el informe post servicio", "bi-file-earmark-word-fill", "azul", "envios"),
         # ── Archivos
         "adjunto_subido":               ("subió un archivo", "bi-paperclip", "azul", "archivos"),
@@ -134400,6 +134829,40 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
     }
 
 
+# 🖨️ 2026-10-29 (Daniel: «la gestión de impresión de la OT sin necesidad de las firmas»): en estos estados la OT ya no se va a
+# hacer, así que no se imprime ni como borrador. En cualquier otro (creada, programada, en ejecución, por aprobar, cerrada…) sí.
+_OT_PDF_BORRADOR_ESTADOS_NO = ("cancelada", "anulada")
+
+
+def _ot_pdf_borrador_ajustar(ctx):
+    """Vuelve el contexto del PDF una HOJA DE TRABAJO (borrador): lo mismo que el documento final, pero sin dar por terminado
+    lo que no lo está. Pura transformación del `ctx` (sin Flask ni MySQL: se prueba aislada).
+
+    El PDF final presume que la OT terminó: con las tareas sin hacer saldría un bloque «Hallazgos» con alertas rojas
+    («obligatorias pendientes», «equipos no revisados»), el checklist en 0 % y marcas de «sin completar» en cada fila. Eso no
+    sirve para llevar a terreno. Acá se quita esa alarma y cada tarea sin respuesta queda con una CASILLA VACÍA para marcarla
+    a mano (el template la dibuja cuando `resultado_str` viene vacío). Lo que el técnico YA registró (respuestas, fotos,
+    firmas si existen, equipos marcados «no revisado» o «de baja») se mantiene tal cual: es un dato, no una alarma.
+    """
+    ctx["borrador"] = True
+    # El bloque «Hallazgos y excepciones» solo se dibuja si `hallazgos` existe en el contexto.
+    ctx.pop("hallazgos", None)
+    for k in ("hallazgos_err", "hallazgos_warn", "tareas_saltadas_n", "tareas_no_hechas_n",
+              "tareas_oblig_pend_n", "tareas_sin_foto_n"):
+        ctx[k] = 0
+    ctx["equipos_sin_revisar"] = []
+    for fila in ctx.get("tareas_chk") or []:
+        fila["exc"] = False                 # sin marca lateral roja de «excepción»
+        fila["rev_pendiente"] = ""          # sin «Foto del hallazgo sin registrar», «Falta el argumento…»
+        fila["sin_foto_exigida"] = False    # sin «Foto exigida · sin registrar»
+        if (fila.get("resultado_str") or "—").strip() in ("—", ""):
+            fila["resultado_str"] = ""      # el template pinta la casilla vacía
+    for e in ctx.get("equipos") or []:
+        if e.get("estado_esta_ot_label") == "Sin revisión registrada":
+            e["estado_esta_ot_label"] = ""  # todavía no se revisa: no hace falta decirlo en cada tarjeta
+    return ctx
+
+
 # 🧾 2026-10-19: cómo se nombra en el PDF cada pendiente de la revisión (motivo de _chk_revision_evaluar). La
 # obligatoria genérica sigue siendo «Tarea obligatoria sin completar».
 _OT_PDF_REV_MOTIVO = {
@@ -134434,8 +134897,14 @@ def _ot_pdf_anexo_max():
         return _OT_PDF_ANEXO_MAX_DEFECTO
 
 
-def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False):
+def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False, borrador=False):
     """Construye el contexto COMPLETO para renderizar `mantenciones/ot_pdf.html`.
+
+    borrador=True (2026-10-29, Daniel: «la gestión de impresión de la OT sin necesidad de las firmas» -- hay veces que
+    hay que bajar el PDF ANTES de la tarea): se salta SOLO el candado de «OT cerrada con las 3 firmas» y arma una hoja
+    de trabajo marcada BORRADOR (ver `_ot_pdf_borrador_ajustar`). Una OT cancelada o anulada no se imprime. Nunca lleva
+    plata (fuerza `publico=True`, REGLAS #19/#26) y NO lo usa ningún camino que sale hacia el cliente: ni el enlace
+    público /ot-firmada, ni el WhatsApp, ni el correo «OT terminada» -- esos siguen exigiendo cerrada y firmada.
 
     embed_images=True (2026-07-10, Daniel — urgente): usado SOLO por el
     generador de PDF real (Playwright). Convierte firmas y fotos /f/<key>
@@ -134506,16 +134975,23 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
     # ── Validación: OT cerrada con las 3 firmas ──────────────────────
     razones = []
     estado = (visita.get("estado") or "").lower()
-    if estado != "cerrada":
-        razones.append(f"La OT debe estar en estado 'cerrada' (actual: {estado or '—'}).")
-    # En trabajo interno no existe firma de cliente — exigirla dejaba a la OT
-    # interna sin PDF para siempre (Daniel 2026-08-08).
-    if not visita.get("firma_cliente_url") and not _ot_es_interna(visita):
-        razones.append("Falta firma del cliente.")
-    if not visita.get("firma_tecnico_url"):
-        razones.append("Falta firma del técnico.")
-    if not visita.get("firma_supervisor_url"):
-        razones.append("Falta firma del responsable/supervisor.")
+    if borrador:
+        # El borrador NO exige cierre ni firmas: es la hoja para llevar a terreno o revisar antes de cerrar. Lo único que
+        # no se imprime es una OT que ya no se va a hacer. Nunca lleva plata, sea quien sea el que lo pide.
+        publico = True
+        if estado in _OT_PDF_BORRADOR_ESTADOS_NO:
+            razones.append(f"Una OT {estado} no se imprime como borrador.")
+    else:
+        if estado != "cerrada":
+            razones.append(f"La OT debe estar en estado 'cerrada' (actual: {estado or '—'}).")
+        # En trabajo interno no existe firma de cliente — exigirla dejaba a la OT
+        # interna sin PDF para siempre (Daniel 2026-08-08).
+        if not visita.get("firma_cliente_url") and not _ot_es_interna(visita):
+            razones.append("Falta firma del cliente.")
+        if not visita.get("firma_tecnico_url"):
+            razones.append("Falta firma del técnico.")
+        if not visita.get("firma_supervisor_url"):
+            razones.append("Falta firma del responsable/supervisor.")
     if razones:
         return None, "incompleto", razones
 
@@ -135331,6 +135807,11 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
                    "finanzas_at", "finanzas_por",
                    "valorizado_clp", "valorizado_fuente"):   # 2026-10-07: el valorizado tampoco es del cliente
             ctx["visita"].pop(_k, None)
+    # `borrador` viaja SIEMPRE en el contexto (False en el documento firmado): el template lo lee sin depender de que la
+    # variable exista.
+    ctx["borrador"] = bool(borrador)
+    if borrador:
+        _ot_pdf_borrador_ajustar(ctx)
     return ctx, "ok", []
 
 
@@ -135401,14 +135882,20 @@ def _ot_pdf_header_footer_native(ctx, grande=False):
     # ot_pdf.html (macro header_block): manda cerrada_at; si no hay, el
     # estado tal cual. chile_fmt_filter es el mismo filtro `chile_fmt` que
     # usa el template (hora Chile, REGLA #6).
+    es_borrador = bool(ctx.get("borrador"))
     try:
-        if visita.get("cerrada_at"):
+        if es_borrador:
+            # 🖨️ 2026-10-29: la hoja sin firmas lo dice en cada página, aunque la OT ya tenga fecha de cierre.
+            estado_str = "BORRADOR · SIN CERRAR NI FIRMAR"
+        elif visita.get("cerrada_at"):
             estado_str = "CERRADA EL " + chile_fmt_filter(visita["cerrada_at"], "%d-%m-%y")
         else:
             estado_str = str(visita.get("estado") or "cerrada").replace("_", " ").upper()
     except Exception:
         estado_str = ""
     estado_str = _html.escape(estado_str)
+    # Prefijo del pie: «BORRADOR ·» en rojo ILUS (solo en la hoja sin firmas).
+    _pie_borrador = '<b style="color:#dc2626">BORRADOR</b> · ' if es_borrador else ""
 
     if grande:
         # Medidas calcadas del header incrustado aprobado (ot_pdf.html
@@ -135464,7 +135951,7 @@ def _ot_pdf_header_footer_native(ctx, grande=False):
             'justify-content:space-between;align-items:center;border-top:1.5px solid #dc2626;">'
             '<span><b style="color:#0a0a0a">ILUS Fitness</b> · www.ilusfitness.com · '
             'soportetec@sphs.cl</span>'
-            f'<span><b style="color:#0a0a0a">{numero_ot}</b> · {cliente_footer} · Página '
+            f'<span>{_pie_borrador}<b style="color:#0a0a0a">{numero_ot}</b> · {cliente_footer} · Página '
             '<span class="pageNumber"></span> de <span class="totalPages"></span></span>'
             '</div>'
         )
@@ -135513,16 +136000,18 @@ def _ot_pdf_header_footer_native(ctx, grande=False):
         'justify-content:space-between;align-items:center;border-top:1.5px solid #dc2626;">'
         '<span><b style="color:#0a0a0a">ILUS Fitness</b> · www.ilusfitness.com · '
         'soportetec@sphs.cl</span>'
-        f'<span><b style="color:#0a0a0a">{numero_ot}</b> · {cliente_nombre} · Página '
+        f'<span>{_pie_borrador}<b style="color:#0a0a0a">{numero_ot}</b> · {cliente_nombre} · Página '
         '<span class="pageNumber"></span> de <span class="totalPages"></span></span>'
         '</div>'
     )
     return header_html, footer_html
 
 
-def _ot_pdf_incompleto_html(vid, razones):
+def _ot_pdf_incompleto_html(vid, razones, ofrecer_borrador=False):
     """Página de reemplazo cuando el PDF de una OT todavía no se puede
     generar (faltan firmas/cierre) — devuelve el HTML ya renderizado.
+    `ofrecer_borrador` (2026-10-29): agrega el botón «Imprimir borrador (sin firmas)». Solo lo piden las dos rutas del
+    documento de la OT; el anexo fotográfico (otro documento) no.
 
     🔴 FIX 2026-09-04 (Daniel, OT-2026-00133: "le di para ver el PDF antes
     de firmar... y me lleva a la pagina"). Antes esto era un
@@ -135552,6 +136041,9 @@ def _ot_pdf_incompleto_html(vid, razones):
         cliente_nombre=v.get("razon_social") or "",
         estado_label=estado_label,
         razones=razones or [],
+        # 🖨️ 2026-10-29: si el documento final aún no existe, se ofrece la hoja sin firmas (salvo OT cancelada o anulada).
+        puede_borrador=bool(ofrecer_borrador) and bool(estado) and estado not in _OT_PDF_BORRADOR_ESTADOS_NO
+                       and not _ot_pdf_pide_borrador(),
     )
 
 
@@ -135613,6 +136105,24 @@ def mant_visita_anexo_fotografico(vid):
                      as_attachment=False, download_name=fname)
 
 
+def _ot_pdf_pide_borrador():
+    """¿La petición pide el PDF BORRADOR (sin firmas)? `?borrador=1`. Cualquier otra cosa es el documento final de siempre."""
+    return (request.args.get("borrador") or "").strip().lower() in ("1", "true", "si", "sí", "yes")
+
+
+def _ot_pdf_borrador_registrar(vid, visita):
+    """Deja en la bitácora de la OT quién imprimió el borrador y cuándo (trazabilidad: es un documento sin firmas que anda
+    en papel). Mejor esfuerzo: nunca impide entregar el PDF. Sin montos ni datos del cliente en el detalle (REGLA #26)."""
+    try:
+        estado = (visita.get("estado") or "").lower()
+        meta = _OT2_ESTADO_META.get(estado)
+        etiqueta = meta[0] if meta else (estado or "—")
+        _mant_log("visita", vid, "pdf_borrador",
+                  f"Imprimió el borrador de la OT (sin firmas) con la OT en estado «{etiqueta}».")
+    except Exception as _e_bor_log:
+        print(f"[ot_pdf][borrador_log] vid={vid}: {_e_bor_log}", flush=True)
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/pdf")
 @_mant_required
 @_ot_can_view
@@ -135630,7 +136140,10 @@ def mant_visita_pdf(vid):
     imprimible (mismo documento) para que la OT SIEMPRE se pueda visualizar.
     Contexto vía `_ot_pdf_context` (compartido con `mant_ot_pdf_render`).
     """
-    ctx, status, razones = _ot_pdf_context(vid, embed_images=True)
+    # 🖨️ 2026-10-29: `?borrador=1` imprime la hoja de trabajo SIN firmas (OT sin cerrar). Sin ese parámetro, todo sigue igual:
+    # el documento final exige OT cerrada y las 3 firmas.
+    _es_borrador = _ot_pdf_pide_borrador()
+    ctx, status, razones = _ot_pdf_context(vid, embed_images=True, borrador=_es_borrador)
     if status == "not_found":
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
     if status == "incompleto":
@@ -135649,7 +136162,9 @@ def mant_visita_pdf(vid):
         # Petición de navegador/iframe (el modal openPdf()): antes esto
         # redirigía a la pantalla clásica completa (ver _ot_pdf_incompleto_html
         # para el detalle del bug). Ahora se queda en el mismo lugar.
-        return _ot_pdf_incompleto_html(vid, razones)
+        return _ot_pdf_incompleto_html(vid, razones, ofrecer_borrador=True)
+    if _es_borrador:
+        _ot_pdf_borrador_registrar(vid, ctx["visita"])
 
     # Render HTML (contexto compartido con mant_ot_pdf_render → no divergen)
     # 2026-07-10 (Daniel — OT-2026-00032): los levantamientos usan su propio
@@ -135816,6 +136331,9 @@ def mant_visita_pdf(vid):
     _pdf_cli = re.sub(r"[^A-Za-z0-9 _-]", "", _pdf_cli)[:40].strip()
     fname = (f"OT-{_pdf_num_slug}_{_pdf_cli}.pdf" if _pdf_cli
              else f"OT-{_pdf_num_slug}.pdf").replace(" ", "_")
+    if _es_borrador:
+        # El archivo mismo avisa que no es el documento firmado: nadie lo confunde en la carpeta de descargas.
+        fname = "BORRADOR-" + fname
     return send_file(
         io.BytesIO(pdf_bytes), mimetype="application/pdf",
         as_attachment=False, download_name=fname,
@@ -136253,7 +136771,9 @@ def mant_ot_pdf_render(vid):
     Query params:
       - ?print=1 → dispara window.print() automáticamente al cargar.
     """
-    ctx, status, razones = _ot_pdf_context(vid)
+    # 🖨️ 2026-10-29: `?borrador=1` = hoja de trabajo sin firmas (ver mant_visita_pdf).
+    _es_borrador = _ot_pdf_pide_borrador()
+    ctx, status, razones = _ot_pdf_context(vid, borrador=_es_borrador)
     if status == "not_found":
         flash("OT no encontrada.", "danger")
         return redirect(url_for("mant_index"))
@@ -136261,7 +136781,9 @@ def mant_ot_pdf_render(vid):
         # Este botón también abre su URL dentro del modal iframe (ver
         # openPdf() en ots_list.html/ot_ejecutar.html/ot_ficha.html) — mismo
         # bug y mismo arreglo que mant_visita_pdf, ver _ot_pdf_incompleto_html.
-        return _ot_pdf_incompleto_html(vid, razones)
+        return _ot_pdf_incompleto_html(vid, razones, ofrecer_borrador=True)
+    if _es_borrador:
+        _ot_pdf_borrador_registrar(vid, ctx["visita"])
     # Contexto compartido con mant_visita_pdf (fuente única → no divergen)
     # 2026-07-10: misma selección de template que mant_visita_pdf.
     # FIX 2026-08-08: mismo criterio que mant_visita_pdf (ver comentario allá).
@@ -181317,10 +181839,21 @@ except Exception as _ensure_ug_err:
 # Bajas de pendientes e incidencias (2026-09-30, Daniel: "dar de baja sin
 # eliminar, para tener trazabilidad") — tabla NUEVA: SIEMPRE, incluso skip-migrations.
 try:
-    _ensure_incidencia_bajas_table()
-    _ensure_incidencia_bajas_posicion()    # 2026-10-28: posición en Check guardada en cada baja
+    _ensure_incidencia_bajas_table()       # abre su propia conexión: no necesita contexto de Flask
+    # 2026-10-28: posición en Check guardada en cada baja. Usa mysql_execute (→ get_db → Flask `g`): SIN `app_context` fallaba en silencio
+    # al arrancar ("Working outside of application context") y las dos columnas nunca se creaban (corregido 2026-10-29).
+    with app.app_context():
+        _ensure_incidencia_bajas_posicion()
 except Exception as _ensure_ib_err:
     print(f"[ILUS][WARN] tabla mant_incidencia_bajas: {_ensure_ib_err}", flush=True)
+
+# Gestión de motivos de la bodega de incidencias (2026-10-29): catálogo de tipos + columna `motivo_tipo`. SIEMPRE, incluso skip-migrations.
+# Con `app_context`: mysql_execute y mysql_fetchone dependen de Flask `g`, que no existe todavía en el arranque.
+try:
+    with app.app_context():
+        _ensure_incidencia_motivos()
+except Exception as _ensure_im_err:
+    print(f"[ILUS][WARN] gestión de motivos de incidencias: {_ensure_im_err}", flush=True)
 
 # Índices de trazabilidad por producto (2026-07-29, Daniel: "trazabilidad
 # épica de producto") — SIEMPRE, incluso skip-migrations.

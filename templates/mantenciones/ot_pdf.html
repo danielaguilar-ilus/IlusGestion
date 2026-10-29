@@ -8,7 +8,7 @@
    en el PDF descargado. En el navegador normal es inofensivo. #}
 {% if base_url %}<base href="{{ base_url }}">{% endif %}
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ visita.numero_ot or ('OT-' ~ visita.id) }} — Reporte técnico ILUS</title>
+<title>{% if borrador %}BORRADOR · {% endif %}{{ visita.numero_ot or ('OT-' ~ visita.id) }} — Reporte técnico ILUS</title>
 <style>
   /* ════════════════════════════════════════════════════════════
      PDF ILUS — Orden de Trabajo (impresión + preview pantalla)
@@ -1046,6 +1046,9 @@
 </style>
 </head>
 <body>
+{#- 🖨️ 2026-10-29: borrador sin firmas (`?borrador=1`): marca de agua en cada página + estilos de la casilla vacía. -#}
+{% import 'mantenciones/_ot_pdf_borrador.html' as bor %}
+{% if borrador %}{{ bor.marca() }}{% endif %}
 
 {# ════════════ Iconos inline (SVG, sin CDN) ════════════
    🎨 FIX 2026-09-04 (Daniel: "el PDF de las OT no me gusta, hazlo más
@@ -1151,7 +1154,8 @@
     <div class="doc-tipo">ORDEN DE TRABAJO</div>
     <div class="otn">N° {{ visita.numero_ot or visita.id }}</div>
     <div class="doc-meta">
-      {% if visita.cerrada_at %}CERRADA EL {{ visita.cerrada_at | chile_fmt('%d-%m-%y') }}
+      {% if borrador %}BORRADOR · SIN CERRAR NI FIRMAR
+      {% elif visita.cerrada_at %}CERRADA EL {{ visita.cerrada_at | chile_fmt('%d-%m-%y') }}
       {% else %}{{ (visita.estado or 'cerrada')|replace('_',' ')|upper }}{% endif %}
     </div>
     {# Cliente en el header (2026-08-28) -- espejo del header NATIVO del PDF
@@ -1178,7 +1182,7 @@
     <span><b>ILUS Fitness</b> · www.ilusfitness.com · soportetec@sphs.cl</span>
     {# Cliente también en el footer (2026-08-28) -- espejo del footer nativo.
        truncate(48): un nombre kilométrico hacía saltar el pie a 2 líneas. #}
-    <span><b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</b> · {{ ((visita.razon_social or '')|trim or 'Trabajo interno')|truncate(48, true, '…') }} · <span class="pg">Página {{ pg }} de {{ total_pg }}</span></span>
+    <span>{% if borrador %}<b style="color:#b45309">BORRADOR</b> · {% endif %}<b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</b> · {{ ((visita.razon_social or '')|trim or 'Trabajo interno')|truncate(48, true, '…') }} · <span class="pg">Página {{ pg }} de {{ total_pg }}</span></span>
   </div>
 </div>
 {% endif %}
@@ -1231,6 +1235,17 @@
    las firmas: lo firmado es el cuerpo; el anexo respalda. Único lugar
    donde aparece la razón social (REGLA #0: documento con efecto legal). #}
 {% macro cierre_block() %}
+{% if borrador %}
+{#- 🖨️ 2026-10-29: en el borrador NO hay constancia de firmas capturadas: dice lo que es y que no tiene valor de cierre. -#}
+<div class="prov">
+  <b>Borrador sin valor de cierre.</b> Hoja de trabajo generada por <b>{{ ilus_brand or 'ILUS Fitness' }}</b>
+  el {{ generated_at }} (hora de Chile) a partir de los registros de la orden
+  <b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</b>: {{ equipos|length }} equipo{{ 's' if equipos|length != 1 }},
+  {{ chk_total or 0 }} tarea{{ 's' if (chk_total or 0) != 1 }} de checklist y {{ fotos|length }} foto{{ 's' if fotos|length != 1 }}.
+  La orden no está cerrada ni firmada: este documento no reemplaza al informe firmado, que se genera cuando la OT queda cerrada
+  con sus firmas. Los recuadros de firma quedan en blanco para firmar a mano.
+</div>
+{% else %}
 <div class="prov">
   <b>Constancia.</b> Documento generado electrónicamente por <b>{{ ilus_brand or 'ILUS Fitness' }}</b>
   ({{ ilus_legal or 'Sport and Health Solutions SPA' }} · RUT {{ ilus_rut or '76.996.964-0' }})
@@ -1241,6 +1256,7 @@
   la del cliente se identifica con nombre{% if firmante_cliente_rut_fmt %}, RUT{% endif %} y cargo declarados al firmar.
   {% if ot_datos and ot_datos.gps_str %}Posición GPS registrada al iniciar la ejecución: {{ ot_datos.gps_str }}{% if ot_datos.gps_at_str %} ({{ ot_datos.gps_at_str }}){% endif %}.{% endif %}
 </div>
+{% endif %}
 {% if fotos_anexo %}
 <div class="anexo-sep"></div>
 <div class="sec-title">Anexo fotográfico{% if anexo_omitidas %} — muestra{% endif %}
@@ -1295,6 +1311,7 @@
    ═══════════════════════════════════════════════════════════════════ #}
 <section class="sheet">
   {{ header_block(1, total_pg) }}
+  {% if borrador %}{{ bor.banner(generated_at) }}{% endif %}
 
   {# ── Información de la OT: 3 columnas (header estilo OT_316 — Daniel 2026-06-23) ── #}
   <div class="sec-title">Información de la OT</div>
@@ -1868,7 +1885,7 @@
           {{ t.titulo }}
           {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {% if t.maquina_idx %}Equipo {{ t.maquina_idx }} · {% endif %}{{ t.maquina_nombre }}</div>{% else %}<div class="chk-sin-equipo">Sin equipo asociado</div>{% endif %}
           {% if t.equipo_saltado %}<span class="chk-flag mute">Equipo no revisado</span>{% endif %}
-          {% if t.obligatoria and not t.hecha and not t.equipo_saltado %}<span class="chk-flag err">Obligatoria · sin completar</span>{% endif %}
+          {% if t.obligatoria and not t.hecha and not t.equipo_saltado %}{% if borrador %}<span class="chk-flag mute">Obligatoria</span>{% else %}<span class="chk-flag err">Obligatoria · sin completar</span>{% endif %}{% endif %}
           {% if t.sin_foto_exigida and not t.equipo_saltado %}<span class="chk-flag warn">Foto exigida · sin registrar</span>{% endif %}
           {# 🧾 2026-10-19: lo que decide la revisión (misma fuente que la firma y el cierre, ver rev_eval). #}
           {% if t.no_se_exige %}<span class="chk-flag mute">No se exige · no llegó</span>{% endif %}
@@ -1884,7 +1901,8 @@
              que encontró). Sobre 28 caracteres deja de ser etiqueta y pasa a
              ser texto: minúsculas, alineado a la izquierda, con el color
              solo en un borde lateral cuando hay observación o falla. #}
-          {% if res %}
+          {% if borrador and not res %}<span class="bx" role="img" aria-label="Pendiente"></span>
+          {% elif res %}
             {% if res|length > 28 %}
               <div class="res-texto {{ rescls }}">{{ res }}</div>
             {% else %}
@@ -1924,15 +1942,25 @@
             {# 2026-09-05: antes decía "N de N" por construcción. Ahora cuenta
                los que de verdad tienen revisión (tareas hechas, diagnóstico o
                estado de revisión) y descuenta los saltados. #}
+            {% if borrador %}
+            <div class="rm-val">{{ equipos|length }}</div>
+            <div class="rm-lbl">Equipo{{ 's' if equipos|length != 1 }} por revisar</div>
+            {% else %}
             <div class="rm-val">{{ (equipos_revisados_n if equipos_revisados_n is defined else equipos|length) }} de {{ equipos|length }}</div>
             <div class="rm-lbl">Equipos revisados{% if equipos_sin_revisar %} <span class="rm-sub">· {{ equipos_sin_revisar|length }} sin revisar</span>{% endif %}</div>
+            {% endif %}
           </div>
         </div>
         <div class="res-mini">
           <div class="rm-ico ok">{{ ic_clipboard(15, '#fff') }}</div>
           <div class="rm-text">
+            {% if borrador %}
+            <div class="rm-val">{{ chk_total or 0 }}</div>
+            <div class="rm-lbl">Tarea{{ 's' if (chk_total or 0) != 1 }} del checklist{% if chk_completadas %} <span class="rm-sub">· {{ chk_completadas }} ya hecha{{ 's' if chk_completadas != 1 }}</span>{% endif %}</div>
+            {% else %}
             <div class="rm-val">{% if chk_total %}{{ chk_pct }}%{% else %}—{% endif %}</div>
             <div class="rm-lbl">Checklist{% if chk_total %} ({{ chk_completadas }}/{{ chk_total }}){% endif %}{% if tareas_saltadas_n %} <span class="rm-sub">· {{ tareas_saltadas_n }} de equipos no revisados</span>{% endif %}</div>
+            {% endif %}
           </div>
         </div>
         <div class="res-mini">
@@ -1945,8 +1973,13 @@
         <div class="res-mini">
           <div class="rm-ico mute">{{ ic_pin(15, '#fff') }}</div>
           <div class="rm-text">
+            {% if borrador %}
+            <div class="rm-val">{{ (ot_datos.fecha_prog_str if ot_datos and ot_datos.fecha_prog_str else '—') }}</div>
+            <div class="rm-lbl">Fecha programada</div>
+            {% else %}
             <div class="rm-val">{{ 'Validada' if ubic_validada else 'Sin GPS' }}</div>
             <div class="rm-lbl">Ubicación</div>
+            {% endif %}
           </div>
         </div>
       </div>
@@ -2086,7 +2119,7 @@
           {{ t.titulo }}
           {% if t.maquina_nombre %}<div style="color:var(--ilus-mute);font-size:7pt;margin-top:1px">⚙ {% if t.maquina_idx %}Equipo {{ t.maquina_idx }} · {% endif %}{{ t.maquina_nombre }}</div>{% else %}<div class="chk-sin-equipo">Sin equipo asociado</div>{% endif %}
           {% if t.equipo_saltado %}<span class="chk-flag mute">Equipo no revisado</span>{% endif %}
-          {% if t.obligatoria and not t.hecha and not t.equipo_saltado %}<span class="chk-flag err">Obligatoria · sin completar</span>{% endif %}
+          {% if t.obligatoria and not t.hecha and not t.equipo_saltado %}{% if borrador %}<span class="chk-flag mute">Obligatoria</span>{% else %}<span class="chk-flag err">Obligatoria · sin completar</span>{% endif %}{% endif %}
           {% if t.sin_foto_exigida and not t.equipo_saltado %}<span class="chk-flag warn">Foto exigida · sin registrar</span>{% endif %}
           {# 🧾 2026-10-19: lo que decide la revisión (misma fuente que la firma y el cierre, ver rev_eval). #}
           {% if t.no_se_exige %}<span class="chk-flag mute">No se exige · no llegó</span>{% endif %}
@@ -2102,7 +2135,8 @@
              que encontró). Sobre 28 caracteres deja de ser etiqueta y pasa a
              ser texto: minúsculas, alineado a la izquierda, con el color
              solo en un borde lateral cuando hay observación o falla. #}
-          {% if res %}
+          {% if borrador and not res %}<span class="bx" role="img" aria-label="Pendiente"></span>
+          {% elif res %}
             {% if res|length > 28 %}
               <div class="res-texto {{ rescls }}">{{ res }}</div>
             {% else %}
@@ -2140,15 +2174,25 @@
             {# 2026-09-05: antes decía "N de N" por construcción. Ahora cuenta
                los que de verdad tienen revisión (tareas hechas, diagnóstico o
                estado de revisión) y descuenta los saltados. #}
+            {% if borrador %}
+            <div class="rm-val">{{ equipos|length }}</div>
+            <div class="rm-lbl">Equipo{{ 's' if equipos|length != 1 }} por revisar</div>
+            {% else %}
             <div class="rm-val">{{ (equipos_revisados_n if equipos_revisados_n is defined else equipos|length) }} de {{ equipos|length }}</div>
             <div class="rm-lbl">Equipos revisados{% if equipos_sin_revisar %} <span class="rm-sub">· {{ equipos_sin_revisar|length }} sin revisar</span>{% endif %}</div>
+            {% endif %}
           </div>
         </div>
         <div class="res-mini">
           <div class="rm-ico ok">{{ ic_clipboard(15, '#fff') }}</div>
           <div class="rm-text">
+            {% if borrador %}
+            <div class="rm-val">{{ chk_total or 0 }}</div>
+            <div class="rm-lbl">Tarea{{ 's' if (chk_total or 0) != 1 }} del checklist{% if chk_completadas %} <span class="rm-sub">· {{ chk_completadas }} ya hecha{{ 's' if chk_completadas != 1 }}</span>{% endif %}</div>
+            {% else %}
             <div class="rm-val">{% if chk_total %}{{ chk_pct }}%{% else %}—{% endif %}</div>
             <div class="rm-lbl">Checklist{% if chk_total %} ({{ chk_completadas }}/{{ chk_total }}){% endif %}{% if tareas_saltadas_n %} <span class="rm-sub">· {{ tareas_saltadas_n }} de equipos no revisados</span>{% endif %}</div>
+            {% endif %}
           </div>
         </div>
         <div class="res-mini">
@@ -2161,8 +2205,13 @@
         <div class="res-mini">
           <div class="rm-ico mute">{{ ic_pin(15, '#fff') }}</div>
           <div class="rm-text">
+            {% if borrador %}
+            <div class="rm-val">{{ (ot_datos.fecha_prog_str if ot_datos and ot_datos.fecha_prog_str else '—') }}</div>
+            <div class="rm-lbl">Fecha programada</div>
+            {% else %}
             <div class="rm-val">{{ 'Validada' if ubic_validada else 'Sin GPS' }}</div>
             <div class="rm-lbl">Ubicación</div>
+            {% endif %}
           </div>
         </div>
       </div>

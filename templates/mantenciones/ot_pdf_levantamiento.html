@@ -19,7 +19,7 @@
    sin base URL las imágenes relativas (/f/ de GCS, firmas) salen en blanco. #}
 {% if base_url %}<base href="{{ base_url }}">{% endif %}
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ visita.numero_ot or visita.id }} — {{ (pdf_titulo_doc or 'Informe de Levantamiento').capitalize() }} ILUS</title>
+<title>{% if borrador %}BORRADOR · {% endif %}{{ visita.numero_ot or visita.id }} — {{ (pdf_titulo_doc or 'Informe de Levantamiento').capitalize() }} ILUS</title>
 <style>
   :root{
     --rojo:   #dc2626;
@@ -311,6 +311,9 @@
 </style>
 </head>
 <body>
+{#- 🖨️ 2026-10-29: borrador sin firmas (`?borrador=1`): marca de agua en cada página + franja que lo explica. -#}
+{% import 'mantenciones/_ot_pdf_borrador.html' as bor %}
+{% if borrador %}{{ bor.marca() }}{% endif %}
 
 <div class="toolbar">
   <a class="tb-back" href="/mantenciones/ot/{{ visita.id }}/ejecutar">← Volver a la OT</a>
@@ -318,6 +321,7 @@
 </div>
 
 <div class="doc">
+  {% if borrador %}{{ bor.banner(generated_at) }}{% endif %}
 
   {# ══ ENCABEZADO ══════════════════════════════════════════════ #}
   <div class="enc">
@@ -388,7 +392,9 @@
       <td class="lbl">Tipo de servicio</td>
       <td style="font-weight:700">{{ (pdf_subtitulo_doc or 'Levantamiento técnico de equipos') | upper }}</td>
       <td class="lbl">Estado OT</td>
-      <td style="font-weight:700; color:#166534">CERRADA — SERVICIO REALIZADO</td>
+      {#- 🖨️ 2026-10-29: en el borrador la OT NO está cerrada: no puede decir «CERRADA — SERVICIO REALIZADO». -#}
+      {% if borrador %}<td style="font-weight:700; color:#92400e">BORRADOR — SIN CERRAR NI FIRMAR</td>
+      {% else %}<td style="font-weight:700; color:#166534">CERRADA — SERVICIO REALIZADO</td>{% endif %}
     </tr>
   </table>
 
@@ -473,14 +479,14 @@
     <div class="firma">
       <div class="rol">Realizado por — Técnico</div>
       {% if visita.firma_tecnico_url %}<img src="{{ visita.firma_tecnico_url }}" alt="Firma técnico">
-      {% else %}<div class="sin">Sin firma registrada</div>{% endif %}
+      {% else %}<div class="sin">{% if borrador %}Firma pendiente{% else %}Sin firma registrada{% endif %}</div>{% endif %}
       <div class="nom">{{ visita.firma_tecnico_nombre or visita.tecnico_principal or '—' }}</div>
       <div class="det">{% if visita.firma_tecnico_at %}{{ visita.firma_tecnico_at | chile_fmt }}{% endif %}</div>
     </div>
     <div class="firma">
       <div class="rol">Recibido conforme — Cliente</div>
       {% if visita.firma_cliente_url %}<img src="{{ visita.firma_cliente_url }}" alt="Firma cliente">
-      {% else %}<div class="sin">Sin firma registrada</div>{% endif %}
+      {% else %}<div class="sin">{% if borrador %}Firma pendiente{% else %}Sin firma registrada{% endif %}</div>{% endif %}
       <div class="nom">{{ visita.firma_cliente_nombre or visita.razon_social or '—' }}</div>
       <div class="det">
         {% if firmante_cliente and firmante_cliente.signer_rut %}RUT {{ firmante_cliente.signer_rut | rut_fmt }}{% if firmante_cliente.signer_role %} · {{ firmante_cliente.signer_role }}{% endif %} · {% endif %}
@@ -490,7 +496,7 @@
     <div class="firma">
       <div class="rol">Validado por — Responsable ILUS</div>
       {% if visita.firma_supervisor_url %}<img src="{{ visita.firma_supervisor_url }}" alt="Firma responsable">
-      {% else %}<div class="sin">Sin firma registrada</div>{% endif %}
+      {% else %}<div class="sin">{% if borrador %}Firma pendiente{% else %}Sin firma registrada{% endif %}</div>{% endif %}
       <div class="nom">{{ visita.firma_supervisor_nombre or visita.cerrada_por or '—' }}</div>
       <div class="det">{% if visita.firma_supervisor_at %}{{ visita.firma_supervisor_at | chile_fmt }}{% endif %}</div>
     </div>
@@ -504,7 +510,8 @@
        · garantía / sin costo (cubierto, el cliente no paga).
      Si Daniel prefiere que salga SIEMPRE, se quita este {% if %}. #}
   {% set _mod_cobro = (visita.modalidad_cobro or '') | lower %}
-  {% if visita.cliente_id and _mod_cobro not in ('garantia', 'sin_costo', 'interno') %}
+  {#- 🖨️ 2026-10-29: el borrador es una hoja de trabajo, no un documento de cobro: no lleva los datos de transferencia. -#}
+  {% if visita.cliente_id and _mod_cobro not in ('garantia', 'sin_costo', 'interno') and not borrador %}
   <div class="pago-strip">
     <div class="pago-icon-wrap">
       <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

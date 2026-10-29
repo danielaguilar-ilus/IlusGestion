@@ -1,0 +1,49 @@
+{#-
+  ════════════════════════════════════════════════════════════════════
+  BORRADOR DE LA OT — hoja de trabajo SIN firmas (2026-10-29)
+  ════════════════════════════════════════════════════════════════════
+  Daniel: «la gestión de impresión de la OT sin necesidad de las firmas» — hay veces que hay que bajar el PDF ANTES de la
+  tarea. Lo comparten ot_pdf.html y ot_pdf_levantamiento.html con `{% import %}` (los macros no ven el contexto del
+  documento: reciben lo que necesitan por parámetro).
+
+  · marca()  → estilos del borrador + la marca de agua «BORRADOR» que se repite en CADA página impresa (position:fixed).
+  · banner() → franja ámbar de la primera página: dice qué es este documento y que no se envía al cliente.
+
+  Colores: ámbar de advertencia del proyecto (REGLA #2) y gris neutro; nada de rojo, porque un borrador no es una falla.
+-#}
+{% macro marca() %}
+<style>
+  .borrador-mark {
+    position: fixed; top: 50%; left: 50%; z-index: 9999;
+    transform: translate(-50%, -50%) rotate(-32deg);
+    font: 900 92pt/1 'Helvetica Neue', Arial, sans-serif; letter-spacing: .08em;
+    color: rgba(71, 85, 105, .10); white-space: nowrap;
+    pointer-events: none; user-select: none;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .borrador-banner {
+    margin: 0 0 3mm; padding: 2.4mm 4mm;
+    background: #fff8e1; border: 1px solid #f59e0b; border-left-width: 3px; border-radius: 2px;
+    color: #92400e; font-size: 8pt; line-height: 1.45; page-break-inside: avoid;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .borrador-banner b { font-weight: 800; letter-spacing: .02em; }
+  /* Casilla vacía de una tarea sin respuesta: se marca a mano en terreno. Dibujada con CSS (no con «☐»: ese glifo no existe en
+     las fuentes del servidor y saldría como un cuadrito de error). */
+  .bx {
+    display: inline-block; width: 3.2mm; height: 3.2mm; vertical-align: -.7mm;
+    border: .35mm solid #6b7280; border-radius: .6mm; background: #fff;
+  }
+  /* Un recuadro de firma sin firma queda en blanco para firmar a mano: sin «—» ni «N/A». */
+  .fir .fir-img.empty { color: transparent; }
+</style>
+<div class="borrador-mark" aria-hidden="true">BORRADOR</div>
+{% endmacro %}
+
+{% macro banner(generated_at='') %}
+<div class="borrador-banner" role="note">
+  <b>BORRADOR · OT SIN CERRAR NI FIRMAR.</b>
+  Hoja de trabajo impresa{% if generated_at %} el {{ generated_at }} (hora de Chile){% endif %}. No reemplaza al documento firmado
+  y no se envía al cliente: el documento final se genera cuando la OT queda cerrada con sus firmas.
+</div>
+{% endmacro %}

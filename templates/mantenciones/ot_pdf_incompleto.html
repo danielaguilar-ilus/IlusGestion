@@ -118,7 +118,7 @@
 <div class="card">
   <div class="badge-ico"><i class="bi bi-hourglass-split"></i></div>
   <h1>El PDF todavía no está disponible</h1>
-  <p class="sub">Se genera automáticamente en cuanto la OT quede cerrada con sus 3 firmas.</p>
+  <p class="sub">Se genera automáticamente en cuanto la OT quede cerrada con sus 3 firmas.{% if puede_borrador %} Mientras tanto puedes imprimir el borrador, sin firmas.{% endif %}</p>
 
   <div class="meta">
     <span class="chip"><b>{{ numero_ot }}</b></span>
@@ -135,7 +135,13 @@
   {% endif %}
 
   <div class="actions">
-    <button type="button" class="btn btn-primary" id="btnCerrar">
+    {#- 🖨️ 2026-10-29: la hoja de trabajo sin firmas. Lleva la marca BORRADOR en cada página y no se puede enviar al cliente. -#}
+    {% if puede_borrador %}
+    <a class="btn btn-primary" id="btnBorrador" href="{{ url_for('mant_visita_pdf', vid=vid, borrador=1) }}">
+      <i class="bi bi-printer-fill"></i> Imprimir borrador (sin firmas)
+    </a>
+    {% endif %}
+    <button type="button" class="btn {{ 'btn-ghost' if puede_borrador else 'btn-primary' }}" id="btnCerrar">
       <i class="bi bi-check2"></i> Entendido
     </button>
     <a class="btn btn-ghost" href="{{ url_for('ot2_detalle', vid=vid) }}" target="_top">
