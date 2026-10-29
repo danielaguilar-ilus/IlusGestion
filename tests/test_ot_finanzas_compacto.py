@@ -312,12 +312,16 @@ class TestElRecorridoEnSeisFilas(_Base):
         self.assertNotIn("fm-btn-chip", ok.split('<ol class="fm-pasos">')[1].split("</ol>")[0])
         falta = self._pintar("sin_docs")
         franja = falta.split('<ol class="fm-pasos">')[1].split("</ol>")[0]
-        for accion in ("ligarDoc", "pedirCierre", "declararCobro"):
-            self.assertIn(f'class="fm-btn fm-btn-chip', franja)
-            self.assertIn(f'data-fm-act="{accion}"', franja)
+        # 2026-10-29 (Daniel: «evita la duplicidad de botones»): lo que solo existe en el paso sigue siendo su botón chico (③ declarar el cobro)…
+        self.assertIn('class="fm-btn fm-btn-chip" data-fm-act="declararCobro"', franja)
+        # …y lo que ya tiene su botón en la tarjeta (agregar el documento en «Documentos», pedir autorización en «Modificar») es un ENLACE a ese botón
+        for accion in ("ligarDoc", "pedirCierre"):
+            self.assertNotIn(f'data-fm-act="{accion}"', franja, accion)
         fila2 = franja.split('<li class="fm-paso ')[2]
         self.assertIn("fm-paso-a", fila2)
-        self.assertIn("Agregar factura", fila2)
+        self.assertIn('<a class="fm-ir" href="#" data-fm-act="irA" data-fm-ir="ligarDoc"', fila2)
+        self.assertIn("Agregar la factura o boleta: en «Documentos»", fila2)
+        self.assertIn('data-fm-ir="pedirCierre"', franja.split('<li class="fm-paso ')[6])
         # el mensaje largo se lee ENTERO en la fila (antes se cortaba en su primera cláusula)
         fila6 = franja.split('<li class="fm-paso ')[6]
         self.assertIn('<span class="fm-paso-e">Se necesita al menos un documento de cobro de Random (factura, boleta o nota de venta) o la autorización de Daniel.</span>', fila6)
@@ -429,11 +433,14 @@ class TestContadoresYCuenta(_Base):
     def test_la_cuenta_va_en_una_linea_y_el_desglose_en_una_mini_tabla_de_dos_filas(self):
         html = self._pintar("cobro_2docs")
         cta = html.split('<section class="fm-cta ')[1].split("</section>")[0]
-        # 2026-10-08: con las palabras de Daniel: «Cobramos $X», «Nos cobraron $Y» y el resultado en grande, «Ganamos $Z (n %)»
-        i1, i2, i3 = cta.index("Cobramos</small><b>$302.101"), cta.index("Nos cobraron</small><b>$250.000"), cta.index("Ganamos</small><b>$52.101")
+        # 2026-10-29 (v4): las cifras grandes (cuánto nos cobraron, cuánto cobramos y el margen) subieron a «¿Quién se adjudica el dinero?», arriba de
+        # La cuenta; acá ya no se repiten (tests/test_ot_motor_quien_y_botones.py prueba el encabezado).
+        quien = html.split('<section class="fm-adj"')[1].split("</section>")[0]
+        i1, i2, i3 = quien.index("Nos cobró"), quien.index("Cobramos a"), quien.index("Ganamos $52.101")
         self.assertTrue(i1 < i2 < i3)
-        self.assertIn("<em>(17,2 %)</em>", cta)
-        self.assertIn("Margen sano", cta)
+        self.assertIn("<em>(17,2 %)</em>", quien)
+        self.assertNotIn('class="fm-res"', cta)
+        self.assertLess(html.index('<section class="fm-adj"'), html.index('<section class="fm-cta '))
         mini = cta.split('<table class="fm-neg">')[1].split("</table>")[0]
         self.assertEqual(mini.count("<tr>"), 3, "encabezado + 2 filas (servicio y despacho)")
         self.assertIn("Instalación o servicio", mini)
@@ -447,9 +454,12 @@ class TestContadoresYCuenta(_Base):
     def test_en_una_ot_que_no_se_cobra_dice_nos_costo_y_la_constancia_vive_en_el_paso_1(self):
         html = self._pintar("garantia_nv")
         cta = html.split('<section class="fm-cta ')[1].split("</section>")[0]
-        # 2026-10-08: «No se cobra · nos costó $Y» (la cuenta ya no repite «Cobré $0 − …»); el motivo va aparte
-        self.assertIn("No se cobra</small><b>nos costó $200.000", cta)
-        self.assertIn('<span class="fm-motivo">Garantía</span>', cta)
+        # 2026-10-08: «No se cobra · nos costó $Y» (la cuenta ya no repite «Cobré $0 − …»); el motivo va aparte.
+        # 2026-10-29 (v4): lo dice el bloque «Cobramos a» del encabezado «¿Quién se adjudica el dinero?».
+        quien = html.split('<section class="fm-adj"')[1].split("</section>")[0]
+        self.assertIn('<b class="fm-q-v">No se cobra</b>', quien)
+        self.assertIn('<span class="fm-q-cost">nos costó $200.000</span>', quien)
+        self.assertIn('<span class="fm-motivo">Garantía</span>', quien)
         # 2026-10-25: sin cobro no hay desglose Cobramos/Queda por negocio, pero SÍ lo que nos costó (la tarjeta «Lo que nos costó» se fundió acá)
         self.assertNotIn('<table class="fm-neg">', cta)
         self.assertIn('<table class="fm-neg fm-neg-c">', cta)
@@ -722,9 +732,13 @@ class TestMasOpciones(_Base):
         self.assertIn("Más opciones", fila)
         self.assertIn('<div class="fm-mas-p" id="fmMas1" hidden>', html)
         panel = self._panel(html)
-        for act in ("ligarDoc", "pedirCero", "corregirProv", "pedirCierre"):
+        for act in ("pedirCero", "corregirProv", "pedirCierre"):
             self.assertIn(f'data-fm-act="{act}"', panel, act)           # nada se quitó (REGLA #4.2): está detrás de «Más opciones»
             self.assertNotIn(f'data-fm-act="{act}"', fila, act)
+        # 2026-10-29 (v4): agregar un documento tiene UN botón, en el encabezado de «Documentos» (no en «Modificar» ni en «Más opciones»)
+        self.assertNotIn('data-fm-act="ligarDoc"', fila + panel)
+        self.assertEqual(html.count('data-fm-act="ligarDoc"'), 1)
+        self.assertIn('data-fm-act="ligarDoc"', html.split("<h3>Documentos <small>")[1].split("</div>")[0])
         self.assertNotIn("fm-btn-toca", fila + panel)                   # nada «te toca»: la OT está en orden
         self.assertNotIn("fm-btn-pri", fila + panel)                    # y el rojo de la marca no es el color de un botón de modificar
 
@@ -748,11 +762,14 @@ class TestMasOpciones(_Base):
             pan.update(puede_editar=True)
         html = self._pintar("garantia_nv", mutar=sin_factura)
         fila, panel = self._fila(html), self._panel(html)
-        self.assertIn('class="fm-btn fm-btn-toca" data-fm-act="ligarDoc"', fila)
+        # 2026-10-29 (v4): el botón que la resuelve es el ÚNICO de «Documentos», en azul («te toca»); «Modificar» no lo repite
+        docs_h = html.split("<h3>Documentos <small>")[1].split("</div>")[0]
+        self.assertIn('class="fm-btn fm-btn-doc fm-btn-toca" data-fm-act="ligarDoc"', docs_h)
+        self.assertEqual(html.count('data-fm-act="ligarDoc"'), 1)
         for otro in ("pedirCierre", "pedirCero", "quitarCero", "corregirProv"):
             self.assertNotIn(f'data-fm-act="{otro}"', fila, otro)
             self.assertIn(f'data-fm-act="{otro}"', panel, otro)
-        self.assertNotIn('data-fm-act="ligarDoc"', panel, "no se repite detrás de «Más opciones»")
+        self.assertNotIn('data-fm-act="ligarDoc"', fila + panel, "no se repite en «Modificar» ni detrás de «Más opciones»")
         self.assertIn("Más opciones", fila)
 
     def test_si_falta_el_costo_declararlo_queda_a_la_vista_en_azul(self):
@@ -772,7 +789,9 @@ class TestMasOpciones(_Base):
     def test_una_ot_cerrada_ofrece_regularizar_detras_de_mas_opciones_y_lo_explica(self):
         html = self._pintar("cobro_2docs", mutar=lambda rec, pan: (rec.update(cerrada=True), pan.update(cerrada=True, puede_editar=False, puede_regularizar=True)))
         panel = self._panel(html)
-        self.assertIn('data-fm-act="ligarDoc"', panel)
+        # 2026-10-29 (v4): regularizar el documento de una OT cerrada se hace con el botón único de «Documentos»
+        self.assertIn('data-fm-act="ligarDoc"', html.split("<h3>Documentos <small>")[1].split("</div>")[0])
+        self.assertEqual(html.count('data-fm-act="ligarDoc"'), 1)
         self.assertIn('data-fm-act="pedirCierre"', panel)
         self.assertIn("OT cerrada (evidencia)", panel)
         self.assertNotIn('data-fm-act="corregirProv"', panel, "una OT cerrada no reescribe el costo: eso es «Corregir finanzas»")
@@ -868,17 +887,24 @@ class TestCuerpoYSinDocumentos(_Base):
         self.assertNotIn("no necesita documento ni autorización", cta)
 
     def test_un_cliente_sin_documentos_ve_una_linea_con_el_boton_de_ligar_y_sin_duplicarlo(self):
+        """2026-10-29 (v4): la sección «Documentos» existe aunque no haya documentos: su encabezado trae el botón ÚNICO de agregar y, debajo, la línea
+        «Sin documentos aún» (que ya no trae un botón propio)."""
         html = self._pintar("sin_docs")
-        linea = html.split('<div class="fm-sindoc">')[1].split("</div>")[0]
+        docs = html.split('<section class="fm-sec" id="fmDocs1">')[1].split("</section>")[0]
+        self.assertIn("<h3>Documentos <small>0</small></h3>", docs)
+        linea = docs.split('<div class="fm-sindoc">')[1].split("</div>")[0]
         self.assertIn("Sin documentos aún", linea)
-        self.assertIn('data-fm-act="ligarDoc"', linea)
+        self.assertIn("Agrégalo con el botón de arriba", linea)
+        self.assertNotIn('data-fm-act="ligarDoc"', linea)
         self.assertNotIn("fm-vacio", html)
+        self.assertEqual(html.count('data-fm-act="ligarDoc"'), 1, "UN solo botón para agregar el documento en toda la tarjeta")
         acc = html.split('<div class="fm-acciones">')[1].split("</section>")[0]       # «Modificar» + «Más opciones» (lo último de La cuenta)
-        self.assertNotIn('data-fm-act="ligarDoc"', acc, "el botón de asociar ya está en la línea: no se repite en «Modificar»")
+        self.assertNotIn('data-fm-act="ligarDoc"', acc, "el botón de asociar ya está en «Documentos»: no se repite en «Modificar»")
         self.assertIn('data-fm-act="pedirCero"', acc)
-        # el botón de la línea es de «te toca»: azul (no el rojo de la marca)
-        self.assertIn('class="fm-btn fm-btn-toca" data-fm-act="ligarDoc"', linea)
-        self.assertNotIn("fm-btn-pri", linea)
+        # el botón único es de «te toca»: azul (no el rojo de la marca)
+        cab = docs.split('<div class="fm-sindoc">')[0]
+        self.assertIn('class="fm-btn fm-btn-doc fm-btn-toca" data-fm-act="ligarDoc"', cab)
+        self.assertNotIn("fm-btn-pri", cab)
 
     def test_la_interna_solo_ofrece_corregir_el_costo_del_proveedor(self):
         html = self._pintar("interna_cerrada", mutar=lambda rec, pan: pan.update(puede_editar=True))

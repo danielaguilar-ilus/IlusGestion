@@ -23,7 +23,19 @@
    2026-10-25 (Daniel, con la OT-2026-00247: «los costos, resumidos y con pocos clics»): v3. «Lo que nos costó» se fundió en La cuenta (UN solo lugar para
    la plata: quién nos cobró, su anexo y los repuestos en la misma tabla); «Modificar» queda detrás de UN botón «Más opciones» cuando todo está en
    orden (si algo falta, el botón que lo resuelve se ve, en azul); y el recorrido se pliega en una línea de chips cuando ningún paso falta.
-   Orden: encabezado → frase → La cuenta | El recorrido (plegado: su línea arriba y La cuenta debajo) → Documentos a ancho completo → pie. */
+   Orden: encabezado → frase → La cuenta | El recorrido (plegado: su línea arriba y La cuenta debajo) → Documentos a ancho completo → pie.
+   2026-10-29 (Daniel: «evita la duplicidad de botones: los costos tienen para agregar factura por todos lados; debería ser más estructurado… indica quién
+   se está adjudicando ese dinero: arriba, Daniel Pulgar nos cobró tanto; nosotros cobramos a la empresa tanto… y de ahí para abajo cuánto cobró ILUS o el
+   interno… NO me vayas a crear un agente ILUS ni un técnico ILUS» y «las tarjetas deben ser pequeñas… no muestres tanta información a menos que le den
+   clic»): v4.
+     · Arriba de todo, «¿Quién se adjudica el dinero?» (htmlQuien): quién nos cobró (técnico/proveedor y su empresa, con el anexo), a quién le cobramos
+       (servicio y despacho, cada uno con el documento que lo lleva) y, solo si corresponde, la línea «ILUS · interno» (un rótulo: no es una persona). Debajo,
+       el margen con la política de la REGLA #57 (POLITICA_MARGEN). Las cifras grandes que antes iban dentro de La cuenta (.fm-res) viven ahora acá.
+     · UN solo botón para agregar un documento: el de la sección «Documentos» (botonDocs). El recorrido, el rechazo del cierre y los demás puntos ya no
+       dibujan su propio botón: son un enlace que lleva al botón único y lo resalta (irA). Lo mismo con cualquier acción que ya tenga su botón en
+       «Modificar»: el recorrido enlaza, no repite (botonesFijos).
+     · Cada documento es una tarjeta chica (tipo, número, fecha, total, qué aporta y su estado); sus líneas, su saldo y quién lo agregó se abren con un
+       toque (docTog). La nota de venta se rotula «Referencia de la venta»; la factura o boleta, «Documento de cobro». */
 (function (global) {
   'use strict';
 
@@ -39,6 +51,10 @@
   function esInterna(inst) {
     return !!(inst && ((inst.rec && inst.rec.interna) || (inst.pan && inst.pan.interna)));
   }
+  /* 🎯 2026-10-29 (REGLA #57): la política de margen del Servicio Técnico. 30 % o más = objetivo; de 20 % a menos de 30 % = tolerancia; menos de 20 % =
+     bajo (ámbar); menos de 0 = pérdida (rojo). UNA constante fácil de reemplazar: si el servidor manda su política (fin.politica_margen, desde
+     ot_margen_politica.py, que se está creando aparte), manda la del servidor. */
+  var POLITICA_MARGEN = { objetivo: 30, tolerancia: 20 };
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -264,12 +280,75 @@
   /* ¿El costo del proveedor viene de un anexo vivo? (REGLA #34: el costo de la OT y el anexo son UN solo valor). */
   function anexoVivo(inst) { return (inst.rec && inst.rec.anexo) || null; }
 
+  /* ═══ UN BOTÓN POR ACCIÓN ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+     2026-10-29 (Daniel: «evita la duplicidad de botones: los costos tienen para agregar factura por todos lados; debería ser más estructurado»).
+     Cada acción tiene UN botón en la tarjeta: «Agregar factura, boleta o nota de venta» vive en el encabezado de «Documentos»; pedir el $0, corregir el
+     costo y autorizar el cierre viven en «Modificar» (a la vista si te toca, si no detrás de «Más opciones»); «Usar el valor del anexo», en la franja del
+     anexo. El recorrido y el rechazo del cierre ya no repiten ese botón: dibujan un ENLACE que lleva al botón único y lo resalta (irA). Si el botón único no
+     existe (sin permiso para ese lugar), el paso conserva su propio botón: ninguna función se pierde (REGLA #4.2). */
+  function puedeModificar(inst) { var p = inst.pan || {}; return !!(p.puede_editar || (p.cerrada && p.puede_regularizar)); }
+  function puedeLigar(inst) { return !esInterna(inst) && puedeModificar(inst); }
+  /* ¿La franja del anexo que dibuja el servidor (ficha) trae el botón «Usar el valor del anexo»? */
+  function franjaConUsarAnexo(inst) {
+    try {
+      var n = inst.anexoNodo || document.getElementById('otdAnexoVinculoFicha');
+      return !!(n && n.querySelector && n.querySelector('[onclick*="otdCostoDesdeAnexo"]'));
+    } catch (e) { return false; }
+  }
+  /* Las acciones que ya tienen su botón fuera del recorrido (Documentos, Modificar, la línea o la franja del anexo). */
+  function botonesFijos(inst) {
+    var s = {};
+    if (puedeLigar(inst)) s.ligarDoc = 1;
+    if (puedeModificar(inst)) accionesLista(inst, true).items.forEach(function (b) { s[b.act] = 1; });
+    var ax = anexoVivo(inst);
+    if (ax && ax.abierta && ax.vinculo !== 'alineado' && global.otdCostoDesdeAnexo && (inst.modo === 'modal' || franjaConUsarAnexo(inst))) s.usarAnexo = 1;
+    return s;
+  }
+  /* El enlace que lleva al botón único (no lo repite). */
+  function enlaceA(act, texto, titulo) {
+    return '<a class="fm-ir" href="#" data-fm-act="irA" data-fm-ir="' + esc(act) + '" title="' + esc(titulo || texto) + '"><i class="bi bi-arrow-down-circle"></i> ' + esc(texto) + '</a>';
+  }
+  var DONDE = { ligarDoc: '«Documentos»', pedirCero: '«Modificar»', pedirCierre: '«Modificar»', corregirProv: '«Modificar»', quitarCero: '«Modificar»',
+    usarAnexo: 'la franja del anexo' };
+
   function htmlPasos(inst) {
-    var rec = inst.rec, puede = inst.pan.puede_editar || (inst.pan.cerrada && inst.pan.puede_regularizar);
+    var rec = inst.rec, puede = puedeModificar(inst);
     var pend = rec.solicitud_pendiente;
     var html = '';
     var interna = esInterna(inst);
     var ax = anexoVivo(inst);
+    var fijos = botonesFijos(inst), enPasos = {};
+    /* Botón del paso, o enlace al botón único si la acción ya lo tiene en otro lugar de la tarjeta. */
+    function accion(act, label, icono, pri, titulo, ir) {
+      if (fijos[act]) return enlaceA(act, ir + ': en ' + DONDE[act], titulo);
+      enPasos[act] = 1;
+      return botonChip(act, label, icono, pri, titulo);
+    }
+    /* El recorrido: seis filas, cada una con su círculo de estado, el título y el texto ESPECÍFICO y completo del paso. */
+    var lista = '<ol class="fm-pasos">';
+    (rec.pasos || []).forEach(function (p) {
+      var act = '';
+      if (p.estado === 'falta' && puede) {
+        /* Interna sin cliente: solo el costo del proveedor (paso 4) puede ofrecer algo; documento, cobro y cierre no. */
+        if (p.n === 1 && !interna) act = accion('pedirCero', 'Pedir autorización', 'bi-shield-check', false, 'Pedir autorización del $0', 'Pedir la autorización del $0');
+        /* 2026-10-29: el paso ② ya no dibuja «Agregar factura» ni «Pedir autorización»: enlaza al botón único de «Documentos». La excepción (cerrar sin
+           documento) sigue en «Modificar» → «Más opciones». */
+        else if (p.n === 2 && !interna) act = accion('ligarDoc', 'Agregar factura', 'bi-link-45deg', true, 'Agregar factura o boleta', 'Agregar la factura o boleta') +
+          (fijos.pedirCierre ? '' : accion('pedirCierre', 'Pedir autorización', 'bi-shield-lock', false, 'Pedir autorización a ' + CAMPANA_DAN, 'Pedir autorización a ' + CAMPANA_DAN));
+        else if (p.n === 3 && !interna && inst.pan.puede_editar) act = accion('declararCobro', 'Declarar cobro', 'bi-cash-coin', false, 'Declarar lo que cobré', 'Declarar lo que cobré');
+        /* Con un anexo vivo el costo ES el del anexo: la salida es alinearlo con un clic, no escribirlo a mano (el servidor lo rechazaría). */
+        else if (p.n === 4 && inst.pan.puede_editar && ax && ax.abierta && ax.vinculo !== 'alineado' && global.otdCostoDesdeAnexo)
+          act = accion('usarAnexo', 'Usar el valor del anexo', 'bi-link-45deg', true, 'Dejar el costo de la OT igual al del Anexo N° ' + ax.numero, 'Usar el valor del anexo');
+        else if (p.n === 4 && inst.pan.puede_editar && !(ax && ax.abierta)) act = accion('corregirProv', 'Declarar costo', 'bi-pencil-square', false, 'Declarar lo que cobró el proveedor', 'Declarar lo que cobró el proveedor');
+        else if (p.n === 6 && !pend && !interna && p.accion === 'pedir_aut_perdida') act = accion('pedirPerdida', 'Pedir autorización', 'bi-shield-exclamation', true, 'Pedir a ' + CAMPANA_DAN + ' la autorización para cerrar con pérdida', 'Pedir la autorización de pérdida');
+        else if (p.n === 6 && !pend && !interna) act = accion('pedirCierre', 'Pedir autorización', 'bi-shield-lock', false, 'Pedir autorización a ' + CAMPANA_DAN, 'Pedir autorización a ' + CAMPANA_DAN);
+      }
+      lista += '<li class="fm-paso ' + esc(p.estado) + (p.clase ? ' c-' + esc(p.clase) : '') + '" data-paso="' + esc(p.n) + '">' +
+        '<span class="fm-circ"><i class="bi ' + (ICONO_PASO[p.estado] || 'bi-circle') + '"></i></span>' +
+        '<div class="fm-paso-c"><b>' + p.n + '. ' + esc(p.titulo) + '</b><span class="fm-paso-e">' + esc(p.texto || '') + '</span></div>' +
+        (act ? '<div class="fm-paso-a">' + act + '</div>' : '') + '</li>';
+    });
+    lista += '</ol>';
     if (pend && !interna) {
       html += '<div class="fm-espera"><i class="bi bi-hourglass-split"></i><div><b>Esperando autorización de ' + CAMPANA_DAN + ' desde ' + esc(pend.solicitado_at) + '</b>' +
         '<span>' + esc(pend.tipo_txt) + (pend.motivo_txt ? ' · ' + esc(pend.motivo_txt) : '') + ' · la pidió ' + esc(pend.solicitado_por_nombre) + '. ' +
@@ -277,31 +356,14 @@
         '<a class="fm-btn" href="' + esc(pend.url) + '">Ver la solicitud</a></div>';
     }
     if (inst.rechazo) {
+      /* El rechazo del cierre tampoco repite un botón que ya está en la tarjeta (en un paso, en «Documentos» o en «Modificar»): enlaza a él. */
+      var yaEsta = {};
+      Object.keys(fijos).forEach(function (k) { yaEsta[k] = DONDE[k] || 'la tarjeta'; });
+      Object.keys(enPasos).forEach(function (k) { if (!yaEsta[k]) yaEsta[k] = 'el recorrido'; });
       html += '<div class="fm-rechazo" id="fmRechazo"><i class="bi bi-x-octagon-fill"></i><div><b>No se pudo cerrar la OT</b><span>' + esc(inst.rechazo.error || '') + '</span></div>' +
-        accionDeRechazo(inst.rechazo) + '</div>';
+        accionDeRechazo(inst.rechazo, yaEsta) + '</div>';
     }
-    /* El recorrido: seis filas, cada una con su círculo de estado, el título y el texto ESPECÍFICO y completo del paso. */
-    html += '<ol class="fm-pasos">';
-    (rec.pasos || []).forEach(function (p) {
-      var act = '';
-      if (p.estado === 'falta' && puede) {
-        /* Interna sin cliente: solo el costo del proveedor (paso 4) puede ofrecer algo; documento, cobro y cierre no. */
-        if (p.n === 1 && !interna) act = botonChip('pedirCero', 'Pedir autorización', 'bi-shield-check', false, 'Pedir autorización del $0');
-        else if (p.n === 2 && !interna) act = botonChip('ligarDoc', 'Agregar factura', 'bi-link-45deg', true, 'Agregar factura o boleta') + botonChip('pedirCierre', 'Pedir autorización', 'bi-shield-lock', false, 'Pedir autorización a ' + CAMPANA_DAN);
-        else if (p.n === 3 && !interna && inst.pan.puede_editar) act = botonChip('declararCobro', 'Declarar cobro', 'bi-cash-coin', false, 'Declarar lo que cobré');
-        /* Con un anexo vivo el costo ES el del anexo: la salida es alinearlo con un clic, no escribirlo a mano (el servidor lo rechazaría). */
-        else if (p.n === 4 && inst.pan.puede_editar && ax && ax.abierta && ax.vinculo !== 'alineado' && global.otdCostoDesdeAnexo)
-          act = botonChip('usarAnexo', 'Usar el valor del anexo', 'bi-link-45deg', true, 'Dejar el costo de la OT igual al del Anexo N° ' + ax.numero);
-        else if (p.n === 4 && inst.pan.puede_editar && !(ax && ax.abierta)) act = botonChip('corregirProv', 'Declarar costo', 'bi-pencil-square', false, 'Declarar lo que cobró el proveedor');
-        else if (p.n === 6 && !pend && !interna && p.accion === 'pedir_aut_perdida') act = botonChip('pedirPerdida', 'Pedir autorización', 'bi-shield-exclamation', true, 'Pedir a ' + CAMPANA_DAN + ' la autorización para cerrar con pérdida');
-        else if (p.n === 6 && !pend && !interna) act = botonChip('pedirCierre', 'Pedir autorización', 'bi-shield-lock', false, 'Pedir autorización a ' + CAMPANA_DAN);
-      }
-      html += '<li class="fm-paso ' + esc(p.estado) + (p.clase ? ' c-' + esc(p.clase) : '') + '" data-paso="' + esc(p.n) + '">' +
-        '<span class="fm-circ"><i class="bi ' + (ICONO_PASO[p.estado] || 'bi-circle') + '"></i></span>' +
-        '<div class="fm-paso-c"><b>' + p.n + '. ' + esc(p.titulo) + '</b><span class="fm-paso-e">' + esc(p.texto || '') + '</span></div>' +
-        (act ? '<div class="fm-paso-a">' + act + '</div>' : '') + '</li>';
-    });
-    return html + '</ol>';
+    return html + lista;
   }
 
   /* ═══ EL RECORRIDO, PLEGADO CUANDO NO HAY NADA QUE HACER ═══════════════════════════════════════════════════════════════════
@@ -349,10 +411,12 @@
       '<div class="fm-rec-det" id="' + id + '"' + (abierto ? '' : ' hidden') + '>' + htmlPasos(inst) + '</div></section>';
   }
 
-  function accionDeRechazo(d) {
+  function accionDeRechazo(d, yaEsta) {
     var a = d && d.accion; if (!a) return '';
     var m = { ligar_factura: 'ligarDoc', pedir_autorizacion: 'pedirCierre', pedir_aut_perdida: 'pedirPerdida', declarar_cobro: 'declararCobro',
       declarar_centro: 'enfocarCentro', declarar_costo_proveedor: 'corregirProv', resolver_saldo: 'resolverSaldo' }[a.tipo];
+    /* 2026-10-29: si la acción ya tiene su botón en la tarjeta, el rechazo enlaza a ese botón (no dibuja otro igual). */
+    if (m && yaEsta && yaEsta[m]) return enlaceA(m, (a.label || 'Resolver') + ': en ' + yaEsta[m], a.label || '');
     if (a.tipo === 'esperar_autorizacion') return '<a class="fm-btn fm-btn-pri" href="' + esc(a.url || '/ot/autorizaciones') + '">Ver la solicitud</a>';
     /* 2026-10-19: la desinstalación cubierta cierra cuando su instalación ya tiene la factura o boleta: el botón lleva a ESA OT. */
     if (a.tipo === 'abrir_ot_madre') return a.url ? '<a class="fm-btn fm-btn-pri" href="' + esc(a.url) + '">Abrir la instalación' + (a.madre_numero ? ' ' + esc(a.madre_numero) : '') + '</a>' : '<span class="fm-help">' + esc(a.label || '') + '</span>';
@@ -469,19 +533,39 @@
       (s.omitido ? '<div class="fm-help">' + esc(s.omitido) + '</div>' : '') + '</div>';
   }
 
-  function htmlDoc(d) {
+  /* 2026-10-29 (Daniel: «las tarjetas deben ser pequeñas, indicando los documentos asociados y su trazabilidad y el total; no muestres tanta información
+     a menos que le den clic»): cada documento es una tarjeta CHICA (tipo, número, rol, fecha, total, lo que aporta y su estado: saldo, dado de baja) y
+     su detalle (RUT, quién lo agregó, líneas de servicio y despacho, saldo por línea y qué otras OT lo usan) se abre con «Ver detalle». Nada se corta:
+     abierto, el texto es el mismo de siempre (REGLA #15). */
+  function claveDoc(d, i) { return String(d.id != null ? d.id : ('i' + i)); }
+  function htmlDoc(d, inst, i) {
     var rut = RUT_TXT[d.rut_estado] || RUT_TXT.sin_verificar;
     var ap = aporteDoc(d);
     var baja = d.dada_de_baja_por;
-    var cls = 'fm-doc cat-' + esc(d.categoria) + (baja ? ' baja' : '');
+    var k = claveDoc(d, i || 0), abierto = !!(inst && inst.docAbiertos && inst.docAbiertos[k]);
+    var idDet = 'fmDoc' + esc((inst && inst.id) || 0) + '_' + esc(k);
+    var cls = 'fm-doc cat-' + esc(d.categoria) + (baja ? ' baja' : '') + (abierto ? ' abierto' : '');
     var se = saldoEstado(d);
+    var rol = rolDoc(d);
+    /* La trazabilidad que se ve sin abrir: quién la da de baja o a quién da de baja (la cadena nota de venta → factura). */
+    var traza = baja ? '<span class="fm-doc-tz"><i class="bi bi-arrow-repeat"></i> Dada de baja por ' + esc(baja.titulo) + '</span>'
+      : ((d.da_de_baja && d.da_de_baja.length) ? '<span class="fm-doc-tz ok"><i class="bi bi-check-circle-fill"></i> Reemplaza a ' + d.da_de_baja.map(function (x) { return esc(x.titulo); }).join(', ') + '</span>' : '');
+    var resumen = '<div class="fm-doc-s">' +
+      '<span class="fm-chip">' + esc(d.tipo_txt) + '</span><h4>' + esc(d.titulo) + '</h4>' +
+      '<span class="fm-rol r-' + rol + '">' + esc(cuentaTxt(d)) + '</span>' +
+      (d.es_principal ? '<span class="fm-pri">Principal</span>' : '') +
+      (d.fecha ? '<span class="fm-doc-f">' + esc(d.fecha) + '</span>' : '') +
+      '<span class="fm-doc-m">Total ' + clp(d.monto) + '</span>' +
+      '<span class="fm-aporta ' + ap.cls + '">' + esc(ap.txt) + '</span>' +
+      (se ? '<span class="fm-sd ' + se[0] + '">' + se[1] + '</span>' : '') + traza +
+      '<button type="button" class="fm-doc-ver" data-fm-act="docTog" data-fm-doc="' + esc(k) + '" aria-expanded="' + abierto + '" aria-controls="' + idDet + '">' +
+      (abierto ? 'Ocultar detalle' : 'Ver detalle') + ' <i class="bi bi-chevron-' + (abierto ? 'up' : 'down') + '"></i></button></div>';
     var meta = '<dl class="fm-meta">' +
       '<div><dt>Fecha de emisión</dt><dd>' + (esc(d.fecha) || '—') + '</dd></div>' +
       '<div><dt>RUT</dt><dd class="' + rut[0] + '">' + rut[1] + (d.rut ? ' · ' + esc(d.rut) : '') + (d.rut_justif ? '<small>' + esc(d.rut_justif) + '</small>' : '') + '</dd></div>' +
       '<div><dt>Lo agregó</dt><dd>' + (esc(d.asociado_por) || 'No consta (documento anterior)') + (d.asociado_at ? '<small>' + esc(d.asociado_at) + '</small>' : '') + '</dd></div>' +
       '<div><dt>Monto del documento</dt><dd>' + clp(d.monto) + '</dd></div>' +
-      (d.etiqueta ? '<div><dt>Etiqueta</dt><dd>' + esc(d.etiqueta) + '</dd></div>' : '') +
-      (se ? '<div class="fm-meta-sd"><span class="fm-sd ' + se[0] + '">' + se[1] + '</span></div>' : '') + '</dl>';
+      (d.etiqueta ? '<div><dt>Etiqueta</dt><dd>' + esc(d.etiqueta) + '</dd></div>' : '') + '</dl>';   /* (el semáforo del saldo va en la tarjeta chica, arriba) */
     var nota = '';
     if (baja) nota = '<div class="fm-baja"><i class="bi bi-arrow-repeat"></i> Dada de baja por la factura <b>' + esc(baja.titulo) + '</b>. Las dos quedan visibles.</div>';
     else if (d.da_de_baja && d.da_de_baja.length) nota = '<div class="fm-baja ok"><i class="bi bi-check-circle-fill"></i> Dio de baja la nota de venta <b>' + d.da_de_baja.map(function (x) { return esc(x.titulo); }).join(', ') + '</b>.</div>';
@@ -503,38 +587,55 @@
     } else if (d.tido && ['GDV', 'COV'].indexOf(d.tido) < 0) {
       lineas = '<div class="fm-nolin"><i class="bi bi-wifi-off"></i> No pudimos leer las líneas en Random ahora. El documento sigue declarado en la OT.</div>';
     }
-    return '<article class="' + cls + '"><header><span class="fm-chip">' + esc(d.tipo_txt) + '</span><h4>' + esc(d.titulo) + '</h4>' +
-      '<span class="fm-cuenta">' + esc(cuentaTxt(d)) + '</span>' +
-      (d.es_principal ? '<span class="fm-pri">Principal</span>' : '') +
-      '<span class="fm-aporta ' + ap.cls + '">' + esc(ap.txt) + '</span></header>' + meta + nota + lineas + htmlSaldoDoc(d) + '</article>';
+    return '<article class="' + cls + '" data-doc="' + esc(k) + '">' + resumen +
+      '<div class="fm-doc-det" id="' + idDet + '"' + (abierto ? '' : ' hidden') + '>' + meta + nota + lineas + htmlSaldoDoc(d) + '</div></article>';
   }
+  /* El ROL del documento, en palabras de Daniel (2026-10-29: «la nota de venta pasa a ser la referencia de la venta; la factura o boleta, ok»). */
   function cuentaTxt(d) {
-    return { servicio: 'Cobro del servicio', despacho: 'Cobro del despacho',
-      nota_venta: _noSeCobra ? 'Nota de venta: referencia de la venta' : 'Nota de venta: promesa de cobro', cotizacion: 'Cotización: solo referencia',
-      referencia_garantia: 'Referencia de la garantía: no se cobra',
-      otros: 'Factura de productos u otros: no es del servicio' }[d.cuenta] || (d.es_cobro ? 'Documento de cobro' : 'Referencia');
+    return { servicio: 'Documento de cobro · servicio', despacho: 'Documento de cobro · despacho',
+      nota_venta: 'Referencia de la venta', cotizacion: 'Cotización: solo referencia',
+      referencia_garantia: 'Referencia de la garantía: no se cobra', heredado: 'Heredado de la instalación: se cobra allá',
+      otros: 'Factura de productos u otros: no es del servicio' }[d.cuenta] ||
+      (d.categoria === 'nota_venta' ? 'Referencia de la venta' : (d.es_cobro ? 'Documento de cobro' : 'Referencia'));
+  }
+  /* Color del rol: cobro (verde), referencia de la venta (ámbar si falta la factura, gris si no), cotización/otros (gris). */
+  function rolDoc(d) {
+    if (d.categoria === 'nota_venta') return 'ref';
+    if (d.origen === 'cotizacion' || d.cuenta === 'cotizacion') return 'cot';
+    if (d.cuenta === 'otros' || d.cuenta === 'heredado' || d.cuenta === 'referencia_garantia' || !d.es_cobro) return 'otro';
+    return d.categoria === 'cobro' ? 'cobro' : 'otro';
   }
 
   /* Sin documentos que mostrar (OT interna, o cliente que todavía no liga ninguno): NO se dibuja una caja grande, sino
      UNA línea. «Lo que nos costó» pasa a ocupar el ancho completo. */
   function htmlSinDocs(inst) {
-    var p = inst.pan, puede = p.puede_editar || (p.cerrada && p.puede_regularizar);
     if (esInterna(inst)) {
       /* (el recorrido ya dice «Trabajo interno: no necesita documento ni autorización» en sus pasos: esta línea no lo repite) */
       return '<div class="fm-sindoc interna"><i class="bi bi-info-circle"></i><b>Sin documentos: es un trabajo interno.</b>' +
         '<span>No tiene cliente: no hay a quién cobrarle ni factura que agregar.</span></div>';
     }
+    /* 2026-10-29: la línea ya no trae su propio botón: vive dentro de «Documentos», justo debajo del botón único de su encabezado. */
     return '<div class="fm-sindoc"><i class="bi bi-file-earmark-x"></i><b>Sin documentos aún.</b>' +
-      '<span>Agrega una factura, boleta, nota de venta o cotización; o pide la autorización de ' + CAMPANA_DAN + '.</span>' +
-      (puede ? boton('ligarDoc', 'Agregar factura, boleta o nota de venta', 'bi-link-45deg', 'fm-btn-toca') : '') + '</div>';
+      '<span>' + (puedeLigar(inst) ? 'Agrégalo con el botón de arriba: factura, boleta, nota de venta o cotización; o pide la autorización de ' + CAMPANA_DAN + ' en «Modificar».'
+        : 'Agrega una factura, boleta, nota de venta o cotización; o pide la autorización de ' + CAMPANA_DAN + '.') + '</span></div>';
+  }
+
+  /* EL botón único para agregar un documento (2026-10-29): en el encabezado de «Documentos». En azul («te toca») cuando el recorrido pide la factura. */
+  function botonDocs(inst) {
+    var toca = !!actosQueResuelven(inst).ligarDoc || !((inst.pan && inst.pan.documentos) || []).length;
+    return '<button type="button" class="fm-btn fm-btn-doc' + (toca ? ' fm-btn-toca' : '') + '" data-fm-act="ligarDoc" id="fmLigar' + esc(inst.id) + '">' +
+      '<i class="bi bi-plus-circle"></i> Agregar factura, boleta o nota de venta</button>';
   }
 
   function htmlDocs(inst) {
     var docs = inst.pan.documentos || [];
-    if (!docs.length) return '';
+    if (!docs.length && esInterna(inst)) return '';
     var h = '<div class="fm-sec-h"><h3>Documentos <small>' + docs.length + '</small></h3>' +
-      '<span class="fm-help">Cada documento con sus líneas de servicio y despacho, y lo que aporta al cobro.</span></div>' +
-      htmlContadores(inst);     /* 2026-10-25: los contadores viven acá, y solo los que dicen algo */
+      '<span class="fm-help">' + (docs.length ? 'Toca «Ver detalle» para ver sus líneas de servicio y despacho, el saldo y quién lo agregó.'
+        : 'Aquí van la factura o boleta (documento de cobro) y la nota de venta (referencia de la venta).') + '</span>' +
+      (puedeLigar(inst) ? botonDocs(inst) : '') + '</div>';
+    if (!docs.length) return h + htmlSinDocs(inst);
+    h += htmlContadores(inst);     /* 2026-10-25: los contadores viven acá, y solo los que dicen algo */
     /* 2026-10-08 (revisión): el «Cobré» de la OT sale de lo declarado (zz_monto / despacho), no de las líneas leídas en
        Random. Si no coinciden, se dice: dos números distintos en la misma pantalla sin explicación confunden. */
     var fin = (inst.rec && inst.rec.fin) || null, sumaAp = 0, hayAp = false;
@@ -551,7 +652,7 @@
         '<span>' + esc(sal.texto || 'Un mismo servicio de una factura no se puede cobrar en dos OT.') + '</span></div>' +
         ((inst.pan.puede_editar) ? boton('resolverSaldoOt', 'Resolver el saldo', 'bi-sliders', 'fm-btn-pri') : '') + '</div>';
     }
-    return h + '<div class="fm-docs">' + docs.map(htmlDoc).join('') + '</div>';
+    return h + '<div class="fm-docs">' + docs.map(function (d, i) { return htmlDoc(d, inst, i); }).join('') + '</div>';
   }
 
   function signo(n) { return (n > 0 ? '+' : '') + clp(n); }
@@ -648,6 +749,146 @@
     return partes;
   }
 
+  /* ═══ ¿QUIÉN SE ADJUDICA EL DINERO? ════════════════════════════════════════════════════════════════════════════════════════════
+     2026-10-29 (Daniel: «debería indicar quién se está adjudicando ese dinero, aunque lo diga el header. Arriba: Daniel Pulgar nos cobró tanto; nosotros
+     cobramos a la empresa tanto; el cliente nos pagó 1 millón en el servicio de instalación y 500 mil en despacho; y de ahí para abajo indicas cuánto cobró
+     ILUS o cuánto cobró el interno… muéstralo solamente por ahí: NO me vayas a crear un agente ILUS ni un técnico ILUS»).
+     Tres bloques chicos, con los nombres completos (REGLA #15):
+       · «Nos cobró» — el técnico o proveedor de la OT y su empresa (la del anexo, o la de su ficha), el total y debajo servicio y despacho, con el anexo vivo
+         (REGLA #34: es el mismo valor). Si lo hizo un técnico propio, «Lo hizo un técnico propio» (cuánto costó el interno).
+       · «Cobramos a» — el cliente, el total y debajo servicio y despacho, cada uno con el documento que lo lleva (el documento que lleva el cobro manda:
+         REGLAS #56/#57). Sin cobro declarado: «Falta declararlo», en ámbar. En garantía, regalía, arriendo/leasing o contrato: «No se cobra · nos costó $X».
+       · «ILUS · interno» — SOLO en un trabajo interno o una cobertura que asume la empresa (garantía, cortesía, regalía): UNA línea con lo que costó y a qué
+         centro de costo se carga. Es un rótulo: no hay ningún usuario, técnico ni agente «ILUS».
+     Debajo, el margen con la política de la REGLA #57. Todo sale del recorrido y del panorama que el motor ya lee (ninguna consulta nueva), y ambos responden
+     403 a un técnico: la plata y los proveedores se quitan en el servidor (REGLAS #19/#26). */
+  var CLASE_POLITICA = { ok: 'ok', tol: 'tol', bajo: 'bajo', rojo: 'rojo' };
+  function politicaDe(fin) {
+    fin = fin || {};
+    var pol = fin.politica_margen || POLITICA_MARGEN, Q = fin.queda || {}, C = fin.cobre || {};
+    var obj = Number(pol.objetivo), tol = Number(pol.tolerancia);
+    if (!(obj > 0)) obj = POLITICA_MARGEN.objetivo;
+    if (!(tol >= 0)) tol = POLITICA_MARGEN.tolerancia;
+    if (!fin.cobra || !Q.mostrar) return null;
+    if ((Number(Q.total) || 0) < 0) return { clase: 'rojo', txt: 'Pérdida: lo cobrado no alcanza a cubrir lo que nos costó' };
+    if (Q.pct === null || Q.pct === undefined || !(Number(C.total) > 0)) return null;
+    var p = Number(Q.pct);
+    if (p < 0) return { clase: 'rojo', txt: 'Pérdida: lo cobrado no alcanza a cubrir lo que nos costó' };
+    if (p >= obj) return { clase: 'ok', txt: 'Margen objetivo: ' + obj + ' % o más' };
+    if (p >= tol) return { clase: 'tol', txt: 'En tolerancia: entre ' + tol + ' y ' + obj + ' %' };
+    return { clase: 'bajo', txt: 'Margen bajo: menos de ' + tol + ' % (el objetivo es ' + obj + ' %)' };
+  }
+  /* Coberturas cuyo costo asume la empresa (no las paga otro ingreso como el contrato o el arriendo, ni la instalación de una desinstalación cubierta). */
+  var COBERTURA_ASUME_ILUS = { garantia: 1, sin_costo: 1, regalia: 1, interno: 1 };
+  /* Quién nos cobró: el técnico de la OT (panorama.costos.proveedor, o el «detalle» del registro) y la empresa del anexo o de su ficha. */
+  function proveedorDe(inst) {
+    var pv = ((inst.pan && inst.pan.costos) || {}).proveedor || {}, reg = regPorClave(inst, 'tecnico') || {};
+    var det = String(reg.detalle || ''), ax = anexoVivo(inst) || {};
+    var nombre = String(pv.nombre || det.split(' · ')[0] || '').trim();
+    if (/^sin técnico asignado$/i.test(nombre)) nombre = '';
+    var externo = (pv.externo !== undefined && pv.externo !== null) ? !!pv.externo : / · proveedor externo$/.test(det);
+    var empresa = String(ax.proveedor || pv.empresa || '').trim();
+    if (empresa && nombre && empresa.toLowerCase() === nombre.toLowerCase()) empresa = '';
+    return { nombre: nombre, empresa: empresa, externo: externo };
+  }
+  /* Los documentos que de verdad llevan el cobro, por categoría (servicio y despacho), con lo que aporta cada uno. */
+  function docsDelCobro(inst) {
+    var r = { servicio: [], despacho: [] };
+    ((inst.pan && inst.pan.documentos) || []).forEach(function (d) {
+      if (aporteDoc(d).cls !== 'si') return;
+      var s = null, e = null;
+      if (d.lineas) { s = sumaMontos(d.lineas.servicio); e = sumaMontos(d.lineas.despacho); }
+      if (!s && !e) { s = d.zz_serv; e = d.zz_envio; }
+      if (s) r.servicio.push(d.titulo);
+      if (e) r.despacho.push(d.titulo);
+    });
+    return r;
+  }
+  function lineaQ(rot, valor, docs, nota) {
+    return '<li><span class="fm-q-r">' + esc(rot) + '</span><b>' + valor + '</b>' +
+      (docs && docs.length ? docs.map(function (t) { return '<em class="fm-q-doc">' + esc(t) + '</em>'; }).join('') : '') +
+      (nota ? '<em class="fm-q-nota">' + nota + '</em>' : '') + '</li>';
+  }
+  function bloqueQ(cls, titulo, nombre, sub, valor, lineas, pie, tooltip) {
+    return '<div class="fm-q ' + cls + '"' + (tooltip ? ' title="' + esc(tooltip) + '"' : '') + '><small class="fm-q-t">' + esc(titulo) + '</small>' +
+      (nombre ? '<b class="fm-q-n">' + esc(nombre) + '</b>' : '') + (sub ? '<span class="fm-q-e">' + sub + '</span>' : '') +
+      '<b class="fm-q-v">' + valor + '</b>' + (lineas ? '<ul class="fm-q-l">' + lineas + '</ul>' : '') + (pie || '') + '</div>';
+  }
+  function htmlQuien(inst) {
+    var rec = inst.rec || {}, fin = rec.fin || {}, M = fin.me_cobraron || {}, C = fin.cobre || {}, Q = fin.queda || {};
+    var interna = esInterna(inst), cob = fin.cobertura || (fin.cobra ? 'cobra' : ''), ax = anexoVivo(inst);
+    var centro = ((inst.pan && inst.pan.centro) || {}).nombre || '';
+    var pend = '<span class="fm-pend">Falta declararlo</span>';
+    var bloques = '';
+
+    /* ── 1. Nos cobró (o lo hizo un técnico propio) ── */
+    var pv = proveedorDe(inst), propio = !pv.externo && !!pv.nombre;
+    var tProv = propio ? 'Lo hizo un técnico propio' : 'Nos cobró';
+    var nProv = pv.nombre || (pv.externo ? (pv.empresa || 'Proveedor externo') : 'Sin técnico asignado');
+    var sProv = pv.externo ? esc((pv.nombre && pv.empresa ? pv.empresa + ' · ' : '') + 'proveedor externo') : '';
+    var vProv = M.falta_tecnico ? pend : clp((Number(M.tecnico) || 0) + (Number(M.despacho) || 0));
+    var lProv = lineaQ('Instalación o servicio', M.falta_tecnico ? pend : clp(M.tecnico)) +
+      ((Number(M.despacho) > 0 || M.falta_despacho) ? lineaQ('Despacho', M.falta_despacho ? pend : clp(M.despacho)) : '');
+    var pieProv = ax ? '<span class="fm-lock' + (ax.vinculo === 'alineado' ? '' : ' no') + '"><i class="bi bi-lock-fill"></i> Anexo N° ' + esc(ax.numero) +
+      (ax.firmado ? ' · firmado' : ' · vigente') + (ax.vinculo === 'alineado' ? '' : (ax.vinculo === 'sin_declarar' ? ' · la OT aún no lo declara' : ' · no coincide con la OT')) + '</span>' : '';
+    if (propio && !M.falta_tecnico && !(Number(M.tecnico) > 0) && !(Number(M.despacho) > 0)) pieProv += '<span class="fm-q-ok">No se le paga aparte</span>';
+    bloques += bloqueQ('prov' + (M.falta_tecnico ? ' falta' : ''), tProv, nProv, sProv, vProv, lProv, pieProv);
+
+    /* ── 2. Cobramos a (el cliente) ── */
+    if (!interna) {
+      var cliente = (inst.pan && inst.pan.cliente) || rec.cliente || '';
+      var nCli = cliente || 'Cliente sin nombre';
+      if (cob === 'cobra') {
+        if (C.hay && Number(C.total) > 0) {
+          var dc = docsDelCobro(inst), sinDoc = !dc.servicio.length && !dc.despacho.length;
+          var nota = sinDoc ? 'sin documento de Random' : '';
+          var lCli = ((Number(C.servicio) > 0 || !(Number(C.despacho) > 0)) ? lineaQ('Instalación o servicio', clp(C.servicio), dc.servicio, Number(C.servicio) > 0 ? nota : '') : '') +
+            (Number(C.despacho) > 0 ? lineaQ('Despacho', clp(C.despacho), dc.despacho, nota) : '');
+          var pieCli = sinDoc && C.fuente ? '<span class="fm-q-av">Lo cobrado: ' + esc(C.fuente) + ' (no viene de un documento de Random)</span>' : '';
+          bloques += bloqueQ('cli', 'Cobramos a', nCli, '', clp(C.total), lCli, pieCli, origenCobro(inst).length ? 'Lo cobrado sale de ' + origenCobro(inst).join(' · ') : '');
+        } else if (C.hay) {
+          bloques += bloqueQ('cli', 'Cobramos a', nCli, '', clp(0), '', '<span class="fm-q-av">Cobro declarado en $0</span>');
+        } else {
+          var nvs = ((inst.pan && inst.pan.documentos) || []).filter(function (d) { return d.categoria === 'nota_venta' && !d.dada_de_baja_por; })
+            .map(function (d) { return d.titulo; });
+          var pieF = nvs.length ? '<span class="fm-q-av">Referencia de la venta: ' + esc(nvs.join(', ')) + '. Falta la factura o boleta.</span>'
+            : (fin.precio_anotado ? '<span class="fm-q-av">Hay un precio anotado de ' + clp(fin.precio_anotado) + ' sin documento: no cuenta como cobro.</span>' : '');
+          bloques += bloqueQ('cli falta', 'Cobramos a', nCli, '', pend, '', pieF);
+        }
+      } else {
+        var motivo = (rec.cobro_cero || {}).motivo_txt || String(fin.cobertura_txt || '').split(':')[0];
+        var porque = cob === 'contrato' ? 'se paga con el contrato' : (cob === 'arriendo_leasing' ? 'va incluido en el arriendo' : (cob === 'cubierta' ? 'se cobra en la instalación' : ''));
+        bloques += bloqueQ('cli nocobra', 'Cobramos a', nCli, '<span class="fm-motivo">' + esc(motivo) + '</span>' + (porque ? ' · ' + esc(porque) : ''),
+          'No se cobra', '', '<span class="fm-q-cost">' + (M.falta_tecnico ? 'Nos costó: ' + pend : 'nos costó ' + clp(M.total)) + '</span>');
+      }
+    }
+
+    /* ── 3. ILUS · interno (solo trabajo interno o cobertura que asume la empresa) ── */
+    if (interna || COBERTURA_ASUME_ILUS[cob]) {
+      var sIl = interna ? 'Trabajo interno de ILUS' : 'Lo asume ILUS';
+      var cen = centro ? 'Centro de costo: ' + esc(centro) : '<span class="fm-pend">Falta elegir el centro de costo</span>';
+      bloques += bloqueQ('ilus', 'ILUS · interno', sIl, cen, M.falta_tecnico ? pend : clp(M.total), '',
+        Number(M.repuestos) > 0 ? '<span class="fm-q-cost">incluye repuestos ' + clp(M.repuestos) + '</span>' : '');
+    }
+
+    /* ── El margen (REGLA #57), solo cuando se cobra ── */
+    var margen = '';
+    if (!interna && cob === 'cobra') {
+      var pol = politicaDe(fin);
+      var cuentaTxt2 = 'Cobramos ' + (C.hay ? clp(C.total) : '—') + ' − nos costó ' + (M.falta_tecnico ? '—' : clp(M.total)) +
+        (Number(M.repuestos) > 0 && !M.falta_tecnico ? ' (proveedor ' + clp((Number(M.tecnico) || 0) + (Number(M.despacho) || 0)) + ' + repuestos ' + clp(M.repuestos) + ')' : '');
+      var res;
+      if (!Q.mostrar) res = '<b>Margen: falta un dato para calcularlo</b>' + (fin.label ? '<span class="fm-q-pol">' + esc(fin.label) + '</span>' : '');
+      else if (Number(Q.total) > 0) res = '<b>Ganamos ' + clp(Q.total) + '</b>' + (Q.pct !== null && Q.pct !== undefined ? '<em>(' + esc(pctTxt(Q.pct)) + ')</em>' : '');
+      else if (Number(Q.total) < 0) res = '<b>Perdimos ' + clp(Math.abs(Q.total)) + '</b>' + (Q.pct !== null && Q.pct !== undefined ? '<em>(' + esc(pctTxt(Q.pct)) + ')</em>' : '');
+      else res = '<b>Ni ganamos ni perdimos</b>';
+      margen = '<div class="fm-q-m m-' + (pol ? pol.clase : (Q.mostrar ? 'gris' : 'falta')) + '" role="status"><span class="fm-q-mt">Margen</span>' + res +
+        '<span class="fm-q-cu">' + cuentaTxt2 + '</span>' + (pol ? '<span class="fm-q-pol">' + esc(pol.txt) + '</span>' : '') + '</div>';
+    }
+    return '<section class="fm-adj" aria-label="¿Quién se adjudica el dinero?"><h4 class="fm-col-t"><i class="bi bi-people-fill"></i> ¿Quién se adjudica el dinero?</h4>' +
+      '<div class="fm-q-grid">' + bloques + '</div>' + margen + '</section>';
+  }
+
   /* LA CUENTA, en palabras de Daniel (2026-10-08: «dejemos cuánto ganamos, cuánto cobramos, cuánto nos cobraron, cuánto perdimos…
      todo bien detalladito»): «Cobramos $X» (servicio + despacho) · «Nos cobraron $Y» (técnico o proveedor + despacho + repuestos) y el
      resultado en grande y con color: «Ganamos $Z (n %)» o «Perdimos $Z»; si no se cobra (garantía, regalía, interno): «No se cobra ·
@@ -658,38 +899,19 @@
      (una garantía, regalía o contrato SIEMPRE se carga a uno, así se puede reportar). La constancia de quién autorizó el $0 ya no se repite acá: la
      cuenta el paso ① del recorrido, con las mismas palabras (así tarjeta y recorrido no pueden contradecirse). */
   function htmlCuenta(inst, sinLigar) {
-    var fin = inst.rec.fin, cobra = fin.cobra, M = fin.me_cobraron || {}, C = fin.cobre || {}, Q = fin.queda || {};
-    var clase = (cobra && Q.mostrar && Q.total < 0) ? 'rojo' : (fin.clase || 'gris');
+    var fin = inst.rec.fin, cobra = fin.cobra, M = fin.me_cobraron || {}, Q = fin.queda || {};
+    /* 2026-10-29 (REGLA #57): el color de la tarjeta sigue la MISMA política de margen que el encabezado «¿Quién se adjudica el dinero?». */
+    var pol = (cobra && Q.mostrar) ? politicaDe(fin) : null;
+    var clase = pol ? (CLASE_POLITICA[pol.clase] || fin.clase || 'gris') : (fin.clase || 'gris');
     var h = '<section class="fm-cta c-' + esc(clase) + '" aria-label="La cuenta de esta OT" title="' + esc(fin.frase || '') + '">';
     h += '<h4 class="fm-col-t"><i class="bi bi-calculator-fill"></i> La cuenta</h4>';
-    /* 2026-10-25: dos mitades. A: las cifras (cobramos, nos cobraron —con quién y su anexo—, margen, de dónde sale). B: el anexo, el centro de costo y lo que se
-       puede modificar. En un bloque ancho con el recorrido plegado van lado a lado (REGLA #16); si no, una debajo de la otra. */
+    /* 2026-10-25: dos mitades. A: las cifras por negocio (nos cobraron —con quién y su anexo—, queda). B: el anexo, el centro de costo y lo que se puede
+       modificar. En un bloque ancho con el recorrido plegado van lado a lado (REGLA #16); si no, una debajo de la otra.
+       2026-10-29: las cifras grandes (Cobramos · Nos cobraron · Ganamos) y «de dónde sale lo cobrado» subieron al encabezado «¿Quién se adjudica el dinero?»:
+       acá ya no se repiten. Queda el detalle por negocio (lo que falta se dice en su fila, en ámbar). */
     h += '<div class="fm-cta-in"><div class="fm-cta-a">';
-    /* El semáforo («Margen sano», «Pérdida», «Falta…») va al final de la misma línea (baja si no cabe). */
-    var sem = (cobra || M.falta_tecnico) ? '<span class="fm-sem">' + esc(fin.label || '') + '</span>' : '';
-    h += '<div class="fm-res">';
-    if (cobra) {
-      h += '<div class="fm-res-i"><small>Cobramos</small><b>' + (C.hay ? clp(C.total) : '—') + '</b></div>' +
-        '<div class="fm-res-i"><small>Nos cobraron</small><b>' + (M.falta_tecnico ? '—' : clp(M.total)) + '</b></div>';
-      var rot, val, pie = '';
-      if (Q.mostrar && Q.total > 0) { rot = 'Ganamos'; val = clp(Q.total); pie = pctTxt(Q.pct); }
-      else if (Q.mostrar && Q.total < 0) { rot = 'Perdimos'; val = clp(Math.abs(Q.total)); pie = pctTxt(Q.pct); }
-      else if (Q.mostrar) { rot = 'Resultado'; val = '$0'; pie = 'ni ganamos ni perdimos'; }
-      else { rot = 'Resultado'; val = '—'; pie = 'falta un dato para calcularlo'; }
-      h += '<div class="fm-res-i q"><small>' + rot + '</small><b>' + val + (pie ? '<em>' + (Q.mostrar && Q.total !== 0 ? '(' + esc(pie) + ')' : esc(pie)) + '</em>' : '') + '</b></div>' + sem;
-    } else {
-      var motivo = (inst.rec.cobro_cero || {}).motivo_txt || String(fin.cobertura_txt || '').split(':')[0];
-      h += '<div class="fm-res-i q"><small>No se cobra</small><b>' + (M.falta_tecnico ? 'falta declarar lo que nos costó' : 'nos costó ' + clp(M.total)) + '</b></div>' +
-        '<span class="fm-motivo">' + esc(motivo) + '</span>' + sem;
-    }
-    h += '</div>';
     h += htmlNegocios(inst);
     var det = [];
-    if (cobra) {
-      var orig = origenCobro(inst);
-      if (orig.length) det.push({ o: true, t: 'Lo cobrado sale de ' + esc(orig.join(' · ')) });
-      else if (C.hay && fin.cobre && fin.cobre.fuente) det.push({ o: true, t: 'Lo cobrado: ' + esc(fin.cobre.fuente) + ' (no viene de un documento de Random)' });
-    }
     if (fin.valorizado && fin.valorizado.monto)
       det.push({ t: 'Valorizado (referencia): <b>' + clp(fin.valorizado.monto) + '</b> · no se suma a lo cobrado' });
     var declaro = '';
@@ -770,6 +992,7 @@
       return { items: items, ayudas: ayudas };
     }
     var ax = anexoVivo(inst);
+    /* 2026-10-29: `sinLigar` = la sección «Documentos» ya trae el botón único de agregar (siempre que se puede agregar): «Modificar» no lo repite. */
     if (!sinLigar) items.push({ act: 'ligarDoc', label: 'Agregar factura, boleta o nota de venta', ico: 'bi-link-45deg' });
     if (p.cerrada) {
       items.push({ act: 'pedirCierre', label: p.superadmin ? 'Autorizar sin documento' : 'Pedir autorización a ' + CAMPANA_DAN, ico: 'bi-shield-lock' });
@@ -844,20 +1067,25 @@
   function pintar(inst) {
     var p = inst.pan, rec = inst.rec;
     var hayDocs = (p.documentos || []).length > 0;
-    var puedeLigar = !esInterna(inst) && !!(p.puede_editar || (p.cerrada && p.puede_regularizar));
+    var ligable = puedeLigar(inst);
     /* 2026-10-25 (Daniel, con la OT-2026-00354: «contradicciones y muy poco explicativo… no tantas tarjetas»). De arriba abajo: encabezado en una fila
        (un solo camino para tocar la plata) → UNA frase que dice si la OT está lista para cerrar o qué le falta → dos columnas: «El recorrido» (seis
        filas con el texto específico de cada paso) | «La cuenta» (UNA tarjeta con las cifras, el anexo y el centro de costo) → documentos | lo que nos
        costó (REGLA #16: la fila de arriba mide parecido a cada lado) → pie de superadmin. Sin documentos: una línea y «Lo que nos costó» a todo el ancho. */
     /* 2026-10-25 (Daniel, con la OT-2026-00247: «los costos, resumidos y con pocos clics»): «Lo que nos costó» y «Modificar» viven dentro de La cuenta (UN solo
        lugar para la plata); abajo, a ancho completo, los documentos y las autorizaciones. El recorrido se pliega en una línea cuando nada falta. */
+    /* 2026-10-29 (v4): «¿Quién se adjudica el dinero?» va justo debajo de la frase, antes de La cuenta | El recorrido. «Agregar factura, boleta o nota de
+       venta» tiene UN botón, en el encabezado de «Documentos» (que existe aunque no haya documentos): por eso La cuenta ya no lo ofrece en «Modificar»
+       (`puedeLigar`: la sección de documentos ya lo ofrece) y la línea «Sin documentos aún» vive dentro de esa sección. */
+    _noSeCobra = !!(rec.fin && rec.fin.cobra === false);
     var plegar = recorridoPlegable(inst);
-    var recorrido = htmlRecorrido(inst, plegar), cuenta = htmlCuenta(inst, puedeLigar && !hayDocs);
-    var cuerpo = (hayDocs ? '' : htmlSinDocs(inst)) +
-      '<div class="fm-main"><section class="fm-sec">' + htmlDocs(inst) + '</section><section class="fm-sec">' + htmlHistorial(inst) + '</section></div>';
+    var recorrido = htmlRecorrido(inst, plegar), cuenta = htmlCuenta(inst, ligable);
+    var cuerpo = (hayDocs || !esInterna(inst) ? '' : htmlSinDocs(inst)) +
+      '<div class="fm-main"><section class="fm-sec" id="fmDocs' + esc(inst.id) + '">' + htmlDocs(inst) + '</section><section class="fm-sec">' + htmlHistorial(inst) + '</section></div>';
     inst.el.innerHTML =
       htmlCabecera(inst) +
       htmlResumen(inst) +
+      htmlQuien(inst) +
       /* Con algo por hacer: La cuenta | El recorrido (dos columnas; en celular la plata primero). Plegado: la línea del recorrido arriba y La cuenta debajo. */
       '<div class="fm-top' + (plegar ? ' plegado' : '') + '">' + (plegar ? recorrido + cuenta : cuenta + recorrido) + '</div>' +
       cuerpo +
@@ -1262,8 +1490,44 @@
     /* 2026-10-25: abrir/cerrar el recorrido plegado y «Más opciones». Se repinta el bloque (el estado vive en la instancia, así «Actualizar» no lo cierra) y el foco
        vuelve al mismo botón (teclado y lectores de pantalla). */
     recTog: function (inst) { return alternar(inst, 'recAbierto', 'recTog'); },
-    masTog: function (inst) { return alternar(inst, 'masAbierto', 'masTog'); }
+    masTog: function (inst) { return alternar(inst, 'masAbierto', 'masTog'); },
+    /* 2026-10-29: «Ver detalle» de un documento (la tarjeta chica se abre con sus líneas, su saldo y su trazabilidad). */
+    docTog: function (inst, b) {
+      var k = b && b.getAttribute && b.getAttribute('data-fm-doc');
+      if (k === null || k === undefined) return;
+      inst.docAbiertos = inst.docAbiertos || {};
+      inst.docAbiertos[k] = !inst.docAbiertos[k];
+      pintar(inst);
+      try { var bt = inst.el.querySelector('[data-fm-act="docTog"][data-fm-doc="' + String(k).replace(/"/g, '') + '"]'); if (bt && bt.focus) bt.focus(); } catch (e) { }
+    },
+    /* 2026-10-29: los enlaces del recorrido y del rechazo llevan al botón ÚNICO de esa acción (no lo repiten). */
+    irA: function (inst, b) { return irA(inst, b && b.getAttribute && b.getAttribute('data-fm-ir')); }
   };
+  /* Busca el botón único de la acción (fuera del rechazo y sin contar los propios enlaces), abre «Más opciones» si está ahí, lo trae a la vista, lo resalta
+     un momento y le pasa el foco. Si no lo encuentra (sin permiso para ese lugar), hace la acción directamente: el enlace nunca queda sin salida. */
+  var IR_SELECTOR = { usarAnexo: '[data-fm-act="usarAnexo"], [data-fm-anx] [onclick*="otdCostoDesdeAnexo"]' };
+  function botonUnico(inst, act) {
+    var sel = IR_SELECTOR[act] || ('[data-fm-act="' + String(act).replace(/[^A-Za-z]/g, '') + '"]');
+    var todos = inst.el.querySelectorAll ? inst.el.querySelectorAll(sel) : [];
+    for (var i = 0; i < todos.length; i++) {
+      var t = todos[i];
+      if (t.closest && (t.closest('.fm-rechazo') || t.closest('.fm-ir'))) continue;
+      return t;
+    }
+    return null;
+  }
+  function irA(inst, act) {
+    if (!act) return;
+    var t = botonUnico(inst, act);
+    if (t && t.closest && t.closest('.fm-mas-p') && !inst.masAbierto) { inst.masAbierto = true; pintar(inst); t = botonUnico(inst, act); }
+    if (!t) { var fn = ACCIONES[act]; if (fn && !(SOLO_CLIENTE[act] && esInterna(inst))) return fn(inst); return; }
+    try { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { }
+    try {
+      t.classList.remove('fm-resalta'); void t.offsetWidth; t.classList.add('fm-resalta');
+      setTimeout(function () { try { t.classList.remove('fm-resalta'); } catch (e) { } }, 2200);
+    } catch (e) { }
+    setTimeout(function () { try { t.focus({ preventScroll: true }); } catch (e) { try { t.focus(); } catch (e2) { } } }, 380);
+  }
   function alternar(inst, clave, act) {
     inst[clave] = !inst[clave];
     pintar(inst);
@@ -1292,7 +1556,7 @@
       var act = b.getAttribute('data-fm-act');
       var fn = ACCIONES[act];
       if (fn && SOLO_CLIENTE[act] && esInterna(inst)) { e.preventDefault(); toast(TXT_INTERNA, 'info'); return; }
-      if (fn) { e.preventDefault(); fn(inst); }
+      if (fn) { e.preventDefault(); fn(inst, b); }
     });
     el.addEventListener('click', function (e) {
       var b = e.target.closest('[data-fm-cc]');
