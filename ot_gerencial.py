@@ -35,7 +35,7 @@ except Exception:                                    # pragma: no cover - sin tz
 NOMBRE_PANTALLA = "Costeo de órdenes de trabajo"
 CLASIFICACION = "Confidencial · solo gerencia"
 
-UMBRAL_BAJO = 10                    # % — igual que _OT_FIN_UMBRAL_BAJO («Margen bajo, menos de 10 %»)
+UMBRAL_BAJO = 20                    # % — igual que _OT_FIN_UMBRAL_BAJO («Margen bajo, menos de 20 %»; REGLA #57, era 10)
 COBERTURAS_REGALADAS = ("garantia", "regalia", "arriendo_leasing", "sin_costo")   # plata que se puso sin cobrar
 COBERTURAS_OTRAS = ("cubierta", "interno", "contrato")                           # no son un regalo: van aparte
 COBERTURA_ORDEN = COBERTURAS_REGALADAS + COBERTURAS_OTRAS

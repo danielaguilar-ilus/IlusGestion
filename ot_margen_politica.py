@@ -3,10 +3,11 @@
 
 «Margen objetivo 30 %; tolerancia hasta 20 %; bajo 20 % amarillo; bajo 0 % rojo.»
 
-MÓDULO PURO (sin Flask, sin base, sin Random ni Check). Hoy SOLO sirve para PINTAR: el color de una OT o de un grupo
-de OT en el «Costeo de OT» (pestaña Explorar). NO cambia la cuenta de la OT (`_ot_finanzas`), ni el umbral de «margen
-bajo» de su ficha (`_OT_FIN_UMBRAL_BAJO`, 10 %, con su espejo en static/ot_finanzas.js), ni ningún candado de cierre o de
-pago: alinear esos números con esta política es otro frente, que se hará con cuidado por el espejo JS.
+MÓDULO PURO (sin Flask, sin base, sin Random ni Check). SOLO sirve para PINTAR: el color de una OT o de un grupo de OT.
+Nunca es un candado de cierre ni de pago (la pérdida real sigue pidiendo la autorización de Daniel, REGLA #28).
+2026-10-29: el umbral de «margen bajo» de la ficha y de todo el proyecto quedó ALINEADO con esta tolerancia (20 %): `_OT_FIN_UMBRAL_BAJO`
+y `_vida_margen_clase` en app.py, `UMBRAL_BAJO` en static/ot_finanzas.js, `window.OTD_FIN_UMBRAL_BAJO` en detalle.html, `UMBRAL_BAJO` en
+ot_gerencial.py y `MARGEN_SANO` en ot_doc_cadena.py. tests/test_ot_margen_alineado.py falla si alguno de esos espejos se desvía.
 
 Las bandas (el % es lo que queda sobre lo cobrado, «Cobré − Me cobraron = Queda»):
   · objetivo    → 30 % o más                       (verde)

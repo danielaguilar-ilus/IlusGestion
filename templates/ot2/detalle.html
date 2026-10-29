@@ -495,8 +495,8 @@
      costo como estaba antes... aplícalo que se vea entendible").
    · Cada paso con dos mitades; la derecha es SIEMPRE la columna de la plata
      para que la cuenta se lea hacia abajo.
-   Semáforo del resultado: verde ≥ 10 %, ámbar bajo 10 % (Daniel: "ámbar bajo
-   10 %"), rojo pérdida, gris/ámbar cuando falta un dato (vacío ≠ $0). */
+   Semáforo del resultado (REGLA #57, 2026-10-29: margen autorizado 30 %, tolerancia hasta 20 %): verde desde 20 % (objetivo 30 %), ámbar bajo
+   20 %, rojo pérdida, gris/ámbar cuando falta un dato (vacío ≠ $0). */
 /* sticky NO funciona con overflow:hidden en un ancestro: .otd-card lo trae.
    clip recorta igual (bordes redondos) sin crear un contenedor de scroll.
    Safari < 16 no conoce clip y cae a visible, que también sirve. */
@@ -6128,8 +6128,8 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <div class="otd-fbar-det" id="otdFinBarDet" hidden>
               <div id="otdFinBarDetFilas"></div>
               <div class="otd-fdet-ley">Semáforo de lo que queda:
-                <span><i style="background:#16a34a"></i>verde desde 10 %</span>
-                <span><i style="background:#f59e0b"></i>ámbar bajo 10 %</span>
+                <span><i style="background:#16a34a"></i>verde desde 20 % (objetivo 30 %)</span>
+                <span><i style="background:#f59e0b"></i>ámbar bajo 20 %</span>
                 <span><i style="background:#dc2626"></i>rojo pérdida</span>
                 <span><i style="background:#3b82f6"></i>azul: no se le cobra (lo que nos costó)</span></div>
             </div>
@@ -9365,8 +9365,8 @@ window.OTD_FIN = {
   origNoCobro: {{ (fin_origenes_no_cobro or []) | tojson }}, // orígenes que son un estimado, no un cobro
   zzSugerida: {{ (fin_zz_sugerida if fin_zz_sugerida is defined else none) | tojson }}, // línea del tipo de OT
 };
-// Daniel: "ámbar bajo 10 %" (verde desde 10 %, rojo con pérdida).
-window.OTD_FIN_UMBRAL_BAJO = 10;
+// REGLA #57 (Daniel, 29-oct): margen autorizado 30 %, tolerancia hasta 20 %: ámbar bajo 20 % (verde desde 20 %, rojo con pérdida). Era 10.
+window.OTD_FIN_UMBRAL_BAJO = 20;
 window.otdFinFmt = function(n, conSigno){
   if (n === null || n === undefined || n === '' || !isFinite(Number(n))) return '—';
   const r = Math.round(Number(n));

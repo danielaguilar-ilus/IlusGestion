@@ -31,7 +31,7 @@
     /* 2026-10-19: desinstalación cubierta por la nota de venta de su instalación (espejo de _ot_cobertura) */
     cubierta: 'Desinstalación cubierta por la instalación: se cobra en la instalación'
   };
-  var UMBRAL_BAJO = 10;
+  var UMBRAL_BAJO = 20;   // 2026-10-29 (REGLA #57): la tolerancia de la política de margen (era 10); espejo de _OT_FIN_UMBRAL_BAJO en app.py
 
   function num(x){
     if (x === null || x === undefined || x === '') return null;

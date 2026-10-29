@@ -111,8 +111,8 @@ class TestVidaClienteBucket(unittest.TestCase):
 
 
 class TestVidaMargenClase(unittest.TestCase):
-    """Semaforo del margen -- mismo umbral que la OT (verde >=10%,
-    ambar 0-10%, rojo en perdida)."""
+    """Semaforo del margen -- mismo umbral que la OT (verde >=20%,
+    ambar 0-20%, rojo en perdida). 2026-10-29 (REGLA #57): antes el corte era 10 %."""
 
     @classmethod
     def setUpClass(cls):
@@ -122,10 +122,12 @@ class TestVidaMargenClase(unittest.TestCase):
         self.assertEqual(self.clase(41.0, 420000), "ok")
 
     def test_margen_justo_en_el_umbral_es_verde(self):
-        self.assertEqual(self.clase(10.0, 10000), "ok")
+        self.assertEqual(self.clase(20.0, 20000), "ok")
 
-    def test_margen_bajo_10_es_ambar(self):
+    def test_margen_bajo_20_es_ambar(self):
         self.assertEqual(self.clase(0.8, 2000), "bajo")
+        self.assertEqual(self.clase(10.0, 10000), "bajo")      # antes (corte en 10 %) era verde
+        self.assertEqual(self.clase(19.9, 19900), "bajo")
 
     def test_margen_cero_es_ambar(self):
         self.assertEqual(self.clase(0.0, 0), "bajo")

@@ -167,7 +167,7 @@ class TestCadena(unittest.TestCase):
         self.assertEqual(nodos[1]["estado_saldo"], "parcial")
         u = nodos[1]["usos"][0]
         self.assertEqual(u["margen_pct"], 12.4)
-        self.assertEqual(u["nivel"], "verde")
+        self.assertEqual(u["nivel"], "ambar")      # 2026-10-29 (REGLA #57): 12,4 % está bajo la tolerancia de 20 % (antes, con corte en 10 %, salía verde)
         self.assertIn("tomó $252.101 de servicio", u["texto"])
         self.assertIn("margen 12 %", u["texto"])
         self.assertIn("08/10/2026", nodos[2]["texto"])
@@ -179,6 +179,8 @@ class TestCadena(unittest.TestCase):
         self.assertIsNone(C.margen_nivel(None))
         self.assertEqual(C.margen_nivel(-3), "rojo")
         self.assertEqual(C.margen_nivel(4), "ambar")
+        self.assertEqual(C.margen_nivel(19.9), "ambar")      # REGLA #57: bajo 20 % es amarillo
+        self.assertEqual(C.margen_nivel(20), "verde")
         self.assertEqual(C.margen_nivel(25), "verde")
 
     def test_dos_ventas_distintas_son_dos_cadenas(self):

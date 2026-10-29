@@ -108,7 +108,8 @@ class TestPolitica(unittest.TestCase):
         src = A.leer("ot_margen_politica.py")
         for prohibido in ("import app", "_ot_finanzas", "_OT_FIN_UMBRAL_BAJO =", "mysql", "flask"):
             self.assertNotIn(prohibido, src.split('"""', 2)[-1])
-        self.assertIn("_OT_FIN_UMBRAL_BAJO = 10", A.app_src(), "el umbral de la ficha sigue igual (otro frente)")
+        # 2026-10-29: el umbral de la ficha se alineó con la política (20 %): lo vigila tests/test_ot_margen_alineado.py
+        self.assertIn("_OT_FIN_UMBRAL_BAJO = 20", A.app_src(), "el umbral de la ficha es la tolerancia de la política")
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════════════════════

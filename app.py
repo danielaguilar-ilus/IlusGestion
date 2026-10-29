@@ -87561,8 +87561,9 @@ def _vida_cliente_bucket(tipo, tiene_repuestos):
 
 def _vida_margen_clase(margen_pct, margen_clp):
     """Semáforo del margen -- MISMO umbral que la tarjeta Finanzas de la OT
-    (templates/ot2/detalle.html, `window.OTD_FIN_UMBRAL_BAJO = 10`, Daniel:
-    "ámbar bajo 10 %"): verde desde 10 %, ámbar bajo 10 %, rojo en pérdida.
+    (templates/ot2/detalle.html, `window.OTD_FIN_UMBRAL_BAJO = 20`). 🎯 2026-10-29 (REGLA #57, Daniel: «margen autorizado 30 %, tolerancia hasta 20;
+    de ahí hacia abajo, amarillo, y rojo los negativos»): verde desde 20 % (objetivo 30 %), ámbar bajo 20 %, rojo en pérdida.
+    La política vive en ot_margen_politica.py; tests/test_ot_margen_alineado.py vigila que todos los espejos digan lo mismo.
     FUNCIÓN PURA -- sin BD/Flask, ver tests/test_vida_cliente.py.
 
     Una pérdida en $ (margen_clp < 0) es rojo aunque no haya % (OT sin
@@ -87573,7 +87574,7 @@ def _vida_margen_clase(margen_pct, margen_clp):
         return "sin_dato"
     if margen_pct < 0:
         return "rojo"
-    if margen_pct < 10:
+    if margen_pct < 20:      # = ot_margen_politica.TOLERANCIA_PCT (REGLA #57)
         return "bajo"
     return "ok"
 
@@ -87816,7 +87817,9 @@ _OT_FIN_COBERTURA_TXT = {
     # instalación (no consume saldo aparte). Espejo en static/ot_finanzas.js.
     "cubierta": "Desinstalación cubierta por la instalación: se cobra en la instalación",
 }
-_OT_FIN_UMBRAL_BAJO = 10   # % -- mismo umbral que ya conoce Daniel ("Margen bajo, menos de 10 %")
+# 🎯 2026-10-29 (REGLA #57, Daniel: «margen autorizado 30 %, tolerancia hasta 20; bajo 20 amarillo, negativos en rojo»): era 10. Es la TOLERANCIA de
+# ot_margen_politica.py; los espejos (static/ot_finanzas.js, detalle.html, ot_gerencial.py, ot_doc_cadena.py) los vigila tests/test_ot_margen_alineado.py.
+_OT_FIN_UMBRAL_BAJO = 20   # % -- «Margen bajo (menos de 20 %)»: solo MARCA el color; no es un candado
 # ¿La OT es una mantención cubierta por un contrato REAL del cliente? (para el SELECT de quien use _ot_finanzas,
 # con la visita como alias `v`). El "Contenedor de documentos" (contrato ficticio que se crea al subir papeles de
 # un cliente sin contrato) NO cuenta. Si la OT apunta a un contrato real, cuenta aunque ya haya vencido; si no

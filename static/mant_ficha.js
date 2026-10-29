@@ -8294,7 +8294,7 @@ function _intelFinanzas(d){
   const n = parseInt(fz.n_servicios, 10) || 0;
   const mPct = (fz.margen_pct == null) ? null : parseFloat(fz.margen_pct);
   // 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda"): el semáforo es el de la OT (verde desde
-  // 10 %, ámbar bajo 10 %, rojo en pérdida) y viene clasificado del servidor (margen_clase / clase).
+  // 20 %, ámbar bajo 20 %, rojo en pérdida; REGLA #57) y viene clasificado del servidor (margen_clase / clase).
   // Si un informe viejo en caché no lo trae, se cae al cálculo de antes.
   const _CLASE_COLOR = { ok: '#16a34a', bajo: '#f59e0b', rojo: '#dc2626', info: '#1d4ed8', ambar: '#b45309', gris: '#6b7280', sin_dato: '#6b7280' };
   const mColor = fz.margen_clase ? (_CLASE_COLOR[fz.margen_clase] || '#6b7280')

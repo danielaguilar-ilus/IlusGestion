@@ -3083,7 +3083,7 @@ function cotFichaCambiarPagina(delta) {
 // REGLA #15), toda tabla paginada (REGLA #4.3), sin alert/confirm nativos
 // (no aplica acá -- es solo lectura). Umbral de margen IDÉNTICO al de la
 // tarjeta Finanzas de la OT (templates/ot2/detalle.html): verde desde
-// 10 %, ámbar bajo 10 %, rojo en pérdida.
+// 20 %, ámbar bajo 20 %, rojo en pérdida (REGLA #57, 2026-10-29; antes 10 %).
 // ═══════════════════════════════════════════════════════════════════
 window._vidaState = {
   mg_page: 1, mg_per: 10, lv_page: 1, lv_per: 15, lv_tipo: '', pr_page: 1, pr_per: 10, loaded: false,

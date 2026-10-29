@@ -24,7 +24,7 @@ GUIAS = ("GDV",)
 CATEGORIAS = ("servicio", "despacho")
 
 _TIPO_TXT = {"FCV": "Factura", "FCE": "Factura exenta", "BLV": "Boleta", "BLE": "Boleta exenta", "GDV": "Guía de despacho"}
-MARGEN_SANO = 10.0   # % desde el que el margen se pinta verde (igual que «Margen bajo (menos de 10 %)» del motor)
+MARGEN_SANO = 20.0   # % desde el que el margen se pinta verde (igual que «Margen bajo (menos de 20 %)» del motor; REGLA #57, era 10)
 
 
 def _entero(x):
@@ -206,7 +206,7 @@ def alertas(docs_ot, familias, info=None):
 
 
 def margen_nivel(pct):
-    """verde (sano) · ambar (bajo, entre 0 y 10 %) · rojo (pérdida real). None si no se puede medir."""
+    """verde (sano, desde 20 %) · ambar (bajo, entre 0 y 20 %) · rojo (pérdida real). None si no se puede medir."""
     if pct is None:
         return None
     try:
