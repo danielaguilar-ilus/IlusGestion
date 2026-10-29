@@ -7726,6 +7726,22 @@ function otdIniciarRuta(app){
         <div class="otd-fc-sec cobre">
           <div class="otd-fc-h"><b>Cobré</b> <small>lo que se le cobró al cliente · sale de los documentos</small></div>
           <div class="otd-fc-fuente" id="otdFcFuente"></div>
+          {#- 🧾 2026-10-29 (Daniel, OT-2026-00151): los documentos YA declarados en la OT, lo que aportan y un clic para tomar el cobro (con su margen a la vista). -#}
+          <div class="otd-fc-docs" id="otdFcDocs"></div>
+          {#- 🧾 «Traer factura o boleta»: solo cuando la OT NO tiene documento declarado. Valida contra Random (solo lectura) y asocia por el mismo camino de «Agregar factura»
+              (/documentos/regularizar); después el cobro se prellena solo con sus líneas. -#}
+          <div class="otd-fc-traer" id="otdFcTraer" hidden>
+            <div class="dc-t"><i class="bi bi-cloud-download"></i> Esta OT no tiene factura o boleta declarada</div>
+            <div class="dc-ayuda">Tráela desde Random: el cobro del servicio y del despacho se calcula solo con sus líneas, y se contrasta con lo que nos cobraron.</div>
+            <div class="dc-form">
+              <select class="form-select" id="otdFcDocTipo" aria-label="Tipo de documento">
+                <option value="FCV">Factura</option><option value="BLV">Boleta</option><option value="NVV">Nota de venta</option></select>
+              <input type="text" inputmode="numeric" class="form-control" id="otdFcDocNum" placeholder="N° del documento" aria-label="Número del documento"
+                     onkeydown="if(event.key==='Enter'){event.preventDefault();otdFinCorrTraerDoc();}">
+              <button type="button" class="dc-btn" id="otdFcDocBtn" onclick="otdFinCorrTraerDoc()">Traer desde Random</button>
+            </div>
+            <div class="dc-msg" id="otdFcDocMsg" role="status"></div>
+          </div>
           <div class="row g-2">
             <div class="col-6"><label class="form-label small fw-semibold mb-1">Cobro del servicio ($)</label>
               <input type="text" inputmode="numeric" class="form-control" id="otdFc_zz_monto" oninput="otdFinCorrCalc()"></div>
@@ -7787,6 +7803,30 @@ function otdIniciarRuta(app){
 .otd-fc-fuente{font-size:.76rem;color:#374151;margin-bottom:8px;line-height:1.45;overflow-wrap:anywhere}
 .otd-fc-fuente .pa{display:block;margin-top:5px;background:#fff8e1;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:6px 9px;font-weight:700}
 .otd-fc-fuente .pa button{margin-top:5px;min-height:34px;border:1px solid #92400e;background:#fff;color:#92400e;border-radius:8px;font-weight:800;font-size:.76rem;padding:0 10px;display:block}
+/* 🧾 2026-10-29: «Documentos de esta OT» dentro de «Cobré»: lo que aportan, el margen con ese cobro y el botón para tomarlo. Verde = viene de un
+   documento de Random; ámbar = no se pudo tomar y se dice por qué. */
+.otd-fc-docs:empty{display:none}
+.otd-fc-docs{margin:0 0 10px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;padding:10px 11px;font-size:.78rem;color:#14532d;line-height:1.5;overflow-wrap:anywhere}
+.otd-fc-docs.nota{border-color:#fde68a;background:#fff8e1;color:#92400e}
+.otd-fc-docs .dc-t{font-weight:800;margin-bottom:3px}
+.otd-fc-docs .dc-prev{margin-top:6px;padding:6px 9px;border-radius:8px;background:#fff;border:1px solid #bbf7d0;color:#111827;font-weight:700}
+.otd-fc-docs .dc-prev.neg{border-color:#fecaca;color:#991b1b}
+.otd-fc-docs .dc-acc{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px;align-items:center}
+.otd-fc-docs .dc-btn{min-height:44px;border:1.5px solid #15803d;background:#15803d;color:#fff;border-radius:10px;font-weight:800;font-size:.8rem;padding:0 14px}
+.otd-fc-docs .dc-btn.sec{background:#fff;color:#14532d}
+.otd-fc-docs .dc-ok{font-weight:800;color:#15803d}
+.otd-fc-docs .dc-pre{font-weight:800;color:#92400e}
+.otd-fc-traer{margin:0 0 10px;border:1px dashed #86efac;background:#f7fef9;border-radius:10px;padding:10px 11px;font-size:.78rem;color:#14532d;line-height:1.5}
+.otd-fc-traer[hidden]{display:none}
+.otd-fc-traer .dc-t{font-weight:800}
+.otd-fc-traer .dc-ayuda{margin:2px 0 8px;color:#374151}
+.otd-fc-traer .dc-form{display:flex;flex-wrap:wrap;gap:8px}
+.otd-fc-traer .dc-form .form-select{flex:0 0 150px;min-height:44px}
+.otd-fc-traer .dc-form .form-control{flex:1 1 150px;min-height:44px}
+.otd-fc-traer .dc-btn{min-height:44px;border:1.5px solid #15803d;background:#15803d;color:#fff;border-radius:10px;font-weight:800;font-size:.8rem;padding:0 14px}
+.otd-fc-traer .dc-btn:disabled{opacity:.6}
+.otd-fc-traer .dc-msg{margin-top:6px;font-weight:700;overflow-wrap:anywhere}
+.otd-fc-traer .dc-msg.mal{color:#991b1b}
 .otd-fincorr-hist{margin-top:14px;display:flex;flex-direction:column;gap:8px}
 .otd-fincorr-hist .h{border:1px solid #e5e7eb;border-radius:10px;padding:9px 12px;font-size:.78rem;background:#fafafa}
 .otd-fincorr-hist .h .q{font-weight:800;color:#0a0a0a}.otd-fincorr-hist .h .m{color:#374151;margin-top:3px;overflow-wrap:anywhere}
@@ -7810,6 +7850,8 @@ var _otdFcGar = false, _otdFcInicial = {};
 // línea de servicio del tipo de OT y las líneas que no son de servicio (los manda /correcciones).
 var _otdFcBase = null, _otdFcRep = null, _otdFcSug = null, _otdFcNoServ = ['ZZRETIRO'];
 var _otdFcPierde = null;   // 2026-10-07: la cuenta de cómo quedaría, si la corrección deja la OT sin cobro
+var _otdFcDocs = null, _otdFcDocsError = false;   // 2026-10-29: lo que aportan los documentos YA declarados (los manda /correcciones)
+var _otdFcFin = null;                             // la cuenta actual de la OT (la manda /correcciones): ¿se cobra?, ¿ya hay cobro declarado?
 var _OTD_FC_CAMPOS = ['zz_monto', 'zz_envio_monto', 'costo_proveedor', 'costo_despacho', 'valorizado_clp'];
 /* 2026-10-07 (modelo único): ya NO hace su propia cuenta (antes: cobro 0 si era garantía, sin repuestos y
    sin mirar si el monto era un estimado o un ZZRETIRO). Pinta lo que devuelve la cuenta única del navegador
@@ -7844,8 +7886,10 @@ function otdFinCorrCalc(){
       '</span><b>Nos costó ' + _otdFcPlata(M) + '</b>';
   } else {
     el.className = 'otd-fincorr-res ' + (Q < 0 ? 'neg' : 'pos');
+    // 2026-10-29: el margen en % junto a lo que queda (solo si hay cobro: sobre $0 no existe).
+    var pctTxt = (r.queda.pct !== null && r.queda.pct !== undefined) ? ' <small>' + String(r.queda.pct).replace('.', ',') + ' %</small>' : '';
     el.innerHTML = '<span>Cobré ' + _otdFcPlata(r.cobre.total) + ' − Me cobraron ' + _otdFcPlata(M) +
-      ' = Queda</span><b>' + (Q < 0 ? '−' : '') + _otdFcPlata(Math.abs(Q)) + '</b>';
+      ' = Queda</span><b>' + (Q < 0 ? '−' : '') + _otdFcPlata(Math.abs(Q)) + pctTxt + '</b>';
   }
   if (fr) fr.textContent = (r.frase || '') + ((r.avisos && r.avisos.length) ? ' ' + r.avisos.join(' ') : '');
   // 🔴 2026-10-07 (revisión): corregir el cobro lo deja "escrito a mano"; en una preventiva de contrato real
@@ -7856,6 +7900,128 @@ function otdFinCorrCalc(){
   if (av){
     av.hidden = !_otdFcPierde;
     if (_otdFcPierde && window.otdFinPierdeCobroHtml) av.innerHTML = window.otdFinPierdeCobroHtml(r, _otdFcEsc);
+  }
+  otdFinCorrDocs();   // 2026-10-29: el bloque de documentos se repinta con lo que hay escrito (¿ya está tomado?, ¿con qué margen quedaría?)
+}
+/* 🧾 2026-10-29 (Daniel, OT-2026-00151: «el documento que ya declaré todavía no lo toma… me pide hacerlo a mano, lo que es peligroso»):
+   los documentos de cobro YA declarados en la OT, lo que aportan (servicio + despacho, con el saldo que otras OT no usan) y un clic
+   para tomarlo como cobro, mostrando cómo quedaría el margen contra lo que nos cobraron. El servidor recalcula todo al guardar: solo si el
+   monto es EXACTAMENTE el de los documentos queda como «línea del documento»; cualquier otro, como «escrito a mano». */
+function _otdFcDocsMontos(){
+  var D = _otdFcDocs; if (!D) return {s: 0, e: 0};
+  return {s: (D.servicio && D.servicio.hay_lineas) ? (D.servicio.saldo || 0) : 0, e: (D.despacho && D.despacho.hay_lineas) ? (D.despacho.saldo || 0) : 0};
+}
+function _otdFcDocsIgual(){
+  var m = _otdFcDocsMontos();
+  return !!_otdFcDocs && !_otdFcDocs.incompleto && m.s > 0 && _otdFcNum('otdFc_zz_monto') === m.s && (_otdFcNum('otdFc_zz_envio_monto') || 0) === m.e;
+}
+/* ¿Lo que hay GUARDADO en la OT ya es lo que aportan los documentos? (distinto de «lo escrito en el modal», que puede estar solo prellenado). */
+function _otdFcDocsGuardado(){
+  var m = _otdFcDocsMontos(), n = function(k){ var x = _otdFcInicial[k]; return (x === null || x === undefined || x === '') ? 0 : Math.round(Number(x)); };
+  return !!_otdFcDocs && !_otdFcDocs.incompleto && m.s > 0 && n('zz_monto') === m.s && n('zz_envio_monto') === m.e;
+}
+function _otdFcDocsTitulos(){
+  return ((_otdFcDocs && _otdFcDocs.documentos) || []).filter(function(d){ return !d.omitido && d.titulo; }).map(function(d){ return d.titulo; });
+}
+function otdFinCorrDocs(){
+  var box = document.getElementById('otdFcDocs'); if (!box) return;
+  var D = _otdFcDocs;
+  box.className = 'otd-fc-docs';
+  // «Traer factura o boleta» solo si la OT se cobra y NO tiene documento declarado (y Random no falló al leerlos).
+  var traer = document.getElementById('otdFcTraer');
+  if (traer) traer.hidden = !(!D && !_otdFcDocsError && _otdFcFin && _otdFcFin.cobra);
+  if (!D){
+    box.innerHTML = _otdFcDocsError ? '<b>No pude leer los documentos de esta OT en Random ahora.</b> Cierra y vuelve a abrir; mientras tanto puedes escribir el cobro a mano con su motivo.' : '';
+    if (_otdFcDocsError) box.className = 'otd-fc-docs nota';
+    return;
+  }
+  var tit = _otdFcDocsTitulos(), m = _otdFcDocsMontos(), S = D.servicio || {}, E = D.despacho || {};
+  var agregar = '<button type="button" class="dc-btn sec" onclick="otdFinCorrAgregarDoc()">Agregar otro documento</button>';
+  if (D.incompleto){
+    box.className = 'otd-fc-docs nota';
+    box.innerHTML = '<div class="dc-t">Documentos de esta OT: ' + _otdFcEsc(tit.join(' · ') || 'sin leer') + '</div>Random no entregó las líneas de alguno de ellos (o es de otro cliente): ' +
+      'no calculo el cobro a ciegas. Reintenta en un momento o escríbelo a mano con su motivo.<div class="dc-acc">' + agregar + '</div>';
+    return;
+  }
+  if (!m.s && !m.e){
+    box.className = 'otd-fc-docs nota';
+    box.innerHTML = '<div class="dc-t">Documentos de esta OT: ' + _otdFcEsc(tit.join(' · ')) + '</div>No traen líneas de servicio ni de despacho con saldo (o otras OT ya las usan por completo): ' +
+      'no hay cobro que tomar de ahí.<div class="dc-acc">' + agregar + '</div>';
+    return;
+  }
+  var usado = (S.usado || 0) + (E.usado || 0);
+  var html = '<div class="dc-t"><i class="bi bi-file-earmark-check-fill"></i> Documentos de esta OT: ' + _otdFcEsc(tit.join(' · ')) + '</div>' +
+    'Aportan al cobro: servicio <b>' + _otdFcPlata(m.s) + '</b> + despacho <b>' + _otdFcPlata(m.e) + '</b> = <b>' + _otdFcPlata(m.s + m.e) + '</b>' +
+    (usado > 0 ? ' · otras OT ya usan ' + _otdFcPlata(usado) + ' de esas líneas' : '') + '. El resto del documento son productos: no se cobra acá.';
+  // Cómo quedaría el margen con ese cobro, contra lo que hoy hay escrito en «Me cobraron» (misma cuenta única del navegador).
+  var r = null;
+  if (typeof window.ilusOtFinanzas === 'function' && _otdFcBase){
+    var v = Object.assign({}, _otdFcBase);
+    _OTD_FC_CAMPOS.forEach(function(k){ v[k] = _otdFcNum('otdFc_' + k); });
+    v.zz_monto = m.s || v.zz_monto; v.zz_envio_monto = m.e || v.zz_envio_monto; v.valor_origen = 'zz';
+    if (_otdFcNoServ.indexOf(String(v.zz_codigo || '').toUpperCase()) >= 0) v.zz_codigo = _otdFcSug;
+    try { r = window.ilusOtFinanzas(v, _otdFcRep); } catch(e){ r = null; }
+  }
+  if (r && r.cobra){
+    var Q = r.queda.total, pc = (r.queda.pct !== null && r.queda.pct !== undefined) ? ' · ' + String(r.queda.pct).replace('.', ',') + ' %' : '';
+    html += '<div class="dc-prev' + (Q < 0 ? ' neg' : '') + '">Con ese cobro: Cobré ' + _otdFcPlata(r.cobre.total) + ' − Me cobraron ' + _otdFcPlata(r.me_cobraron.total) +
+      ' = Queda ' + (Q < 0 ? '−' : '') + _otdFcPlata(Math.abs(Q)) + pc + '</div>';
+  }
+  // Tres estados: ya guardado en la OT · prellenado en el modal (falta guardar) · todavía sin tomar (botón).
+  var estado = _otdFcDocsIgual()
+    ? (_otdFcDocsGuardado() ? '<span class="dc-ok"><i class="bi bi-check-circle-fill"></i> Ya está tomado de los documentos</span>'
+                            : '<span class="dc-pre"><i class="bi bi-magic"></i> Prellenado con lo que aportan los documentos: revisa y presiona «Guardar corrección».</span>')
+    : '<button type="button" class="dc-btn" onclick="otdFinCorrTomarDocs()"><i class="bi bi-magic me-1"></i>Tomar el cobro de los documentos</button>';
+  html += '<div class="dc-acc">' + estado + agregar + '</div>';
+  box.innerHTML = html;
+}
+/* `auto`: lo llama el modal al abrirse cuando la OT NO tiene cobro declarado y los documentos sí traen líneas (sin robar el foco ni pisar lo escrito).
+   Nada se guarda hasta que la persona presiona «Guardar corrección», con su motivo. */
+function otdFinCorrTomarDocs(auto){
+  var D = _otdFcDocs; if (!D || D.incompleto) return;
+  var m = _otdFcDocsMontos();
+  if (m.s) document.getElementById('otdFc_zz_monto').value = String(m.s);
+  if (m.e) document.getElementById('otdFc_zz_envio_monto').value = String(m.e);
+  var mo = document.getElementById('otdFc_motivo');
+  if (mo && !(mo.value || '').trim()){
+    var t = _otdFcDocsTitulos().join(' + ');
+    mo.value = 'Cobro tomado de ' + (t || 'los documentos de la OT') + ': servicio y despacho según sus líneas.';   // sugerido y editable: queda en el registro
+  }
+  otdFinCorrCalc();
+  if (mo && auto !== true) mo.focus();
+}
+/* «Traer factura o boleta» (OT sin documento): valida contra Random en solo lectura y asocia por el MISMO camino de «Agregar factura»
+   (/documentos/regularizar: RUT, duplicado, nota de venta dada de baja…). Después se vuelve a leer todo y el cobro se prellena solo. */
+async function otdFinCorrTraerDoc(){
+  var msg = document.getElementById('otdFcDocMsg'), btn = document.getElementById('otdFcDocBtn');
+  var tipo = document.getElementById('otdFcDocTipo').value, num = (document.getElementById('otdFcDocNum').value || '').replace(/[^0-9]/g, '');
+  msg.className = 'dc-msg';
+  if (!num){ msg.className = 'dc-msg mal'; msg.textContent = 'Escribe el número del documento.'; return; }
+  btn.disabled = true; msg.textContent = 'Buscando en Random…';
+  try {
+    var r = await fetch('/ot/api/' + OTD_VID + '/documentos/regularizar', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({origen: 'erp', tipo: tipo, numero: num})});
+    var j = await r.json().catch(function(){ return {}; });
+    if (!r.ok || !j.ok){
+      msg.className = 'dc-msg mal';
+      msg.innerHTML = _otdFcEsc(j.error || 'No se pudo traer el documento.') + ' <a href="#" onclick="otdFinCorrAgregarDoc();return false;">Usar el formulario completo</a>';
+      btn.disabled = false; return;
+    }
+    ilusToast('✓ Documento asociado a la OT', {type: 'success'});
+    btn.disabled = false;
+    await otdFinCorrAbrir();     // vuelve a leer la OT: con el documento ya declarado, el cobro se prellena solo
+  } catch(e){
+    msg.className = 'dc-msg mal'; msg.textContent = 'Error de conexión. Inténtalo de nuevo.'; btn.disabled = false;
+  }
+}
+/* «Agregar otro documento»: usa el MISMO flujo de la ficha (ligar factura, boleta o nota de venta): nadie mantiene su propia copia (REGLA #49). */
+function otdFinCorrAgregarDoc(){
+  var el = document.getElementById('otdModalFinCorr');
+  try { var mod = bootstrap.Modal.getInstance(el); if (mod) mod.hide(); } catch(e){}
+  if (window.OTFinMotor && typeof window.OTFinMotor.ligarDocumento === 'function'){
+    setTimeout(function(){ window.OTFinMotor.ligarDocumento(OTD_VID, {hecho: function(){ location.reload(); }}); }, 350);
+  } else {
+    ilusToast('No se pudo abrir «Agregar factura»: usa el botón de la tarjeta «Costos y documentación».', {type: 'warning'});
   }
 }
 /* 2026-10-08 (Daniel: «el centro de costo hazlo con botones»): los mismos rectángulos de la ficha (.otd-cc). El <select>
@@ -7887,9 +8053,14 @@ function otdFinCorrFuente(f){
   else if (C.hay) html = 'Lo cobrado sale de: <b>' + _otdFcEsc(C.fuente || 'lo declarado') + '</b> · servicio ' + _otdFcPlata(C.servicio) +
                          ' + despacho ' + _otdFcPlata(C.despacho) + '.';
   else html = '<b>Todavía no hay cobro:</b> falta el documento de Random o declarar lo cobrado a mano con su motivo.';
-  if (f.cobra && f.precio_anotado != null)
-    html += '<span class="pa">Precio anotado sin documento: ' + _otdFcPlata(f.precio_anotado) + '. No cuenta como cobro.' +
+  if (f.cobra && f.precio_anotado != null){
+    // 2026-10-29: si los documentos declarados traen líneas de servicio/despacho, el precio anotado suele ser el TOTAL de la factura (con productos):
+    // se avisa antes de que alguien lo tome como cobro del servicio.
+    var dm = _otdFcDocsMontos(), dAviso = (_otdFcDocs && !_otdFcDocs.incompleto && (dm.s + dm.e) > 0 && Math.round(f.precio_anotado) !== dm.s + dm.e)
+      ? ' <b>Ojo:</b> los documentos declarados solo cobran ' + _otdFcPlata(dm.s + dm.e) + ' de servicio y despacho; el resto del precio son productos.' : '';
+    html += '<span class="pa">Precio anotado sin documento: ' + _otdFcPlata(f.precio_anotado) + '. No cuenta como cobro.' + dAviso +
             '<button type="button" onclick="otdFinCorrUsarAnotado(' + Math.round(f.precio_anotado) + ')">Usar como cobro del servicio</button></span>';
+  }
   el.innerHTML = html;
 }
 function otdFinCorrUsarAnotado(n){
@@ -7900,6 +8071,7 @@ function otdFinCorrUsarAnotado(n){
 async function otdFinCorrAbrir(){
   document.getElementById('otdFcErr').textContent = '';
   document.getElementById('otdFc_motivo').value = '';
+  _otdFcDocs = null; _otdFcDocsError = false; _otdFcFin = null;      // 2026-10-29: se vuelven a leer los documentos cada vez que se abre
   bootstrap.Modal.getOrCreateInstance(document.getElementById('otdModalFinCorr')).show();
   try {
     var r = await fetch('/ot/api/finanzas/' + OTD_VID + '/correcciones', {credentials:'same-origin', cache:'no-store'});
@@ -7910,6 +8082,7 @@ async function otdFinCorrAbrir(){
     _otdFcBase = j.base || null;
     _otdFcRep = j.rep || null;
     _otdFcSug = j.zz_sugerida || null;
+    _otdFcDocs = j.docs || null; _otdFcDocsError = !!j.docs_error; _otdFcFin = j.fin || null;
     if (Array.isArray(j.zz_no_servicio)) _otdFcNoServ = j.zz_no_servicio;
     _OTD_FC_CAMPOS.forEach(function(k){
       document.getElementById('otdFc_' + k).value = (a[k] === null || a[k] === undefined) ? '' : String(Math.round(Number(a[k])));
@@ -7922,6 +8095,10 @@ async function otdFinCorrAbrir(){
     otdFinCorrCcPintar(j.centros || [], a.centro_costo || '');
     otdFinCorrFuente(j.fin || null);
     otdFinCorrCalc();
+    // 2026-10-29 (Daniel: «hay muchas que ya vienen con las facturas y las boletas declaradas… que se actualice de manera automática»): si la OT se
+    // cobra, NO tiene cobro declarado y sus documentos traen líneas de servicio/despacho, el cobro se PRELLENA solo con ellas. No se guarda nada
+    // hasta «Guardar corrección» (con su motivo, que también queda sugerido): el sistema propone, la persona decide.
+    if (j.fin && j.fin.cobra && !(j.fin.cobre && j.fin.cobre.hay) && _otdFcDocs && !_otdFcDocs.incompleto && _otdFcDocsMontos().s > 0) otdFinCorrTomarDocs(true);
     var h = j.historial || [];
     document.getElementById('otdFcHist').innerHTML = h.length
       ? '<div class="tit">Correcciones anteriores</div>' + h.map(function(x){
@@ -7945,6 +8122,8 @@ async function otdFinCorrGuardar(){
     body[k] = v;   // 2026-10-07: vacío = quitar ese monto (antes un casillero vacío no se enviaba y no se podía borrar)
   });
   body.centro_costo = document.getElementById('otdFc_centro_costo').value;
+  // 2026-10-29: avisa que el cobro es lo que aportan los documentos; el servidor lo recalcula y decide el rótulo («línea del documento» o «escrito a mano»).
+  if (_otdFcDocsIgual()) body.desde_documentos = true;
   otdFinCorrCalc();
   if (_otdFcPierde){
     var okCob = await ilusConfirm({

@@ -82,6 +82,7 @@ def _ambito(superadmin=True, cuerpo=None, fila=FILA):
     amb = _cargar(
         ["ot2_api_finanzas_corregir", "_ot_fin_ganancia", "_ot_fin_es_superadmin", "_ot_fin_dudosas_motivos",
          "_ot2_err", "_ot_fin_rep_de",
+         "_ot_fin_corr_desde_docs",   # 2026-10-29: «tomar el cobro de los documentos» (la ruta decide el rótulo con ella)
          # la cuenta única y lo que usa
          "_ot_finanzas", "_ot_cobertura", "_ot_es_interna", "_ot_fin_num", "_ot_fin_clp"],
         ["_OT_FIN_CORR_CAMPOS", "_OT_FIN_CORR_ROT", "_OT_FIN_CORR_MOTIVO_MIN", "_OT_FIN_SQL_CONTRATO_REAL",
@@ -268,7 +269,11 @@ class TestRutasYTablas(unittest.TestCase):
             cls.app = fh.read().replace(chr(13) + chr(10), chr(10))
 
     def test_la_tabla_de_registro_se_crea_siempre_al_arrancar(self):
-        self.assertIn("_ensure_ot_finanzas_correcciones()", self.app.split("# Multidocumento de la OT")[0][-900:])
+        # (definición + llamada al arrancar). Antes miraba «los 900 caracteres antes de otro comentario»: otras entregas insertaron código
+        # entre ambos y la prueba fallaba sin que el registro estuviera roto.
+        self.assertGreaterEqual(self.app.count("_ensure_ot_finanzas_correcciones()"), 2)
+        i = self.app.rindex("_ensure_ot_finanzas_correcciones()")
+        self.assertIn("try:", self.app[max(0, i - 120):i])
 
     def test_el_registro_nunca_se_actualiza_ni_se_borra(self):
         self.assertNotIn("UPDATE mant_ot_finanzas_correcciones", self.app)

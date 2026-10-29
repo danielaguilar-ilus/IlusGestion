@@ -1442,5 +1442,21 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
+## 💵 REGLA #56 — Los montos de cobro SE DECLARAN a partir de un documento: jamás se inventan, y el costo de la OT y el del anexo son UN solo monto (no negociable)
+
+**Pedido explícito de Daniel (2026-10-29), con las OT-150, 151, 152 y 158: «dejalo como regla… que se declaren los montos de cobro, créeme es muy importante y peligroso para no inventar»** y «las finanzas o los costos son muy importantes: se tienen que llevar para KPI y para mejorar la toma de decisiones». Ejemplos reales: la factura FCV 11348 estaba declarada en la OT-151 pero «Cobré» seguía en $0 y el modal pedía escribir el cobro a mano; el anexo de la OT-158 decía $30.000 y la OT no decía nada.
+
+- **Un cobro tiene origen, o no existe.** «Cobré» sale SOLO de lo declarado en la OT (`zz_monto` y `zz_envio_monto`) con su respaldo: las líneas de servicio y despacho de un documento de Random (factura o boleta), una cotización, un contrato o un cobro escrito a mano **con su motivo**. Un «precio anotado» suelto (por ejemplo el total de una factura con productos) **no es un cobro** (`_ot_finanzas`). El sistema nunca rellena un monto «por parecido» ni «por si acaso».
+- **Los documentos declarados alimentan el cobro, no a mano.** «Corregir finanzas» (solo superadmin) trae lo que aportan los documentos YA declarados (`_ot_fin_docs_cobro`: servicio + despacho, con el saldo por línea de las REGLAS #25 y #28: lo que otras OT ya usan no se puede cobrar de nuevo) y, si la OT se cobra y no tiene cobro declarado, lo **prellena solo** con su origen a la vista; **nada se guarda hasta «Guardar corrección», con su motivo** (que también queda sugerido). El **servidor recalcula** al guardar y decide el rótulo (`_ot_fin_corr_desde_docs`): solo si el monto es EXACTAMENTE lo que aportan los documentos queda como «línea del documento» (`valor_origen='zz'`, con su línea ZZ); cualquier otro, como «escrito a mano». El navegador solo avisa que lo intentó, nunca fija el rótulo.
+- **Nunca a ciegas:** si Random no entregó un documento, o es de otro RUT, o no trae líneas con saldo, **no se calcula nada** y se dice por qué. Leer los documentos no escribe nada (REGLA #4.1).
+- **Si no hay documento, se trae desde el mismo modal** («Traer factura o boleta»): se valida contra Random (solo lectura) y se asocia por el MISMO camino de «Agregar factura» (`/documentos/regularizar`: RUT, duplicado, nota de venta dada de baja); después el cobro se prellena solo.
+- **Trazabilidad de Random manda (en construcción, siguiente despliegue):** si la OT tiene una nota de venta y Random ya la facturó, **lo cobrado es lo de la factura**, salvo que Daniel lo quiera editar (decisión suya, con su motivo). El camino es el de siempre: agregar esa factura a la OT (la nota queda dada de baja por ella y la factura pasa a ser el principal).
+- **Un documento que se sube genera su cobro (en construcción, siguiente despliegue):** al declarar una factura o boleta, el cobro de la OT se declara con sus líneas (`ot2_api_documentos_agregar`, también en una OT cerrada vía regularizar), con constancia en la bitácora y en el registro inmutable de correcciones.
+- **Anexo = OT, un solo monto (REGLA #34).** Lo que paga la OT al proveedor y el total de su anexo son el mismo valor, también en las OT cerradas: no se corrigen a mano una por una. Para las que ya difieren habrá una lista de **OT por alinear con su anexo** (en construcción, siguiente despliegue) (solo superadmin) con la reparación por OT y en lote, por los mismos caminos que ya validan y registran (`/costo-desde-anexo` en una OT abierta, `/costo-desde-anexo/corregir` en una cerrada con anexo firmado).
+- **Para KPI y decisiones:** lo que queda sin declarar (documento sin cobro, factura pendiente, anexo distinto) se cuenta y se muestra, nunca se oculta ni se cuenta como $0 (`ot_gerencial.py`, REGLA #48).
+- Pruebas: `tests/test_ot_fin_corregir_desde_documentos.py`.
+
+---
+
 _Última actualización: 2026-10-29_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

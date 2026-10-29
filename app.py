@@ -97081,6 +97081,61 @@ def _ot_fin_rep_de(vid):
         return None
 
 
+def _ot_fin_docs_cobro(vid, cliente_id=None):
+    """Lo que los documentos de cobro YA declarados en la OT permiten cobrar, para «Corregir finanzas».
+
+    Daniel (2026-10-29, OT-2026-00151): la factura FCV 11348 estaba declarada y aportaba servicio + despacho, pero «Cobré» seguía en $0
+    y el modal pedía escribir el cobro a mano («es peligroso»). La cuenta (`_ot_finanzas`) solo lee lo DECLARADO en la OT; esta función
+    calcula lo que los documentos dejan tomar, con el MISMO saldo por línea de siempre (REGLAS #25 y #28: lo que ya usan OTRAS OT no se
+    puede cobrar otra vez), para ofrecerlo con un clic. Solo LEE (Random en solo lectura, REGLA #4.1); no escribe nada.
+
+    Devuelve None si la OT no tiene documentos de cobro; si no, {documentos: [{titulo, leido, otro_cliente, omitido}],
+    servicio/despacho: {hay_lineas, total, usado, saldo}, sku_servicio, incompleto}. `incompleto` = algún documento no se pudo leer (o es
+    de otro RUT): en ese caso NO se ofrece tomar el cobro (jamás se calcula a ciegas)."""
+    docs = _ot_saldo_docs_de_ot(vid)
+    if not docs:
+        return None
+    rut = None
+    if cliente_id:
+        rut = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cliente_id,)) or {}).get("rut")
+    s = _ot_saldo_de_docs(docs, excluir_vid=vid, cliente_rut=rut)
+    docs_out, sku, incompleto = [], None, False
+    for i in s.get("por_doc") or []:
+        leido, otro, omit = bool(i.get("leido", True)), bool(i.get("otro_cliente")), (i.get("omitido") or None)
+        if not leido or otro:
+            incompleto = True
+        docs_out.append({"titulo": i.get("titulo") or "", "leido": leido, "otro_cliente": otro, "omitido": omit})
+        if sku is None and leido and not otro and not omit:
+            lineas = ((i.get("servicio") or {}).get("lineas") or [])
+            if lineas:
+                sku = (str(lineas[0].get("sku") or "").strip().upper() or None)
+    comb = s.get("combinado") or {}
+
+    def _cat(c):
+        x = comb.get(c) or {}
+        return {"hay_lineas": bool(x.get("hay_lineas")), "total": int(x.get("total") or 0),
+                "usado": int(x.get("usado") or 0), "saldo": int(x.get("saldo") or 0)}
+
+    return {"documentos": docs_out, "servicio": _cat("servicio"), "despacho": _cat("despacho"),
+            "sku_servicio": sku, "incompleto": incompleto}
+
+
+def _ot_fin_corr_desde_docs(pide, nuevos, dc):
+    """PURA. ¿El cobro que se corrige es EXACTAMENTE lo que aportan los documentos de la OT? Solo entonces queda rotulado «línea del
+    documento» (valor_origen 'zz', con su línea ZZ); cualquier otro monto es «escrito a mano», como siempre. El servidor lo decide:
+    el navegador solo avisa que lo intentó (`pide`), nunca fija el rótulo. Sin documentos, con alguno sin leer, sin línea de servicio
+    o sin saldo, es False (nunca se calcula a ciegas)."""
+    if not pide or not dc or dc.get("incompleto"):
+        return False
+    s, e = dc.get("servicio") or {}, dc.get("despacho") or {}
+    if not s.get("hay_lineas") or int(s.get("saldo") or 0) <= 0:
+        return False
+    if (nuevos or {}).get("zz_monto") != int(s["saldo"]):
+        return False
+    esperado_e = int(e.get("saldo") or 0) if e.get("hay_lineas") else 0
+    return ((nuevos or {}).get("zz_envio_monto") or 0) == esperado_e
+
+
 @app.route("/ot/api/finanzas/<int:vid>/corregir", methods=["POST"])
 @_mant_required
 @_no_tecnico
@@ -97127,16 +97182,30 @@ def ot2_api_finanzas_corregir(vid):
             cambios[k] = {"antes": (None if av is None else (int(av) if k != "centro_costo" else av)), "despues": nv}
     if not cambios:
         return _ot2_err("No hay nada que cambiar: los valores son iguales a los que ya tiene la OT.", "SIN_CAMBIOS")
+    # 🧾 2026-10-29 (Daniel, OT-2026-00151): «tomar el cobro de los documentos». Si el modal pide el cobro que aportan los documentos ya
+    # declarados, el SERVIDOR lo recalcula (con el saldo por línea) y, solo si el monto coincide exacto, lo rotula «línea del documento».
+    _dc_corr = None
+    if d.get("desde_documentos"):
+        try:
+            _dc_corr = _ot_fin_docs_cobro(vid, v.get("cliente_id"))
+        except Exception as _e_dc:
+            print(f"[ot-fin-corregir] documentos vid={vid}: {type(_e_dc).__name__}", flush=True)
+    _desde_docs = _ot_fin_corr_desde_docs(bool(d.get("desde_documentos")), nuevos, _dc_corr)
     # 💰 2026-10-07 (modelo único) — corregir el cobro del servicio es escribirlo a mano: queda rotulado
     # 'manual' (antes el rótulo viejo, 'zz' o 'estimado', seguía pegado al número nuevo). Y si la línea guardada
     # no es de servicio (ZZRETIRO, el "retiro en bodega" de la OT-201), el monto corregido no contaría nunca
     # como cobro: pasa a la línea de servicio del tipo de OT. Igual con el valorizado: corregido = a mano.
     # Los tres quedan en el registro (antes/después) como cualquier otro cambio.
+    # (2026-10-29: si el monto es EXACTAMENTE lo que aportan los documentos, el rótulo es «línea del documento» y la línea ZZ es la suya.)
     if "zz_monto" in cambios and cambios["zz_monto"]["despues"] is not None:
-        if (v.get("valor_origen") or None) != "manual":
-            cambios["valor_origen"] = {"antes": v.get("valor_origen"), "despues": "manual"}
+        _origen_corr = "zz" if _desde_docs else "manual"
+        if (v.get("valor_origen") or None) != _origen_corr:
+            cambios["valor_origen"] = {"antes": v.get("valor_origen"), "despues": _origen_corr}
         _cod_corr = (v.get("zz_codigo") or "").strip().upper()
-        if _cod_corr in _OT_FIN_ZZ_NO_SERVICIO:
+        if _desde_docs and _dc_corr.get("sku_servicio"):
+            if _cod_corr != _dc_corr["sku_servicio"]:
+                cambios["zz_codigo"] = {"antes": v.get("zz_codigo"), "despues": _dc_corr["sku_servicio"]}
+        elif _cod_corr in _OT_FIN_ZZ_NO_SERVICIO:
             cambios["zz_codigo"] = {"antes": v.get("zz_codigo"),
                                     "despues": _OT2_LINEA_ZZ.get((v.get("tipo") or "").lower())}
     # 🧾 2026-10-08 (revisión): vaciar el cobro del servicio no puede dejar vivo su espejo. `costo` es la copia del
@@ -97255,8 +97324,17 @@ def ot2_api_finanzas_correcciones(vid):
     # los datos guardados (base), los repuestos instalados (rep) y la línea de servicio del tipo de OT.
     _rep_corr = _ot_fin_rep_de(vid)
     fin = _ot_finanzas(v, _rep_corr)
+    # 🧾 2026-10-29: lo que los documentos ya declarados dejan tomar como cobro (con su saldo). Si Random no responde, el modal sigue
+    # funcionando como siempre y avisa que no pudo leerlos (`docs_error`): nunca se inventa un monto.
+    _docs_cobro, _docs_error = None, False
+    try:
+        _docs_cobro = _ot_fin_docs_cobro(vid, v.get("cliente_id"))
+    except Exception as _e_dcg:
+        _docs_error = True
+        print(f"[ot-fin-correcciones] documentos vid={vid}: {type(_e_dcg).__name__}", flush=True)
     return jsonify({
         "ok": True, "historial": out,
+        "docs": _docs_cobro, "docs_error": _docs_error,
         "actual": {k: v.get(k) for k in (*_OT_FIN_CORR_CAMPOS, "centro_costo")},
         "ganancia": fin["queda"]["total"],
         # Misma regla de cobertura que todo el sistema (_ot_cobertura): antes había tres criterios distintos.
