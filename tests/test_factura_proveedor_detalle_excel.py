@@ -574,7 +574,9 @@ class TestExcel(unittest.TestCase):
         self.assertEqual(ws.cell(row=f162, column=5).value, "Brave Spa")
         self.assertEqual(ws.cell(row=f162, column=13).value, 250000)
         self.assertEqual(ws.cell(row=f162, column=20).value, "daniel")
-        self.assertEqual(ws.cell(row=f162, column=21).value, "08/10/2026 21:24")
+        # 📅 2026-10-29: «Asignada el» es una fecha y hora REAL de Excel (antes texto «08/10/2026 21:24»), formato español.
+        self.assertEqual(ws.cell(row=f162, column=21).value, datetime.datetime(2026, 10, 8, 21, 24))
+        self.assertEqual(ws.cell(row=f162, column=21).number_format, "dd/mm/yyyy hh:mm")
         # la garantía se paga y no se cobra; la no cerrada se dice en el estado
         self.assertEqual(ws.cell(row=filas["OT-2026-00154"], column=16).value, 0)
         self.assertEqual(ws.cell(row=filas["OT-2026-00154"], column=13).value, 1000000)
@@ -582,7 +584,8 @@ class TestExcel(unittest.TestCase):
         self.assertIn("no cerrada", ws.cell(row=filas["OT-2026-00159"], column=8).value)
         # formato de la hoja: Arial, encabezado fijo, autofiltro, pesos
         self.assertEqual(ws.freeze_panes, "A2")
-        self.assertEqual(ws.auto_filter.ref, "A1:W12")
+        # 📅 2026-10-29: el filtro cubre también las 6 columnas de apoyo (Año · Mes · N° mes · Semana · Día · Año-Mes: X–AC)
+        self.assertEqual(ws.auto_filter.ref, "A1:AC12")
         self.assertEqual(ws["A1"].font.name, "Arial")
         self.assertEqual(ws["M2"].font.name, "Arial")
         self.assertEqual(ws["M2"].number_format, '"$"#,##0;[Red]-"$"#,##0')
@@ -594,9 +597,11 @@ class TestExcel(unittest.TestCase):
         self.assertEqual([c.value for c in ws[1]], ["Fecha y hora (Chile)", "Usuario", "Acción", "Detalle"])
         filas = [[c.value for c in row] for row in ws.iter_rows(min_row=2)]
         self.assertEqual(len(filas), 2)
-        self.assertEqual(filas[0][0], "08/10/2026 20:43")  # cronológico: lo primero es la creación
+        # 📅 2026-10-29: la fecha y hora es REAL de Excel (antes texto «08/10/2026 20:43»), formato español.
+        self.assertEqual(filas[0][0], datetime.datetime(2026, 10, 8, 20, 43))  # cronológico: lo primero es la creación
+        self.assertEqual(ws["A2"].number_format, "dd/mm/yyyy hh:mm")
         self.assertEqual(filas[0][2], "Solicitud de OC creada")
-        self.assertEqual(filas[1][0], "08/10/2026 21:24")
+        self.assertEqual(filas[1][0], datetime.datetime(2026, 10, 8, 21, 24))
         self.assertEqual(filas[1][1], "daniel")
         self.assertEqual(filas[1][2], "OT asignada")
         self.assertIn("OT-2026-00162", filas[1][3])
