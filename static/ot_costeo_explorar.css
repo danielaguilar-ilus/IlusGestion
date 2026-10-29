@@ -1,0 +1,261 @@
+/* 🔎 Costeo de OT · Explorar (Daniel 2026-10-29, FASE 1). Lenguaje Retiros (REGLA #15): tarjetas con semáforo, nombres
+   completos sin cortar. Celular primero (REGLA #3): cifras de a 2, gráficos en una columna, botones de 44 px, inputs de
+   16 px, sin scroll horizontal de la página (la matriz y la serie larga se desplazan DENTRO de su tarjeta).
+   Paleta ILUS (REGLA #2): rojo #dc2626, negro #0a0a0a, blanco; verde #16a34a, ámbar #f59e0b. Política de margen (REGLA #57):
+   objetivo verde, tolerancia verde claro, bajo ámbar, pérdida rojo. Lo elegido se marca en NEGRO (el rojo queda solo para
+   una pérdida real). */
+.cx-pestanas{display:flex;gap:8px;margin:0 0 14px;flex-wrap:wrap}
+.cx-pest{min-height:44px;display:inline-flex;align-items:center;gap:8px;padding:0 18px;border-radius:12px;border:2px solid #e5e7eb;background:#fff;
+  color:#111827;font-weight:800;font-size:.95rem;cursor:pointer}
+.cx-pest:hover{border-color:#111827}
+.cx-pest.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.cx-pest:focus-visible{outline:3px solid #dc2626;outline-offset:2px}
+
+.cx{--rojo:#dc2626;--rojo-f:#fee2e2;--negro:#0a0a0a;--tinta:#111827;--gris:#6b7280;--gris-f:#f3f4f6;--borde:#e5e7eb;
+  --verde:#16a34a;--verde-o:#15803d;--verde-f:#dcfce7;--verde-c:#ecfdf5;--verde-cb:#86efac;--ambar:#f59e0b;--ambar-o:#92400e;--ambar-f:#fff8e1;
+  --ambar-b:#fde68a;--azul:#3b82f6;--azul-f:#dbeafe;
+  display:flex;flex-direction:column;gap:16px;min-width:0;color:var(--tinta);position:relative}
+.cx[hidden]{display:none!important}
+.cx *{box-sizing:border-box}
+.cx h2,.cx h3{margin:0}
+.cx a{color:inherit}
+.cx button{font:inherit}
+.cx :focus-visible{outline:3px solid var(--rojo);outline-offset:2px}
+.cx-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.cx-clasif{display:inline-flex;align-items:center;gap:6px;background:var(--negro);color:#fff;border-radius:999px;padding:4px 12px;font-size:.7rem;
+  font-weight:800;letter-spacing:.04em;text-transform:uppercase;vertical-align:middle}
+.cx-clasif i{color:#fca5a5}
+
+/* ── Cabecera, rango y acciones ──────────────────────────────────────────────────────────────────────────────── */
+.cx-cab{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-start;justify-content:space-between}
+.cx-cab h2{font-size:1.25rem;font-weight:900}
+.cx-cab p{margin:4px 0 0;color:#4b5563;font-size:.88rem;max-width:70ch}
+.cx-rango{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:end;background:#fff;border:1px solid var(--borde);
+  border-radius:16px;padding:12px 14px}
+.cx-rango label{display:flex;flex-direction:column;gap:4px;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--gris);min-width:0}
+.cx input[type=date],.cx select{font-size:16px;min-height:44px;border:2px solid var(--borde);border-radius:12px;padding:0 10px;color:var(--tinta);
+  font-weight:700;background:#fff;width:100%;min-width:0}
+.cx-rango .cx-check{flex-direction:row;align-items:center;gap:10px;min-height:44px;text-transform:none;letter-spacing:0;font-size:.9rem;color:var(--tinta);cursor:pointer}
+.cx-check input{width:22px;height:22px;accent-color:var(--negro)}
+.cx-rango>.cx-btn{grid-column:1/-1}
+.cx-btn{min-height:44px;border:0;border-radius:12px;background:var(--rojo);color:#fff;font-weight:900;padding:0 16px;display:inline-flex;
+  align-items:center;justify-content:center;gap:8px;cursor:pointer;text-decoration:none}
+.cx-btn:hover{background:#b91c1c}
+.cx-btn-sec{background:#fff;color:var(--tinta);border:2px solid var(--borde)}
+.cx-btn-sec:hover{background:var(--gris-f);border-color:var(--tinta)}
+.cx-btn-link{min-height:44px;background:none;border:0;color:var(--tinta);font-weight:800;text-decoration:underline;cursor:pointer;padding:0 6px}
+.cx-atajos{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.cx-chip-t{min-height:44px;border-radius:999px;border:2px solid var(--borde);background:#fff;padding:0 14px;font-weight:800;font-size:.85rem;cursor:pointer;color:var(--tinta)}
+.cx-chip-t:hover{border-color:var(--tinta)}
+.cx-esp{flex:1 1 0}
+
+/* ── Filtros activos ─────────────────────────────────────────────────────────────────────────────────────────── */
+.cx-chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--gris-f);border-radius:14px;padding:10px 12px}
+.cx-rango-txt{font-weight:800;font-size:.85rem;width:100%}
+.cx-chips-vacio{color:var(--gris);font-size:.85rem}
+.cx-chip{min-height:44px;display:inline-flex;align-items:center;gap:8px;border-radius:999px;border:2px solid var(--negro);background:#fff;
+  padding:4px 14px;font-size:.85rem;cursor:pointer;color:var(--tinta);text-align:left;max-width:100%}
+.cx-chip span{overflow-wrap:anywhere}
+.cx-chip:hover{background:var(--negro);color:#fff}
+.cx-chip-limpiar{border-color:var(--borde);font-weight:800}
+
+/* ── Avisos y estados ────────────────────────────────────────────────────────────────────────────────────────── */
+.cx-aviso{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--ambar-f);border:1px solid var(--ambar-b);color:#78350f;
+  border-radius:14px;padding:10px 14px;font-size:.88rem}
+.cx-vacio{display:flex;gap:10px;align-items:center;justify-content:center;text-align:center;color:var(--gris);padding:20px 12px;
+  border:2px dashed var(--borde);border-radius:14px;font-size:.9rem}
+.cx-cargando{display:flex;gap:10px;align-items:center;justify-content:center;padding:40px 12px;color:var(--gris);font-weight:700}
+.cx-ocupado{opacity:.55;pointer-events:none}
+.cx-nota{color:var(--gris);font-size:.8rem}
+
+/* ── Cifras ──────────────────────────────────────────────────────────────────────────────────────────────────── */
+.cx-kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.cx-kpis>.cx-kpi:last-child{grid-column:1/-1}   /* 7 cifras: en el celular la última va a lo ancho, sin hueco */
+/* El semáforo de una cifra se dice con un fondo teñido suave + el chip de su banda (sin borde grueso de acento). */
+.cx-kpi{background:#fff;border:1px solid var(--borde);border-radius:16px;padding:12px 14px;display:flex;
+  flex-direction:column;gap:6px;min-width:0}
+.cx-kpi>header{display:flex;align-items:center;gap:6px;font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:var(--gris)}
+.cx-cifra{font-size:clamp(1.15rem,5.4vw,1.45rem);font-weight:900;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1;overflow-wrap:anywhere}
+.cx-det{margin:0;font-size:.78rem;color:#4b5563}
+.cx-banda-txt{margin:0;font-size:.78rem;font-weight:800;display:inline-flex;align-items:center;gap:6px;width:fit-content;max-width:100%;
+  border-radius:999px;padding:3px 10px;background:var(--gris-f);color:#4b5563}
+.cx-banda-txt::before{content:"";flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:currentColor}
+.cx-cmp{margin:0;display:inline-flex;align-items:flex-start;gap:6px;font-size:.75rem;font-weight:700;border-radius:10px;padding:4px 8px;
+  background:var(--gris-f);color:#4b5563;width:fit-content;max-width:100%}
+.cx-cmp.bueno{background:var(--verde-f);color:#14532d}
+.cx-cmp.malo{background:var(--ambar-f);color:var(--ambar-o);border:1px solid var(--ambar-b)}
+.cx-cmp-base{margin:-6px 0 0;color:var(--gris);font-size:.78rem}
+.cx-kpi.k-rojo{background:#fef2f2;border-color:#fecaca}
+.cx-kpi.k-rojo .cx-cifra{color:var(--rojo)}
+.cx-kpi.k-ambar{background:var(--ambar-f);border-color:var(--ambar-b)}
+.cx-kpi.k-banda.b-objetivo{background:#f0fdf4;border-color:#bbf7d0}
+.cx-kpi.k-banda.b-objetivo .cx-cifra{color:var(--verde-o)}
+.cx-kpi.k-banda.b-objetivo .cx-banda-txt{background:var(--verde-f);color:var(--verde-o)}
+.cx-kpi.k-banda.b-tolerancia{background:var(--verde-c);border-color:var(--verde-cb)}
+.cx-kpi.k-banda.b-tolerancia .cx-cifra{color:#166534}
+.cx-kpi.k-banda.b-tolerancia .cx-banda-txt{background:#fff;color:#166534;border:1px solid var(--verde-cb)}
+.cx-kpi.k-banda.b-amarillo{background:var(--ambar-f);border-color:var(--ambar-b)}
+.cx-kpi.k-banda.b-amarillo .cx-cifra{color:var(--ambar-o)}
+.cx-kpi.k-banda.b-amarillo .cx-banda-txt{background:#fff;color:var(--ambar-o);border:1px solid var(--ambar-b)}
+.cx-kpi.k-banda.b-rojo{background:#fef2f2;border-color:#fecaca}
+.cx-kpi.k-banda.b-rojo .cx-cifra{color:var(--rojo)}
+.cx-kpi.k-banda.b-rojo .cx-banda-txt{background:var(--rojo-f);color:var(--rojo)}
+.cx-ayuda{font-size:.8rem;color:#4b5563}
+.cx-ayuda summary{cursor:pointer;font-weight:800;min-height:32px;display:flex;align-items:center;gap:6px;color:var(--tinta)}
+.cx-ayuda p{margin:6px 0 0}
+
+/* Colores de la política (etiquetas, barras, cifras chicas) */
+.b-objetivo{color:var(--verde-o)}
+.b-tolerancia{color:#166534}
+.b-amarillo{color:var(--ambar-o)}
+.b-rojo{color:var(--rojo)}
+.b-gris,.b-sin_medir,.b-no_cobra{color:var(--gris)}
+em.b-objetivo,em.b-tolerancia,em.b-amarillo,em.b-rojo,em.b-gris{font-style:normal;font-weight:800}
+.cx-tag{display:inline-block;border-radius:999px;padding:2px 10px;font-weight:800;font-size:.8rem;white-space:normal}
+.cx-tag.b-objetivo{background:var(--verde-f)}
+.cx-tag.b-tolerancia{background:var(--verde-c);border:1px solid var(--verde-cb)}
+.cx-tag.b-amarillo{background:var(--ambar-f);border:1px solid var(--ambar-b)}
+.cx-tag.b-rojo{background:var(--rojo-f)}
+.cx-tag.b-gris{background:var(--gris-f)}
+
+/* ── Tarjetas de gráficos ────────────────────────────────────────────────────────────────────────────────────── */
+.cx-medida{display:flex;justify-content:flex-end}
+.cx-medida label,.cx-sel label{display:flex;flex-direction:column;gap:4px;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--gris);min-width:0}
+.cx-medida label{width:100%;max-width:360px}
+.cx-card{background:#fff;border:1px solid var(--borde);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.cx-card-h{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;justify-content:space-between}
+.cx-card-h h3{font-size:1rem;font-weight:900}
+.cx-card-h small{color:var(--gris);font-size:.75rem;font-weight:700}
+.cx-card-pie{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center}
+.cx-sel{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.cx-dos{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.cx-mosaico{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+
+/* Serie en el tiempo */
+.cx-seg{display:flex;flex-wrap:wrap;gap:6px}
+.cx-seg-b{min-height:44px;padding:0 12px;border-radius:12px;border:2px solid var(--borde);background:#fff;font-weight:800;font-size:.85rem;cursor:pointer;color:var(--tinta)}
+.cx-seg-b.on{background:var(--negro);border-color:var(--negro);color:#fff}
+.cx-serie-scroll{overflow-x:auto;overscroll-behavior-x:contain;padding-bottom:4px}
+.cx-serie-barras{display:flex;gap:4px;align-items:stretch;min-height:220px;min-width:min-content}
+.cx-col{flex:1 0 44px;min-width:44px;display:flex;flex-direction:column;align-items:center;gap:4px;border:2px solid transparent;border-radius:10px;
+  background:none;padding:4px 2px;cursor:pointer;color:var(--tinta)}
+.cx-col:hover{background:var(--gris-f)}
+.cx-col.on{border-color:var(--negro);background:var(--gris-f)}
+.cx-col.apagado{opacity:.4}
+.cx-col-pct{font-size:.68rem;font-weight:900;white-space:nowrap}
+.cx-col-barras{flex:1;display:flex;align-items:flex-end;gap:2px;width:100%;justify-content:center;min-height:150px}
+.cx-col-barras i{display:block;width:40%;max-width:18px;border-radius:4px 4px 0 0;min-height:1px}
+.c-cobre{background:var(--negro)}
+.c-me{background:#9ca3af}
+.cx-col-v{font-size:.68rem;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums}
+.cx-col-et{font-size:.68rem;color:#4b5563;white-space:nowrap}
+.cx-leyenda{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.78rem;color:#4b5563}
+.cx-leyenda i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+
+/* Listas de barras (una por dimensión) */
+.cx-lista ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.cx-item{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:start;text-align:left;border:2px solid transparent;
+  border-radius:12px;background:none;padding:8px 10px;cursor:pointer;color:var(--tinta);min-height:44px}
+.cx-item:hover{background:var(--gris-f)}
+.cx-item.on{border-color:var(--negro);background:var(--gris-f)}
+.cx-item.apagado{opacity:.45}
+.cx-item.apagado:hover{opacity:.8}
+.cx-item-t{min-width:0}
+.cx-item-t b{display:block;font-size:.9rem;overflow-wrap:anywhere}
+.cx-item-t small{display:block;color:var(--gris);font-size:.75rem;overflow-wrap:anywhere}
+.cx-item-v{font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cx-item-v.neg{color:var(--rojo)}
+.cx-pista{grid-column:1/-1;height:8px;background:var(--gris-f);border-radius:999px;overflow:hidden}
+.cx-pista i{display:block;height:100%;background:var(--negro);border-radius:999px}
+.cx-pista i.neg{background:var(--rojo)}
+.cx-pista i.b-objetivo{background:var(--verde)}
+.cx-pista i.b-tolerancia{background:var(--verde-cb)}
+.cx-pista i.b-amarillo{background:var(--ambar)}
+.cx-pista i.b-rojo{background:var(--rojo)}
+.cx-pista i.b-sin_medir,.cx-pista i.b-no_cobra{background:#d1d5db}
+.cx-item-d{grid-column:1/-1;font-size:.75rem;color:#4b5563;overflow-wrap:anywhere}
+.cx-nos{font-weight:800;color:var(--tinta)}
+.cx-otros{cursor:default}
+.cx-otros:hover{background:none}
+
+/* Matriz técnico × centro de costo */
+.cx-matriz-scroll{overflow-x:auto;overscroll-behavior-x:contain}
+.cx-m{border-collapse:separate;border-spacing:3px;min-width:100%;font-size:.82rem}
+.cx-m th,.cx-m td{padding:0;text-align:center;vertical-align:middle}
+.cx-m thead th{font-weight:800;color:var(--gris);font-size:.75rem}
+.cx-m-esq{text-align:left!important;min-width:140px}
+.cx-m tbody th,.cx-m tfoot th{text-align:left;position:sticky;left:0;background:#fff;z-index:1;min-width:140px;max-width:220px}
+.cx-m-cab,.cx-m-fila{min-height:44px;width:100%;border:2px solid transparent;border-radius:10px;background:none;padding:4px 8px;font-weight:800;
+  cursor:pointer;color:var(--tinta);text-align:inherit;overflow-wrap:anywhere}
+.cx-m-cab.on,.cx-m-fila.on{border-color:var(--negro)}
+.cx-m-cab.apagado,.cx-m-fila.apagado{opacity:.45}
+.cx-m td{background:rgba(10,10,10,calc(var(--a,0) * .85));border-radius:8px}
+.cx-m-celda{min-height:44px;min-width:92px;width:100%;border:2px solid transparent;border-radius:8px;background:none;cursor:pointer;
+  font-weight:800;font-variant-numeric:tabular-nums;color:var(--tinta);padding:4px 8px;white-space:nowrap}
+.cx-m-celda.osc{color:#fff}
+.cx-m-celda i{color:var(--ambar);margin-right:4px;font-size:.75rem}
+.cx-m-max .cx-m-celda{border-color:var(--ambar)}
+.cx-m-sel .cx-m-celda{outline:3px solid var(--negro);outline-offset:1px}
+.cx-m-vacia{color:#d1d5db;background:none!important}
+.cx-m-tot{background:var(--gris-f)!important;font-weight:900;padding:4px 8px!important;white-space:nowrap}
+
+/* Tabla de OT (en celular, tarjetas) */
+.cx-tabla-wrap{min-width:0}
+.cx-tabla{width:100%;border-collapse:collapse;font-size:.85rem}
+.cx-tabla thead{display:none}
+.cx-tabla tr{display:block;border:1px solid var(--borde);border-radius:14px;padding:8px 12px;margin-bottom:8px}
+.cx-tabla tr.sel{border-color:var(--negro);background:var(--gris-f)}
+.cx-tabla td{display:flex;justify-content:space-between;gap:12px;padding:4px 0;text-align:right;min-width:0}
+.cx-tabla td::before{content:attr(data-et);font-weight:800;color:var(--gris);font-size:.75rem;text-align:left;flex:0 0 auto}
+.cx-tabla td a{text-decoration:none}
+.cx-tabla td small{display:block;color:var(--gris);overflow-wrap:anywhere}
+.cx-td{min-width:0;overflow-wrap:anywhere}
+.cx-tabla td a b{white-space:nowrap}   /* el N° de OT no se parte */
+.cx-chk{width:24px;height:24px;accent-color:var(--negro)}
+.cx-pag{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;font-size:.85rem}
+.cx-pag label{display:flex;align-items:center;gap:8px}
+.cx-pag select{width:auto}
+.cx-pag-btns{display:flex;align-items:center;gap:8px}
+.cx-pag-btns button{min-height:44px;border-radius:12px;border:2px solid var(--borde);background:#fff;font-weight:800;padding:0 14px;cursor:pointer;color:var(--tinta)}
+.cx-pag-btns button:disabled{opacity:.45;cursor:not-allowed}
+.cx-mini{width:100%;border-collapse:collapse;font-size:.8rem;margin-top:6px}
+.cx-mini th,.cx-mini td{padding:6px 8px;border-bottom:1px solid var(--borde);text-align:right}
+.cx-mini th:first-child,.cx-mini td:first-child{text-align:left}
+.cx-pie{font-size:.8rem;color:#4b5563;border-top:1px solid var(--borde);padding-top:10px}
+.cx-pie p{margin:0 0 6px}
+
+/* ── Escritorio ──────────────────────────────────────────────────────────────────────────────────────────────── */
+@media (min-width:768px){
+  .cx-rango{grid-template-columns:repeat(3,minmax(0,1fr)) auto auto}
+  .cx-rango>.cx-btn{grid-column:auto}
+  /* Las 4 cifras de plata arriba (más grandes) y las 3 de contexto debajo, sin huecos (REGLA #16). */
+  .cx-kpis{grid-template-columns:repeat(12,minmax(0,1fr))}
+  .cx-kpis>.cx-kpi:nth-child(-n+4){grid-column:span 3}
+  .cx-kpis>.cx-kpi:nth-child(n+5){grid-column:span 4}
+  .cx-cifra{font-size:1.55rem}
+  .cx-kpis>.cx-kpi:nth-child(-n+4) .cx-cifra{font-size:1.85rem}
+  .cx-mosaico{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cx-tabla thead{display:table-header-group}
+  .cx-tabla tr{display:table-row;border:0;border-bottom:1px solid var(--borde);border-radius:0;padding:0;margin:0}
+  .cx-tabla td,.cx-tabla th{display:table-cell;padding:8px 6px;text-align:left;vertical-align:top}
+  .cx-tabla th{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color:var(--gris);border-bottom:2px solid var(--tinta)}
+  .cx-tabla td::before{content:none}
+  .cx-tabla .num{text-align:right;white-space:nowrap}
+  .cx-tabla .num .cx-tag{white-space:nowrap}
+}
+@media (min-width:1200px){
+  .cx-dos{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cx-mosaico{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+
+/* ── Modo presentación (pantalla completa, cifras grandes) ──────────────────────────────────────────────────── */
+.cx.cx-pres{background:#fff;padding:20px;overflow-y:auto}
+.cx:fullscreen{background:#fff;padding:24px;overflow-y:auto}
+.cx-pres .cx-rango,.cx-pres .cx-atajos .cx-chip-t,.cx-pres .cx-tabla-card,.cx-pres .cx-ayuda,.cx-pres .cx-pie{display:none}
+.cx-pres .cx-cifra{font-size:2.3rem}
+.cx-pres .cx-kpi>header{font-size:.85rem}
+.cx-pres .cx-item-t b{font-size:1rem}
+
+@media (prefers-reduced-motion:reduce){
+  .cx *{transition:none!important;animation:none!important}
+}

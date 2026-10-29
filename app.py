@@ -67955,6 +67955,198 @@ def clientes_hub_tipo_relacion(cid):
 
 
 # ════════════════════════════════════════════════════════════════════
+#  🔎 COSTEO DE OT · EXPLORAR — el tablero para disertar ante la gerencia  (FASE 1, Daniel 2026-10-29)
+#  «En el mes tuvimos 10 millones de pesos: lo pueda desglosar en centro de costo, técnico, rango de tiempo, si es trabajo
+#  interno, si es trabajo externo, quiénes son los proveedores… multifiltro, estilo Power BI: presionas un objeto y se filtra
+#  todo». Pestaña «Explorar» de /ot/gerencial: el servidor entrega UNA fila por OT con la cuenta ya hecha (_ot_finanzas, la
+#  misma de su ficha) y el navegador cruza los filtros (static/ot_costeo_explorar.js). El Excel de lo filtrado reaplica los
+#  mismos filtros aquí con el espejo de ot_costeo.filtrar (probado contra el JS).
+#
+#  SOLO LECTURA y SOLO SUPERADMIN (REGLAS #19 y #26). Ningún DDL (REGLA #18), ni Random ni Check (REGLAS #4.1 y #4.4), ni
+#  una consulta por OT: todo por lotes (_ot_fin_lote, _ot_fin_clasif_lote, autorizaciones y documentos de a 800). La lógica
+#  vive en ot_costeo.py (puro, con pruebas) y la política de margen en ot_margen_politica.py (REGLA #57: solo pinta, no toca
+#  _ot_finanzas ni ningún candado). Va ANTES del bloque del costeo gerencial y fuera de él: ese bloque tiene sus propias
+#  pruebas (tamaño, dos rutas); las funciones _ger_* que se reutilizan se resuelven al llamar.
+# ════════════════════════════════════════════════════════════════════
+import ot_costeo as _costeo   # 2026-10-29: costeo de OT · Explorar (módulo puro con pruebas)
+
+_COSTEO_CACHE = {}            # (desde, hasta, fecha, alcance) -> (momento, datos). Solo superadmin: no mezcla personas.
+_COSTEO_CACHE_SEG = 90
+
+
+def _costeo_solo_superadmin(view):
+    """La misma puerta de superadmin del costeo (_ot_solo_superadmin: página → aviso, API → JSON 403), resuelta al llamar:
+    ese decorador vive más abajo en el archivo y todavía no existe cuando Python lee esta línea."""
+    @wraps(view)
+    def wrapped(*a, **kw):
+        return _ot_solo_superadmin(view)(*a, **kw)
+    return wrapped
+
+
+def _costeo_select():
+    """SELECT de las OT con lo que necesita _ot_finanzas, el técnico y su empresa, las cuatro fechas, la región del cliente,
+    el documento principal (para «documento hoy») y la intención (si su columna existe). Nombres fijos de código."""
+    ci = _ger_columna_intencion()
+    ext = (f"v.{ci} AS intencion, " if ci else "NULL AS intencion, ")
+    return ("SELECT v.id, v.numero_ot, v.titulo, v.estado, v.centro_costo, v.cerrada_at, v.created_at, v.fecha_programada, "
+            "       v.fecha_realizada, v.tecnico_user_id, v.proveedor_nombre, v.factura_tido, v.factura_nudo, "
+            "       v.factura_asociada_por, v.factura_rut_ok, " + ext + _ot_fin_cols_sql("v") + ", "
+            "       c.razon_social AS cliente, c.region AS cliente_region, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
+            "       au.role AS tecnico_role, te.id AS te_id, te.razon_social AS te_empresa "
+            "  FROM mant_visitas v "
+            "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+            "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+            "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id ")
+
+
+def _costeo_where(p):
+    """(WHERE, parámetros, columna de la fecha) para el rango + el período anterior. Las fechas viajan como parámetros;
+    cerrada_at/created_at se comparan en UTC (inicio del día en hora Chile), las fechas DATE tal cual."""
+    col = _costeo.FECHA_COLUMNA[p["fecha"]]
+    estado = "v.estado = 'cerrada'" if p["alcance"] == "cerradas" else "v.estado NOT IN ('cancelada','anulada')"
+    if _costeo.FECHA_ES_INSTANTE[p["fecha"]]:
+        return (estado + f" AND v.{col} >= %s AND v.{col} < %s",
+                (_ger.inicio_dia_utc(p["carga_desde"]), _ger.inicio_dia_utc(p["hasta"] + timedelta(days=1))), col)
+    return estado + f" AND v.{col} >= %s AND v.{col} <= %s", (p["carga_desde"], p["hasta"]), col
+
+
+def _costeo_docs_lote(ids, fallos):
+    """{vid: [{origen, tido, nudo, es_cobro}]}: los documentos de cada OT (tabla puente, sin el espejo de la madre), de a
+    800 OT por consulta. Si la columna del espejo aún no existe se repite sin ese filtro."""
+    out = {}
+    for lote in _ger_chunks(ids):
+        ph = ",".join(["%s"] * len(lote))
+        filas = None
+        for extra in (" AND heredado_de_visita_id IS NULL", ""):
+            try:
+                filas = mysql_fetchall("SELECT visita_id, origen, erp_tido, erp_nudo, es_cobro FROM mant_visita_documentos "
+                                       f" WHERE visita_id IN ({ph})" + extra, tuple(lote)) or []
+                break
+            except Exception as e:
+                print(f"[ot-costeo] documentos: {type(e).__name__}", flush=True)
+        if filas is None:
+            fallos.append("documentos")
+            break
+        for r in filas:
+            out.setdefault(int(r["visita_id"]), []).append({
+                "origen": r.get("origen") or "erp", "tido": (r.get("erp_tido") or "").strip().upper(),
+                "nudo": (r.get("erp_nudo") or "").strip(), "es_cobro": bool(r.get("es_cobro", 1))})
+    return out
+
+
+def _costeo_clasif(ids, fallos):
+    """Cómo nació cada OT (_ot_fin_clasif_lote, la guardada al crear o la calculada), de a 800 OT."""
+    out = {}
+    for lote in _ger_chunks(ids):
+        try:
+            out.update(_ot_fin_clasif_lote(lote) or {})
+        except Exception as e:
+            print(f"[ot-costeo] clasificación: {type(e).__name__}", flush=True)
+            fallos.append("clasificación")
+            break
+    return out
+
+
+def _costeo_cargar(p):
+    """Lee el rango + el período anterior (solo SELECT), arma cada OT con la cuenta única y devuelve {filas, payload}."""
+    fallos = []
+    where, params, col = _costeo_where(p)
+    rows = _ger_leer(_costeo_select(), where, params, _costeo.LIMITE_FILAS, f" ORDER BY v.{col} DESC, v.id DESC",
+                     fallos, "OT")
+    truncado = len(rows) >= _costeo.LIMITE_FILAS
+    vistos, filas_sql = set(), []
+    for r in rows:
+        if r["id"] in vistos:
+            continue
+        vistos.add(r["id"])
+        filas_sql.append(r)
+    fins = _ot_fin_lote(filas_sql) if filas_sql else {}
+    ids = [int(r["id"]) for r in filas_sql]
+    clasif = _costeo_clasif(ids, fallos) if ids else {}
+    auts = _ger_autorizaciones(ids, fallos) if ids else {}
+    docs = _costeo_docs_lote(ids, fallos) if ids else {}
+    centros = dict(_OT2_CENTROS_COSTO)
+    try:
+        cat_int = _ot_intenciones_catalogo()        # REGLA #47: la intención se muestra con su NOMBRE
+    except Exception as e:
+        print(f"[ot-costeo] catálogo de intenciones: {type(e).__name__}", flush=True)
+        cat_int = []
+    filas = []
+    for r in filas_sql:
+        vid = int(r["id"])
+        fin = fins.get(vid) or _ot_finanzas(r)
+        info_int = _ot_intencion_info(r.get("intencion"), r.get("centro_costo"), cat_int) if r.get("intencion") else None
+        ctx = {"tipo_txt": _TIPO_OT_LABEL.get((r.get("tipo") or "").lower()) or (r.get("tipo") or "").replace("_", " ").capitalize(),
+               "centro_txt": centros.get((r.get("centro_costo") or "").lower()) or (r.get("centro_costo") or "Sin centro de costo"),
+               "intencion": (info_int["nombre"] if info_int else r.get("intencion")),
+               "clasif": clasif.get(vid), "autorizaciones": auts.get(vid, [])}
+        f = _ger.armar_fila(r, fin, ctx)
+        filas.append(_costeo.fila(r, f, docs.get(vid, []), auts.get(vid, []), p))
+    meta = {"truncado": truncado, "limite": _costeo.LIMITE_FILAS, "fallos": sorted(set(fallos)), "n_leidas": len(filas_sql),
+            "generado": _now_chile().strftime("%d/%m/%Y %H:%M"), "col_intencion": _ger_columna_intencion()}
+    return {"filas": filas, "payload": _costeo.armar_dataset(filas, p, meta)}
+
+
+def _costeo_datos(p, forzar=False):
+    """El dataset del rango `p` (ot_costeo.leer_parametros) con caché de 90 s: cambiar un filtro no relee nada (eso pasa en
+    el navegador) y el Excel de lo filtrado sale de la misma lectura. `forzar` salta la caché («Actualizar»)."""
+    clave = (p["desde"], p["hasta"], p["fecha"], p["alcance"])
+    ahora = time.time()
+    c = _COSTEO_CACHE.get(clave)
+    if c and not forzar and ahora - c[0] < _COSTEO_CACHE_SEG:
+        return c[1]
+    datos = _costeo_cargar(p)
+    if len(_COSTEO_CACHE) > 8:
+        _COSTEO_CACHE.clear()
+    _COSTEO_CACHE[clave] = (ahora, datos)
+    return datos
+
+
+@app.route("/ot/api/costeo/costos-dataset", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_costeo_solo_superadmin
+def ot_costeo_costos_dataset():
+    """El dataset de «Explorar»: ?desde=AAAA-MM-DD &hasta= &fecha=cierre|ejecucion|creacion|programada
+    &alcance=cerradas|todas &actualizar=1. Solo el superadministrador (los técnicos nunca ven plata: REGLAS #19 y #26)."""
+    p = _costeo.leer_parametros(request.args, _now_chile().date())
+    try:
+        d = _costeo_datos(p, forzar=request.args.get("actualizar") == "1")
+    except Exception as e:
+        print(f"[ot-costeo] {type(e).__name__}: {str(e)[:200]}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos armar el costeo. Vuelve a intentarlo en un momento."}), 500
+    resp = jsonify(dict(d["payload"], ok=True))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/ot/api/costeo/costos-excel", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_costeo_solo_superadmin
+def ot_costeo_costos_excel():
+    """El Excel de lo filtrado: el mismo rango + ?f={dimensión: [valores]} (los filtros de la pantalla) y, si se marcó
+    alguna, ?ids=1,2,3 (solo esas). El servidor reaplica los filtros con ot_costeo.filtrar. Solo el superadministrador."""
+    p = _costeo.leer_parametros(request.args, _now_chile().date())
+    filtros = _costeo.validar_filtros(request.args.get("f"))
+    ids = _costeo.leer_ids(request.args.get("ids"))
+    try:
+        d = _costeo_datos(p)
+        filas = _costeo.filtrar(_costeo.actuales(d["filas"]), filtros)
+        if ids:
+            filas = [r for r in filas if r["id"] in ids]
+        meta = d["payload"]["meta"]
+        contenido = _costeo.excel_bytes(filas, p, filtros, d["payload"]["dims"], generado=meta.get("generado") or "",
+                                        truncado=bool(meta.get("truncado")), seleccion=len(filas) if ids else 0)
+    except Exception as e:
+        print(f"[ot-costeo] excel {type(e).__name__}: {str(e)[:200]}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos generar el Excel. Vuelve a intentarlo."}), 500
+    nombre = ("Costeo_OT_Explorar_" + p["desde"].strftime("%d-%m-%Y") + "_al_" + p["hasta"].strftime("%d-%m-%Y") + ".xlsx")
+    return send_file(io.BytesIO(contenido), as_attachment=True, download_name=nombre,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# ════════════════════════════════════════════════════════════════════
 #  📊 COSTEO DE ÓRDENES DE TRABAJO — el tablero gerencial de Servicio Técnico  (Daniel, 2026-10-25)
 #  «cómo vamos semanalmente, cuánto ganamos, cuánto perdimos, cuánto estamos generando de garantías… a nombre de quién la
 #  estamos haciendo, cuánto nos cobran nuestros técnicos, los externos están siendo reincidentes… es rentable el

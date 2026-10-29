@@ -35,6 +35,7 @@
 
 {% block head_extra %}
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_gerencial.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_costeo_explorar.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -52,13 +53,21 @@
       <span class="gc-clasif"><i class="bi bi-shield-lock-fill"></i>{{ d.clasificacion }}</span></div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
-    <a href="{{ url_for('ot_gerencial_excel', modo=P.modo, ancla=(P.desde.isoformat() if P.modo != 'rango' else none), desde=(P.desde.isoformat() if P.modo == 'rango' else none), hasta=(P.hasta.isoformat() if P.modo == 'rango' else none), dias=M.dias_reinc) }}" class="btn btn-sm btn-danger"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Excel del período</a>
-    <a href="{{ url_for('ot_gerencial_pagina', modo=P.modo, ancla=(P.desde.isoformat() if P.modo != 'rango' else none), desde=(P.desde.isoformat() if P.modo == 'rango' else none), hasta=(P.hasta.isoformat() if P.modo == 'rango' else none), dias=M.dias_reinc, actualizar=1) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</a>
+    <a href="{{ url_for('ot_gerencial_excel', modo=P.modo, ancla=(P.desde.isoformat() if P.modo != 'rango' else none), desde=(P.desde.isoformat() if P.modo == 'rango' else none), hasta=(P.hasta.isoformat() if P.modo == 'rango' else none), dias=M.dias_reinc) }}" class="btn btn-sm btn-danger" data-gc-solo="resumen"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Excel del período</a>
+    <a href="{{ url_for('ot_gerencial_pagina', modo=P.modo, ancla=(P.desde.isoformat() if P.modo != 'rango' else none), desde=(P.desde.isoformat() if P.modo == 'rango' else none), hasta=(P.hasta.isoformat() if P.modo == 'rango' else none), dias=M.dias_reinc, actualizar=1) }}" class="btn btn-sm btn-outline-secondary" data-gc-solo="resumen"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</a>
     <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
   </div>
 </div>
 
-<div class="gc" id="gcApp">
+{# 🔎 2026-10-29 (Daniel, FASE 1): dos pestañas. «Resumen» es el informe de siempre, SIN cambios (REGLA #4.2); «Explorar» es el
+   tablero de filtros cruzados (clic en un objeto y se filtra todo) que arma static/ot_costeo_explorar.js con el dataset de
+   /ot/api/costeo/costos-dataset. La pestaña elegida y los filtros viven en el enlace (#explorar…): se puede compartir. #}
+<nav class="cx-pestanas" role="tablist" aria-label="Vistas del costeo">
+  <button type="button" role="tab" class="cx-pest on" id="gcPestResumen" aria-selected="true" aria-controls="gcApp" data-gc-pestana="resumen"><i class="bi bi-clipboard-data"></i>Resumen</button>
+  <button type="button" role="tab" class="cx-pest" id="gcPestExplorar" aria-selected="false" aria-controls="cxApp" data-gc-pestana="explorar"><i class="bi bi-funnel"></i>Explorar</button>
+</nav>
+
+<div class="gc" id="gcApp" role="tabpanel" aria-labelledby="gcPestResumen">
 
   {# ─────────────────────────── Período ─────────────────────────── #}
   <nav class="gc-periodo" aria-label="Período del costeo">
@@ -467,8 +476,17 @@
     <p>Solo lectura: no escribe nada, no consulta a Random ni a Check, y nunca le llega a un técnico. Leído a las {{ M.generado }} (hora de Chile); se guarda 90 segundos en memoria: usa «Actualizar» para releer.</p>
   </footer>
 </div>
+
+{# 🔎 Explorar (2026-10-29): el contenido lo dibuja ot_costeo_explorar.js; aquí solo el contenedor y las direcciones. #}
+<section class="cx" id="cxApp" role="tabpanel" aria-labelledby="gcPestExplorar" hidden
+         data-url="{{ url_for('ot_costeo_costos_dataset') }}" data-excel="{{ url_for('ot_costeo_costos_excel') }}"
+         data-ot="{{ url_for('ot2_detalle', vid=0) }}">
+  <div class="cx-cargando" role="status"><i class="bi bi-hourglass-split"></i><span>Cargando las OT del período…</span></div>
+  <noscript><div class="cx-vacio">Esta vista necesita JavaScript para cruzar los filtros. El «Resumen» funciona sin él.</div></noscript>
+</section>
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='ot_gerencial.js') }}"></script>
+<script src="{{ url_for('static', filename='ot_costeo_explorar.js') }}"></script>
 {% endblock %}
