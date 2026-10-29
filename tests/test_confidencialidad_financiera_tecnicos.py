@@ -111,7 +111,8 @@ PAT_NOMBRE = re.compile(r"finanz|costo|factura|autoriz|regulariz|dashboard|facpr
 PAT_RUTA = re.compile(
     r"/ot/autorizaciones|/ot/api/autorizaciones|/ot/regularizar|/ot/api/regularizar|/ot/finanzas|/ot/api/finanzas|"
     r"/dashboard|/api/dashboard/|facturas-proveedor|facturacion-proveedores|/api/tarifas|tecnicos-externos|"
-    r"/api/contratos|vida-cliente|/finanzas|/ot/api/saldo|agente-contrato|/api/ia/")
+    r"/api/contratos|vida-cliente|/finanzas|/ot/api/saldo|agente-contrato|/api/ia/|"
+    r"/ot/gerencial|/ot/api/costeo")   # 2026-10-29: el costeo de OT (Resumen y Explorar) es plata: solo gestión/superadmin
 
 
 class TestRutasFinancierasExigenGestion(unittest.TestCase):
