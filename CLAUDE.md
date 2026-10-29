@@ -1476,5 +1476,18 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
+## 🚚 REGLA #58 — Logística de las guías de despacho: «qué se fue» según Check, comparado con lo que gestiona la OT (Daniel, 2026-10-29)
+
+**Pedido de Daniel (29-oct): «en la guía de despacho no hicimos la conexión con el WMS, que es la parte logística; quiero verlo para saber qué se fue, compararlo con los productos que gestionaron en la OT, y levantar una alerta. Quiero a Check en este reporte, todo resumido».**
+
+- **Dónde vive:** dentro de la tarjeta «Trazabilidad en Random» de la ficha (`static/ot_guia_logistica.js/.css` sobre `static/ot_doc_cadena.js`). Cada guía lleva UNA línea con un semáforo chico (verde: salió todo lo gestionado · ámbar: falta o sobra algo frente a la OT, o bodega no ha expedido todo · gris: sin información de bodega o sin datos para comparar); el detalle (lo que informa Check, la guía frente a la OT línea por línea, los movimientos de bodega) se abre con «Ver logística». La cabecera lleva el chip «N diferencias con la OT». Sin montos; solo gestión (a un técnico el servidor le responde 403 antes de leer nada, REGLAS #19/#26).
+- **Check sigue SOLO LECTURA (REGLA #4.4):** únicamente `GetSeguimientoDespacho` por `_checkwms_get` y la lista blanca intacta (más el volcado de movimientos ya cacheado para operador/fechas). Si Check no responde o no tiene la guía, la tarjeta lo dice («sin información de bodega») y nunca inventa. Un reporte nuevo de Check solo se agrega a la lista blanca con el «sí» de Daniel.
+- **La comparación (`ot_guia_vs_ot.py`, puro):** empareja por SKU normalizado y dice `coincide` · `salio_y_no_esta_en_la_OT` · `esta_en_la_OT_y_no_salio` · `cantidad_distinta`. No compara servicios (ZZ, descuentos); sin guía, con guías anuladas o sin productos gestionados es «sin datos para comparar» (no alerta); lo que la OT ya declaró como falta de stock / «No llegó» no es diferencia; lo que sobra y lo gestiona otra OT de la misma venta se nombra, no alerta. Hoy los equipos se esperan en una guía solo en instalación y cambio de equipo (en mantenciones y otros solo se comparan repuestos): confirmar con Daniel si control de calidad o garantía deben sumarse.
+- **La alerta:** solo la diferencia entre la guía y la OT (evidencia documental estable) queda como hallazgo persistente (`ot_guia_alerta`, una sentencia `CREATE TABLE IF NOT EXISTS`, nunca se borra: vigente → resuelta → vigente si reaparece; bitácora `guia_diferencia` / `guia_diferencia_resuelta`) y suena UNA vez la campana (`ot_guia_diferencia`, al final de las dos listas del ENUM de `mant_notificaciones`) a la gestión de la OT (`_hall_destinos`: responsable primero, sin técnicos). **Jamás al cliente ni por correo** (REGLA #22). Que bodega aún no haya expedido algo se ve en ámbar pero NO se guarda ni suena (cambia mientras se prepara).
+- **Límites conocidos:** una venta que salió con la factura misma (retiro en bodega) no tiene guía: «sin datos». `GetSeguimientoDespacho` no trae usuario ni hora (eso sale del volcado de movimientos). Cada ficha con guías hace 2 peticiones extra y la de Check puede tardar hasta 20 s: es asíncrona, la ficha nunca se bloquea.
+- Pruebas: `tests/test_ot_guia_logistica.py` (puro, ruta, Check/Random falsos, campana, ENUM, JS) y `tests/test_ot_guia_logistica_navegador.py` (Playwright).
+
+---
+
 _Última actualización: 2026-10-29_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
