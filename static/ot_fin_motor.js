@@ -35,7 +35,18 @@
        dibujan su propio botón: son un enlace que lleva al botón único y lo resalta (irA). Lo mismo con cualquier acción que ya tenga su botón en
        «Modificar»: el recorrido enlaza, no repite (botonesFijos).
      · Cada documento es una tarjeta chica (tipo, número, fecha, total, qué aporta y su estado); sus líneas, su saldo y quién lo agregó se abren con un
-       toque (docTog). La nota de venta se rotula «Referencia de la venta»; la factura o boleta, «Documento de cobro». */
+       toque (docTog). La nota de venta se rotula «Referencia de la venta»; la factura o boleta, «Documento de cobro».
+   2026-10-29 (Daniel, viendo la v4: «me hubiese gustado… un poco más de COLOR y se reconozca a simple vista cuánto cobré, en qué factura, el margen»;
+   y luego: «no tan colorido; ya habíamos puesto hasta un semáforo… no tarjetas tan grandes; todo bien resumido»): v5. Ningún dato ni regla cambió:
+     · «¿Quién se adjudica el dinero?» RESUMIDO: cada bloque en dos líneas (quién · la cifra) sobre fondo blanco/gris suave; el color vive SOLO en
+       chips chicos: junto a lo cobrado, la factura o boleta N° que lo lleva (chipDoc: verde = documento de cobro, azul = la nota de venta como
+       referencia de la venta, ámbar = falta); junto a lo que nos cobraron, el anexo (azul firmado, ámbar vigente, rojo suave si no coincide).
+     · El margen es un bloque más de la fila, con un SEMÁFORO chico (REGLA #57): verde 20 % o más (objetivo o tolerancia), ámbar bajo, rojo pérdida,
+       gris sin medir; nunca un % inventado.
+     · Servicio y despacho de cada lado (con su documento), la cuenta del margen y la frase de la política van en «Ver el desglose» (quienTog): en la
+       página, ocultos con `hidden` hasta el clic (nada se pierde, REGLA #4.2).
+     · Coherencia: el mismo verde suave en el chip del documento de cobro de cada tarjeta chica (fm-chip k-cobro) y la banda en el chip ⑤ del recorrido.
+       Sin bordes laterales de acento ni tarjetas teñidas. */
 (function (global) {
   'use strict';
 
@@ -395,9 +406,11 @@
     t[3] = 'Proveedor ' + (M.falta_tecnico ? '—' : clp(M.total));
     t[4] = (fin.cobra && Q.mostrar) ? 'Margen ' + (Q.pct !== null && Q.pct !== undefined ? pctTxt(Q.pct) : signo(Q.total)) : (centro ? 'Se carga a ' + centro : 'Margen');
     t[5] = String((r && r.titulo) || (pasos[5] || {}).titulo || 'Revisión al cerrar').split(/[,:·]/)[0].trim();
+    /* 2026-10-29 (v5): el chip ⑤ (Margen) lleva el color de la banda de la REGLA #57, el mismo de la ficha del margen. */
+    var polR = (fin.cobra && Q.mostrar) ? politicaDe(fin) : null;
     return pasos.slice(0, 6).map(function (p, i) {
       var ico = p.estado === 'hecho' ? 'bi-check-lg' : (p.estado === 'pendiente' ? 'bi-hourglass-split' : 'bi-dash-lg');
-      return '<span class="fm-pchip ' + esc(p.estado) + '" title="' + esc(p.n + '. ' + p.titulo + ': ' + (p.texto || '')) + '"><b>' + NUMEROS[i] + '</b> ' + esc(t[i]) +
+      return '<span class="fm-pchip ' + esc(p.estado) + (i === 4 && polR ? ' m-' + polR.clase : '') + '" title="' + esc(p.n + '. ' + p.titulo + ': ' + (p.texto || '')) + '"><b>' + NUMEROS[i] + '</b> ' + esc(t[i]) +
         ' <i class="bi ' + ico + '"></i></span>';
     }).join('');
   }
@@ -550,8 +563,9 @@
     /* La trazabilidad que se ve sin abrir: quién la da de baja o a quién da de baja (la cadena nota de venta → factura). */
     var traza = baja ? '<span class="fm-doc-tz"><i class="bi bi-arrow-repeat"></i> Dada de baja por ' + esc(baja.titulo) + '</span>'
       : ((d.da_de_baja && d.da_de_baja.length) ? '<span class="fm-doc-tz ok"><i class="bi bi-check-circle-fill"></i> Reemplaza a ' + d.da_de_baja.map(function (x) { return esc(x.titulo); }).join(', ') + '</span>' : '');
+    /* 2026-10-29 (v5): el chip del tipo lleva el color de su rol, el mismo de «Cobramos a» (verde = documento de cobro, azul = referencia). */
     var resumen = '<div class="fm-doc-s">' +
-      '<span class="fm-chip">' + esc(d.tipo_txt) + '</span><h4>' + esc(d.titulo) + '</h4>' +
+      '<span class="fm-chip k-' + rol + '">' + esc(d.tipo_txt) + '</span><h4>' + esc(d.titulo) + '</h4>' +
       '<span class="fm-rol r-' + rol + '">' + esc(cuentaTxt(d)) + '</span>' +
       (d.es_principal ? '<span class="fm-pri">Principal</span>' : '') +
       (d.fecha ? '<span class="fm-doc-f">' + esc(d.fecha) + '</span>' : '') +
@@ -669,7 +683,8 @@
   function chipAnexo(inst, clave) {
     var ax = anexoVivo(inst);
     if (!ax || (clave !== 'tecnico' && clave !== 'despacho')) return '';
-    return '<span class="fm-lock" title="El costo de la OT y el anexo del proveedor son un solo valor"><i class="bi bi-lock-fill"></i> Anexo N° ' + esc(ax.numero) + (ax.firmado ? ' · firmado' : ' · vigente') + '</span>';
+    /* 2026-10-29 (v5): firmado en azul; vigente (aún sin firmar) en ámbar, igual que en «Nos cobró». */
+    return '<span class="fm-lock' + (ax.firmado ? '' : ' vig') + '" title="El costo de la OT y el anexo del proveedor son un solo valor"><i class="bi bi-lock-fill"></i> Anexo N° ' + esc(ax.numero) + (ax.firmado ? ' · firmado' : ' · vigente') + '</span>';
   }
   function celdaMonto(v, falta) {
     if (falta) return '<span class="fm-pend">Falta declararlo</span>';
@@ -760,7 +775,7 @@
          REGLAS #56/#57). Sin cobro declarado: «Falta declararlo», en ámbar. En garantía, regalía, arriendo/leasing o contrato: «No se cobra · nos costó $X».
        · «ILUS · interno» — SOLO en un trabajo interno o una cobertura que asume la empresa (garantía, cortesía, regalía): UNA línea con lo que costó y a qué
          centro de costo se carga. Es un rótulo: no hay ningún usuario, técnico ni agente «ILUS».
-     Debajo, el margen con la política de la REGLA #57. Todo sale del recorrido y del panorama que el motor ya lee (ninguna consulta nueva), y ambos responden
+     Al lado (v5: un bloque más de la fila, con su semáforo), el margen con la política de la REGLA #57. Todo sale del recorrido y del panorama que el motor ya lee (ninguna consulta nueva), y ambos responden
      403 a un técnico: la plata y los proveedores se quitan en el servidor (REGLAS #19/#26). */
   var CLASE_POLITICA = { ok: 'ok', tol: 'tol', bajo: 'bajo', rojo: 'rojo' };
   function politicaDe(fin) {
@@ -778,6 +793,9 @@
     if (p >= tol) return { clase: 'tol', txt: 'En tolerancia: entre ' + tol + ' y ' + obj + ' %' };
     return { clase: 'bajo', txt: 'Margen bajo: menos de ' + tol + ' % (el objetivo es ' + obj + ' %)' };
   }
+  /* 2026-10-29 (v5): el SEMÁFORO del margen en una palabra (el chip chico junto a la cifra): verde = 20 % o más (objetivo o tolerancia), ámbar = bajo,
+     rojo = pérdida, gris = sin medir. La frase completa de la política queda en su tooltip y en el desglose. */
+  var SEMAFORO_TXT = { ok: 'Objetivo', tol: 'Tolerancia', bajo: 'Margen bajo', rojo: 'Pérdida' };
   /* Coberturas cuyo costo asume la empresa (no las paga otro ingreso como el contrato o el arriendo, ni la instalación de una desinstalación cubierta). */
   var COBERTURA_ASUME_ILUS = { garantia: 1, sin_costo: 1, regalia: 1, interno: 1 };
   /* Quién nos cobró: el técnico de la OT (panorama.costos.proveedor, o el «detalle» del registro) y la empresa del anexo o de su ficha. */
@@ -791,7 +809,8 @@
     if (empresa && nombre && empresa.toLowerCase() === nombre.toLowerCase()) empresa = '';
     return { nombre: nombre, empresa: empresa, externo: externo };
   }
-  /* Los documentos que de verdad llevan el cobro, por categoría (servicio y despacho), con lo que aporta cada uno. */
+  /* Los documentos que de verdad llevan el cobro, por categoría (servicio y despacho), con lo que aporta cada uno. 2026-10-29 (v5): devuelve el documento
+     entero (no solo su título) para dibujar su chip con el tipo y el número. */
   function docsDelCobro(inst) {
     var r = { servicio: [], despacho: [] };
     ((inst.pan && inst.pan.documentos) || []).forEach(function (d) {
@@ -799,20 +818,59 @@
       var s = null, e = null;
       if (d.lineas) { s = sumaMontos(d.lineas.servicio); e = sumaMontos(d.lineas.despacho); }
       if (!s && !e) { s = d.zz_serv; e = d.zz_envio; }
-      if (s) r.servicio.push(d.titulo);
-      if (e) r.despacho.push(d.titulo);
+      if (s) r.servicio.push(d);
+      if (e) r.despacho.push(d);
     });
     return r;
   }
-  function lineaQ(rot, valor, docs, nota) {
-    return '<li><span class="fm-q-r">' + esc(rot) + '</span><b>' + valor + '</b>' +
-      (docs && docs.length ? docs.map(function (t) { return '<em class="fm-q-doc">' + esc(t) + '</em>'; }).join('') : '') +
-      (nota ? '<em class="fm-q-nota">' + nota + '</em>' : '') + '</li>';
+  /* ═══ EL CHIP DEL DOCUMENTO (v5, 2026-10-29: «que se reconozca a simple vista cuánto cobré, en qué factura, el margen»; y al verla: «no tan colorido…
+     no tarjetas tan grandes; todo bien resumido») ═════════════════════════════════════════════════════════════════════════════════════════════════
+     Un chip CHICO con el tipo y el número, junto a lo cobrado: verde suave = el documento que cobra (factura o boleta); azul suave = la nota de venta u otro
+     documento que es solo la referencia de la venta (o de la garantía); ámbar = lo que falta. El mismo verde lleva el chip del tipo en la tarjeta chica del
+     documento (fm-chip k-cobro). El color vive SOLO en los chips: los bloques son blancos o gris suave. */
+  function numDoc(d) {
+    return (d.tipo_txt || 'Documento') + (d.nudo ? ' N° ' + d.nudo : (d.titulo ? ' ' + d.titulo : ''));
   }
-  function bloqueQ(cls, titulo, nombre, sub, valor, lineas, pie, tooltip) {
+  function chipDoc(d, ref, nota) {
+    return '<em class="fm-q-doc' + (ref ? ' ref' : '') + '" title="' + esc((d.titulo || numDoc(d)) + (ref ? ': ' + (nota || 'referencia') + ', no es el documento de cobro' : ': documento de cobro')) + '">' +
+      esc(numDoc(d)) + (nota ? ' · ' + esc(nota) : '') + '</em>';
+  }
+  function chipFalta(txt) { return '<em class="fm-q-doc falta">' + esc(txt) + '</em>'; }
+  /* Los chips de una lista de documentos de «Cobramos a»: verde si cobra, azul si solo es la referencia de la venta y, si ninguno es la factura o boleta, el
+     ámbar de lo que falta. `sinDoc`: ningún documento de la OT lleva el cobro (lo mismo que antes decía «sin documento de Random»). */
+  function chipsLinea(lista, sinDoc) {
+    var h = '', hayCobro = false;
+    (lista || []).forEach(function (d) {
+      var ref = d.categoria !== 'cobro';
+      if (!ref) hayCobro = true;
+      h += chipDoc(d, ref, ref ? 'referencia de la venta' : '');
+    });
+    if ((lista || []).length && !hayCobro) h += chipFalta('Falta la factura o boleta');
+    else if (!(lista || []).length && sinDoc) h += chipFalta('Falta el documento');
+    return h;
+  }
+  /* Un documento que cobra el servicio Y el despacho va en UN solo chip junto al total. */
+  function sinRepetir(lista) {
+    var vistos = {};
+    return (lista || []).filter(function (d) { var k = d.id != null ? 'i' + d.id : 't' + d.titulo; if (vistos[k]) return false; vistos[k] = 1; return true; });
+  }
+  function lineaQ(rot, valor, chips) {
+    return '<li><span class="fm-q-r">' + esc(rot) + '</span><b>' + valor + '</b>' + (chips ? '<span class="fm-q-ds">' + chips + '</span>' : '') + '</li>';
+  }
+  /* Los documentos vigentes de la OT (sin los dados de baja ni las cotizaciones internas). */
+  function docsVigentes(inst) {
+    return ((inst.pan && inst.pan.documentos) || []).filter(function (d) { return !d.dada_de_baja_por && d.origen !== 'cotizacion'; });
+  }
+  /* Un bloque, RESUMIDO en dos líneas (v5): [rótulo · nombre · su detalle] y [la cifra · sus chips]. El resto (las líneas de servicio y despacho con su
+     documento, las notas) va en el desglose `det`, que se abre con «Ver el desglose» (quienTog) para todos los bloques a la vez: está en la página, oculto
+     con `hidden`, nada se pierde (REGLA #4.2). El orden de las piezas en pantalla lo pone el CSS (dos líneas), no el HTML. */
+  function bloqueQ(inst, cls, titulo, nombre, sub, valor, chips, det, tooltip) {
     return '<div class="fm-q ' + cls + '"' + (tooltip ? ' title="' + esc(tooltip) + '"' : '') + '><small class="fm-q-t">' + esc(titulo) + '</small>' +
       (nombre ? '<b class="fm-q-n">' + esc(nombre) + '</b>' : '') + (sub ? '<span class="fm-q-e">' + sub + '</span>' : '') +
-      '<b class="fm-q-v">' + valor + '</b>' + (lineas ? '<ul class="fm-q-l">' + lineas + '</ul>' : '') + (pie || '') + '</div>';
+      '<b class="fm-q-v">' + valor + '</b>' + (chips ? '<span class="fm-q-ds">' + chips + '</span>' : '') + desglose(inst, det) + '</div>';
+  }
+  function desglose(inst, det) {
+    return det ? '<div class="fm-q-det"' + (inst.quienAbierto ? '' : ' hidden') + '>' + det + '</div>' : '';
   }
   function htmlQuien(inst) {
     var rec = inst.rec || {}, fin = rec.fin || {}, M = fin.me_cobraron || {}, C = fin.cobre || {}, Q = fin.queda || {};
@@ -821,7 +879,7 @@
     var pend = '<span class="fm-pend">Falta declararlo</span>';
     var bloques = '';
 
-    /* ── 1. Nos cobró (o lo hizo un técnico propio) ── */
+    /* ── 1. Nos cobró (o lo hizo un técnico propio): la cifra y el chip del anexo; servicio y despacho, en el desglose ── */
     var pv = proveedorDe(inst), propio = !pv.externo && !!pv.nombre;
     var tProv = propio ? 'Lo hizo un técnico propio' : 'Nos cobró';
     var nProv = pv.nombre || (pv.externo ? (pv.empresa || 'Proveedor externo') : 'Sin técnico asignado');
@@ -829,37 +887,49 @@
     var vProv = M.falta_tecnico ? pend : clp((Number(M.tecnico) || 0) + (Number(M.despacho) || 0));
     var lProv = lineaQ('Instalación o servicio', M.falta_tecnico ? pend : clp(M.tecnico)) +
       ((Number(M.despacho) > 0 || M.falta_despacho) ? lineaQ('Despacho', M.falta_despacho ? pend : clp(M.despacho)) : '');
-    var pieProv = ax ? '<span class="fm-lock' + (ax.vinculo === 'alineado' ? '' : ' no') + '"><i class="bi bi-lock-fill"></i> Anexo N° ' + esc(ax.numero) +
+    /* El chip del anexo (REGLA #34), con su semáforo: firmado y alineado = azul; vigente (sin firmar) o la OT aún no lo declara = ámbar; no coincide = rojo suave. */
+    var claseAnx = ax ? (ax.vinculo === 'alineado' ? (ax.firmado ? '' : ' vig') : (ax.vinculo === 'sin_declarar' ? ' no sd' : ' no')) : '';
+    var chipAnx = ax ? '<span class="fm-lock' + claseAnx + '"><i class="bi bi-lock-fill"></i> Anexo N° ' + esc(ax.numero) +
       (ax.firmado ? ' · firmado' : ' · vigente') + (ax.vinculo === 'alineado' ? '' : (ax.vinculo === 'sin_declarar' ? ' · la OT aún no lo declara' : ' · no coincide con la OT')) + '</span>' : '';
-    if (propio && !M.falta_tecnico && !(Number(M.tecnico) > 0) && !(Number(M.despacho) > 0)) pieProv += '<span class="fm-q-ok">No se le paga aparte</span>';
-    bloques += bloqueQ('prov' + (M.falta_tecnico ? ' falta' : ''), tProv, nProv, sProv, vProv, lProv, pieProv);
+    var detProv = '<ul class="fm-q-l">' + lProv + '</ul>' +
+      ((propio && !M.falta_tecnico && !(Number(M.tecnico) > 0) && !(Number(M.despacho) > 0)) ? '<span class="fm-q-ok">No se le paga aparte</span>' : '');
+    bloques += bloqueQ(inst, 'prov' + (M.falta_tecnico ? ' falta' : ''), tProv, nProv, sProv, vProv, chipAnx, detProv);
 
-    /* ── 2. Cobramos a (el cliente) ── */
+    /* ── 2. Cobramos a (el cliente): la cifra y el chip de la factura o boleta que la lleva; cada línea con su documento, en el desglose ── */
     if (!interna) {
       var cliente = (inst.pan && inst.pan.cliente) || rec.cliente || '';
       var nCli = cliente || 'Cliente sin nombre';
       if (cob === 'cobra') {
         if (C.hay && Number(C.total) > 0) {
           var dc = docsDelCobro(inst), sinDoc = !dc.servicio.length && !dc.despacho.length;
-          var nota = sinDoc ? 'sin documento de Random' : '';
-          var lCli = ((Number(C.servicio) > 0 || !(Number(C.despacho) > 0)) ? lineaQ('Instalación o servicio', clp(C.servicio), dc.servicio, Number(C.servicio) > 0 ? nota : '') : '') +
-            (Number(C.despacho) > 0 ? lineaQ('Despacho', clp(C.despacho), dc.despacho, nota) : '');
-          var pieCli = sinDoc && C.fuente ? '<span class="fm-q-av">Lo cobrado: ' + esc(C.fuente) + ' (no viene de un documento de Random)</span>' : '';
-          bloques += bloqueQ('cli', 'Cobramos a', nCli, '', clp(C.total), lCli, pieCli, origenCobro(inst).length ? 'Lo cobrado sale de ' + origenCobro(inst).join(' · ') : '');
+          var lCli = ((Number(C.servicio) > 0 || !(Number(C.despacho) > 0)) ? lineaQ('Instalación o servicio', clp(C.servicio), chipsLinea(dc.servicio, sinDoc && Number(C.servicio) > 0)) : '') +
+            (Number(C.despacho) > 0 ? lineaQ('Despacho', clp(C.despacho), chipsLinea(dc.despacho, sinDoc)) : '');
+          var detCli = '<ul class="fm-q-l">' + lCli + '</ul>' +
+            (sinDoc && C.fuente ? '<span class="fm-q-av">Lo cobrado: ' + esc(C.fuente) + ' (no viene de un documento de Random)</span>' : '');
+          bloques += bloqueQ(inst, 'cli', 'Cobramos a', nCli, '', clp(C.total), chipsLinea(sinRepetir(dc.servicio.concat(dc.despacho)), sinDoc), detCli,
+            origenCobro(inst).length ? 'Lo cobrado sale de ' + origenCobro(inst).join(' · ') : '');
         } else if (C.hay) {
-          bloques += bloqueQ('cli', 'Cobramos a', nCli, '', clp(0), '', '<span class="fm-q-av">Cobro declarado en $0</span>');
+          bloques += bloqueQ(inst, 'cli', 'Cobramos a', nCli, '', clp(0), '<span class="fm-q-av">Cobro declarado en $0</span>', '');
         } else {
-          var nvs = ((inst.pan && inst.pan.documentos) || []).filter(function (d) { return d.categoria === 'nota_venta' && !d.dada_de_baja_por; })
-            .map(function (d) { return d.titulo; });
-          var pieF = nvs.length ? '<span class="fm-q-av">Referencia de la venta: ' + esc(nvs.join(', ')) + '. Falta la factura o boleta.</span>'
-            : (fin.precio_anotado ? '<span class="fm-q-av">Hay un precio anotado de ' + clp(fin.precio_anotado) + ' sin documento: no cuenta como cobro.</span>' : '');
-          bloques += bloqueQ('cli falta', 'Cobramos a', nCli, '', pend, '', pieF);
+          /* Lo cobrado falta: los documentos que ya hay (verde la factura o boleta, azul la nota de venta = referencia de la venta) y, si no hay factura ni
+             boleta, el ámbar de lo que falta. */
+          var vig = docsVigentes(inst);
+          var facs = vig.filter(function (d) { return rolDoc(d) === 'cobro'; });
+          var nvs = vig.filter(function (d) { return d.categoria === 'nota_venta'; });
+          var chipsF = facs.map(function (d) { return chipDoc(d, false, ''); }).join('') + nvs.map(function (d) { return chipDoc(d, true, 'referencia de la venta'); }).join('') +
+            (facs.length ? '' : chipFalta(nvs.length ? 'Falta la factura o boleta' : 'Falta el documento'));
+          var detF = (!nvs.length && !facs.length && fin.precio_anotado) ? '<span class="fm-q-av">Hay un precio anotado de ' + clp(fin.precio_anotado) + ' sin documento: no cuenta como cobro.</span>' : '';
+          bloques += bloqueQ(inst, 'cli falta', 'Cobramos a', nCli, '', pend, chipsF, detF);
         }
       } else {
         var motivo = (rec.cobro_cero || {}).motivo_txt || String(fin.cobertura_txt || '').split(':')[0];
         var porque = cob === 'contrato' ? 'se paga con el contrato' : (cob === 'arriendo_leasing' ? 'va incluido en el arriendo' : (cob === 'cubierta' ? 'se cobra en la instalación' : ''));
-        bloques += bloqueQ('cli nocobra', 'Cobramos a', nCli, '<span class="fm-motivo">' + esc(motivo) + '</span>' + (porque ? ' · ' + esc(porque) : ''),
-          'No se cobra', '', '<span class="fm-q-cost">' + (M.falta_tecnico ? 'Nos costó: ' + pend : 'nos costó ' + clp(M.total)) + '</span>');
+        /* La venta de la que es la garantía (o la cobertura): su chip azul, en el desglose (es la referencia, no un cobro). */
+        var notaRef = cob === 'garantia' ? 'referencia de la garantía' : 'referencia';
+        var chipsN = docsVigentes(inst).map(function (d) { return chipDoc(d, true, notaRef); }).join('');
+        bloques += bloqueQ(inst, 'cli nocobra', 'Cobramos a', nCli, '<span class="fm-motivo">' + esc(motivo) + '</span>' + (porque ? ' · ' + esc(porque) : ''),
+          'No se cobra', '<span class="fm-q-cost">' + (M.falta_tecnico ? 'Nos costó: ' + pend : 'nos costó ' + clp(M.total)) + '</span>',
+          chipsN ? '<span class="fm-q-ds">' + chipsN + '</span>' : '');
       }
     }
 
@@ -867,26 +937,34 @@
     if (interna || COBERTURA_ASUME_ILUS[cob]) {
       var sIl = interna ? 'Trabajo interno de ILUS' : 'Lo asume ILUS';
       var cen = centro ? 'Centro de costo: ' + esc(centro) : '<span class="fm-pend">Falta elegir el centro de costo</span>';
-      bloques += bloqueQ('ilus', 'ILUS · interno', sIl, cen, M.falta_tecnico ? pend : clp(M.total), '',
+      bloques += bloqueQ(inst, 'ilus', 'ILUS · interno', sIl, cen, M.falta_tecnico ? pend : clp(M.total), '',
         Number(M.repuestos) > 0 ? '<span class="fm-q-cost">incluye repuestos ' + clp(M.repuestos) + '</span>' : '');
     }
 
-    /* ── El margen (REGLA #57), solo cuando se cobra ── */
-    var margen = '';
+    /* ── El margen (REGLA #57), solo cuando se cobra: la cifra, el % y un SEMÁFORO chico (verde 20 % o más, ámbar bajo, rojo pérdida, gris sin medir) ── */
     if (!interna && cob === 'cobra') {
       var pol = politicaDe(fin);
       var cuentaTxt2 = 'Cobramos ' + (C.hay ? clp(C.total) : '—') + ' − nos costó ' + (M.falta_tecnico ? '—' : clp(M.total)) +
         (Number(M.repuestos) > 0 && !M.falta_tecnico ? ' (proveedor ' + clp((Number(M.tecnico) || 0) + (Number(M.despacho) || 0)) + ' + repuestos ' + clp(M.repuestos) + ')' : '');
-      var res;
-      if (!Q.mostrar) res = '<b>Margen: falta un dato para calcularlo</b>' + (fin.label ? '<span class="fm-q-pol">' + esc(fin.label) + '</span>' : '');
-      else if (Number(Q.total) > 0) res = '<b>Ganamos ' + clp(Q.total) + '</b>' + (Q.pct !== null && Q.pct !== undefined ? '<em>(' + esc(pctTxt(Q.pct)) + ')</em>' : '');
-      else if (Number(Q.total) < 0) res = '<b>Perdimos ' + clp(Math.abs(Q.total)) + '</b>' + (Q.pct !== null && Q.pct !== undefined ? '<em>(' + esc(pctTxt(Q.pct)) + ')</em>' : '');
-      else res = '<b>Ni ganamos ni perdimos</b>';
-      margen = '<div class="fm-q-m m-' + (pol ? pol.clase : (Q.mostrar ? 'gris' : 'falta')) + '" role="status"><span class="fm-q-mt">Margen</span>' + res +
-        '<span class="fm-q-cu">' + cuentaTxt2 + '</span>' + (pol ? '<span class="fm-q-pol">' + esc(pol.txt) + '</span>' : '') + '</div>';
+      var hayPct = Q.mostrar && Q.pct !== null && Q.pct !== undefined && !isNaN(Number(Q.pct));
+      var cifra;
+      if (!Q.mostrar) cifra = 'Falta un dato para calcularlo';
+      else if (Number(Q.total) > 0) cifra = 'Ganamos ' + clp(Q.total);
+      else if (Number(Q.total) < 0) cifra = 'Perdimos ' + clp(Math.abs(Q.total));
+      else cifra = 'Ni ganamos ni perdimos';
+      /* El chip del semáforo dice la banda en una palabra; la frase completa de la política (o lo que falta) va en su tooltip y en el desglose. */
+      var frasePol = pol ? pol.txt : (!Q.mostrar ? (fin.label || '') : '');
+      var semTxt = pol ? (SEMAFORO_TXT[pol.clase] || pol.txt) : 'Sin medir';
+      bloques += '<div class="fm-q-m m-' + (pol ? pol.clase : (Q.mostrar ? 'gris' : 'falta')) + '" role="status"><span class="fm-q-mt">Margen</span>' +
+        '<span class="fm-q-mn"><b class="fm-q-mv">' + esc(cifra) + '</b>' + (hayPct ? '<em class="fm-q-mp">' + esc(pctTxt(Q.pct)) + '</em>' : '') + '</span>' +
+        '<span class="fm-q-pol"' + (frasePol ? ' title="' + esc(frasePol) + '"' : '') + '>' + esc(semTxt) + '</span>' +
+        desglose(inst, '<span class="fm-q-cu">' + cuentaTxt2 + '</span>' + (frasePol ? '<span class="fm-q-frase">' + esc(frasePol) + '</span>' : '')) + '</div>';
     }
-    return '<section class="fm-adj" aria-label="¿Quién se adjudica el dinero?"><h4 class="fm-col-t"><i class="bi bi-people-fill"></i> ¿Quién se adjudica el dinero?</h4>' +
-      '<div class="fm-q-grid">' + bloques + '</div>' + margen + '</section>';
+    var abierto = !!inst.quienAbierto, idQ = 'fmQuien' + inst.id;
+    return '<section class="fm-adj" aria-label="¿Quién se adjudica el dinero?"><div class="fm-adj-h"><h4 class="fm-col-t"><i class="bi bi-people-fill"></i> ¿Quién se adjudica el dinero?</h4>' +
+      '<button type="button" class="fm-adj-ver" data-fm-act="quienTog" aria-expanded="' + abierto + '" aria-controls="' + idQ + '">' +
+      (abierto ? 'Ocultar el desglose' : 'Ver el desglose') + ' <i class="bi bi-chevron-' + (abierto ? 'up' : 'down') + '"></i></button></div>' +
+      '<div class="fm-q-grid" id="' + idQ + '">' + bloques + '</div></section>';
   }
 
   /* LA CUENTA, en palabras de Daniel (2026-10-08: «dejemos cuánto ganamos, cuánto cobramos, cuánto nos cobraron, cuánto perdimos…
@@ -1491,6 +1569,8 @@
        vuelve al mismo botón (teclado y lectores de pantalla). */
     recTog: function (inst) { return alternar(inst, 'recAbierto', 'recTog'); },
     masTog: function (inst) { return alternar(inst, 'masAbierto', 'masTog'); },
+    /* 2026-10-29 (v5): «Ver el desglose» de «¿Quién se adjudica el dinero?» (servicio y despacho de cada lado con su documento, la cuenta y la política). */
+    quienTog: function (inst) { return alternar(inst, 'quienAbierto', 'quienTog'); },
     /* 2026-10-29: «Ver detalle» de un documento (la tarjeta chica se abre con sus líneas, su saldo y su trazabilidad). */
     docTog: function (inst, b) {
       var k = b && b.getAttribute && b.getAttribute('data-fm-doc');

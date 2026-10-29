@@ -438,7 +438,7 @@ class TestContadoresYCuenta(_Base):
         quien = html.split('<section class="fm-adj"')[1].split("</section>")[0]
         i1, i2, i3 = quien.index("Nos cobró"), quien.index("Cobramos a"), quien.index("Ganamos $52.101")
         self.assertTrue(i1 < i2 < i3)
-        self.assertIn("<em>(17,2 %)</em>", quien)
+        self.assertIn('<em class="fm-q-mp">17,2 %</em>', quien)      # 2026-10-29 (v5): el % junto a la cifra, sin paréntesis
         self.assertNotIn('class="fm-res"', cta)
         self.assertLess(html.index('<section class="fm-adj"'), html.index('<section class="fm-cta '))
         mini = cta.split('<table class="fm-neg">')[1].split("</table>")[0]

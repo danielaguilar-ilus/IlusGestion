@@ -61,6 +61,9 @@
 .fm-pchip b{font-weight:900}
 .fm-pchip.no_aplica{background:var(--fm-gris-f);color:#374151;border-color:var(--fm-borde)}
 .fm-pchip.pendiente{background:var(--fm-azul-f);color:#1e3a8a;border-color:#bfdbfe}      /* esperando la firma: azul (espera), no un problema */
+/* 2026-10-29 (v5): el chip ⑤ (Margen) con el semáforo de su banda (REGLA #57), el mismo del margen de «¿Quién se adjudica el dinero?» */
+.fm-pchip.m-bajo{background:var(--fm-ambar-f);color:#78350f;border-color:#fde68a}
+.fm-pchip.m-rojo{background:var(--fm-rojo-f);color:#991b1b;border-color:#fecaca}
 .fm-rec-ver{margin-left:auto;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-size:.72rem;font-weight:800;color:#1d4ed8}
 .fm-rec-det{margin-top:6px}
 .fm-rec-det[hidden],.fm-mas-p[hidden]{display:none !important}
@@ -104,8 +107,10 @@
 .fm-tile.cero{opacity:.62}
 
 /* La cuenta: UNA tarjeta con las cifras, el anexo del proveedor y el centro de costo (2026-10-25: ya no es una línea con el centro de costo al lado) */
-.fm-cta{--c:#9ca3af;background:#fff;border:1px solid var(--fm-borde);border-left:4px solid var(--c);border-radius:10px;padding:9px 12px;display:flex;flex-direction:column;gap:7px;min-width:0}
+/* 2026-10-29 (v5): sin borde lateral de acento (fondo blanco, borde fino); el color de la banda (REGLA #57) queda solo en su ícono y en las viñetas (--c). */
+.fm-cta{--c:#9ca3af;background:#fff;border:1px solid var(--fm-borde);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-width:0}
 .fm-cta.c-ok{--c:#16a34a}.fm-cta.c-bajo,.fm-cta.c-ambar{--c:#f59e0b}.fm-cta.c-rojo{--c:#dc2626}.fm-cta.c-info{--c:#3b82f6}
+.fm-cta>.fm-col-t i{color:var(--c)}
 /* 2026-10-25: las dos mitades de La cuenta. A = las cifras (cobramos, nos cobraron con quién y su anexo, margen, de dónde sale); B = el anexo, el centro de costo y
    «Modificar». Una debajo de la otra; con el recorrido plegado en un bloque ancho van lado a lado (REGLA #16: parecidas en alto). */
 .fm-cta-in{display:grid;grid-template-columns:minmax(0,1fr);gap:7px 18px;min-width:0}
@@ -162,6 +167,8 @@
 .fm-pend{display:inline-block;color:#92400e;background:var(--fm-ambar-f);border-radius:6px;padding:2px 8px;font-size:.72rem;font-weight:800;white-space:normal;text-align:left}
 .fm-neg tr.tot th,.fm-neg tr.tot td{border-top:2px solid #cbd5e1;font-weight:900}
 .fm-neg td.pos{color:#15803d;font-weight:900}.fm-neg td.neg{color:#b91c1c;font-weight:900}.fm-neg td.cero{color:var(--fm-gris)}
+/* 2026-10-29 (v5): lo que cobramos, en el mismo verde de «Cobramos a» */
+.fm-neg td[data-l="Cobramos"]{color:#15803d}
 .fm-const{margin:0;font-size:.78rem;background:var(--fm-gris-f);border-radius:8px;padding:6px 9px;overflow-wrap:anywhere}
 .fm-aviso{background:var(--fm-ambar-f);border-radius:8px;padding:5px 9px;font-size:.74rem;color:#78350f;overflow-wrap:anywhere}
 .fm-cen{background:#fff;border:1px solid var(--fm-borde);border-radius:10px;padding:7px 10px;display:flex;flex-direction:column;gap:5px;min-width:0}
@@ -175,6 +182,9 @@
 .fm-anx-b{display:block;margin-top:6px}
 .fm-anx-l .fm-btn-pri{background:#2563eb;border-color:#2563eb}.fm-anx-l .fm-btn-pri:hover{background:#1d4ed8;border-color:#1d4ed8}
 .fm-lock{display:inline-flex;align-items:center;gap:4px;margin-top:3px;font-size:.66rem;font-weight:800;color:#1e40af;background:var(--fm-azul-f);border-radius:999px;padding:1px 8px}
+/* 2026-10-29 (v5): el semáforo del anexo: firmado = azul (arriba), vigente o sin declarar en la OT = ámbar, no coincide = rojo suave */
+.fm-lock.vig,.fm-lock.no.sd{background:var(--fm-ambar-f);color:#78350f}
+.fm-lock.no{background:var(--fm-rojo-f);color:#991b1b}
 /* los contadores de «Documentos»: solo los que dicen algo */
 .fm-sec .fm-tiles{margin:0 0 6px}
 /* el pie de superadmin: tranquilo, con una línea que explica qué hace cada cosa */
@@ -227,13 +237,16 @@
 
 /* Documentos completos */
 .fm-docs{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
-.fm-doc{border:1px solid var(--fm-borde);border-left:4px solid var(--fm-gris);border-radius:10px;padding:8px 10px;background:#fff;min-width:0}
-.fm-doc.cat-cobro{border-left-color:var(--fm-verde)}.fm-doc.cat-nota_venta{border-left-color:var(--fm-ambar)}
-.fm-doc.cat-cotizacion{border-left-color:var(--fm-azul)}
+/* 2026-10-29 (v5): sin borde lateral de acento: tarjeta blanca; lo que es (documento de cobro, referencia de la venta) lo dice el chip de su tipo (fm-chip k-*) */
+.fm-doc{border:1px solid var(--fm-borde);border-radius:10px;padding:8px 10px;background:#fff;min-width:0}
 .fm-doc.baja{background:#fafafa}.fm-doc.baja h4{text-decoration:line-through;text-decoration-color:#9ca3af}
 .fm-doc header{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:5px}
 .fm-doc h4{margin:0;font-size:.95rem;font-weight:900}
-.fm-chip{font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;font-weight:900;background:var(--fm-negro);color:#fff;border-radius:6px;padding:2px 6px}
+.fm-chip{font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;font-weight:900;background:var(--fm-negro);color:#fff;border-radius:6px;padding:3px 8px}
+/* 2026-10-29 (v5): el chip del tipo con el color de su rol, el MISMO de «Cobramos a»: verde = documento de cobro, azul = referencia, gris = otro */
+.fm-chip.k-cobro{background:var(--fm-verde-f);color:#14532d;box-shadow:inset 0 0 0 1px #bbf7d0}
+.fm-chip.k-ref,.fm-chip.k-cot{background:var(--fm-azul-f);color:#1e3a8a;box-shadow:inset 0 0 0 1px #bfdbfe}
+.fm-chip.k-otro{background:var(--fm-gris-f);color:#374151;box-shadow:inset 0 0 0 1px var(--fm-borde)}
 .fm-cuenta{font-size:.68rem;font-weight:800;color:#374151;background:var(--fm-gris-f);border-radius:999px;padding:2px 8px}
 .fm-pri{font-size:.64rem;font-weight:900;color:#15803d;background:var(--fm-verde-f);border-radius:999px;padding:2px 7px}
 .fm-aporta{margin-left:auto;font-size:.72rem;font-weight:900;border-radius:6px;padding:3px 8px;background:var(--fm-gris-f);color:#374151}
@@ -331,40 +344,60 @@
 #otdCardMotor .otd-facprov{margin-top:8px}
 
 /* ═══ v4 · 2026-10-29 (Daniel: «evita la duplicidad de botones… indica quién se está adjudicando ese dinero… las tarjetas deben ser pequeñas») ═══ */
-/* ¿Quién se adjudica el dinero? Tres bloques chicos (Nos cobró · Cobramos a · ILUS · interno) y el margen con la política de la REGLA #57 */
-.fm-adj{background:#fff;border:1px solid var(--fm-borde);border-radius:10px;padding:9px 12px;display:flex;flex-direction:column;gap:7px;min-width:0}
-.fm-q-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:7px;min-width:0}
-.fm-q{--c:#6b7280;display:flex;flex-direction:column;gap:2px;min-width:0;border:1px solid var(--fm-borde);border-top:3px solid var(--c);border-radius:9px;padding:7px 10px;background:#fff}
-.fm-q.prov{--c:#0a0a0a}.fm-q.cli{--c:#16a34a}.fm-q.cli.nocobra{--c:#3b82f6}.fm-q.ilus{--c:#dc2626}.fm-q.falta{--c:#f59e0b;background:var(--fm-ambar-f)}
-.fm-q-t{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:var(--fm-gris)}
-.fm-q-n{font-size:.88rem;font-weight:900;line-height:1.25;overflow-wrap:anywhere}
-.fm-q-e{font-size:.74rem;color:#374151;font-weight:700;overflow-wrap:anywhere}
-.fm-q-v{font-size:1.2rem;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.2;margin-top:2px;overflow-wrap:anywhere}
-.fm-q-l{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:.74rem}
-.fm-q-l li{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 7px;min-width:0}
+/* ¿Quién se adjudica el dinero? Bloques chicos (Nos cobró · Cobramos a · ILUS · interno) y el margen con la política de la REGLA #57.
+   2026-10-29 (v5, Daniel: «que se reconozca a simple vista cuánto cobré, en qué factura, el margen», y luego «no tan colorido… no tarjetas tan grandes;
+   todo bien resumido»): cada bloque en DOS líneas (rótulo · nombre / la cifra · sus chips) sobre fondo gris suave, sin bordes de acento; el color vive
+   SOLO en chips chicos (el documento junto a lo cobrado, el anexo, el semáforo del margen). El desglose se abre con «Ver el desglose». */
+.fm-adj{background:#fff;border:1px solid var(--fm-borde);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.fm-adj-h{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 10px}
+.fm-adj-h .fm-col-t{margin:0}
+.fm-adj-ver{display:inline-flex;align-items:center;gap:4px;min-height:32px;padding:0 10px;border:1px dashed #cbd5e1;border-radius:8px;background:#fff;
+  font:inherit;font-size:.72rem;font-weight:800;color:#1d4ed8;cursor:pointer;white-space:nowrap}
+.fm-adj-ver:hover,.fm-adj-ver:focus-visible{border-color:#1d4ed8;outline:none}
+.fm-q-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:8px;min-width:0;align-items:start}
+/* Cada bloque en dos líneas con flex (el ::before parte la fila): [rótulo · nombre · su detalle] / [la cifra · los chips]; el desglose, debajo */
+.fm-q,.fm-q-m{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;min-width:0;background:#fafafa;border:1px solid var(--fm-borde);border-radius:10px;padding:8px 12px}
+.fm-q::before,.fm-q-m::before{content:"";order:4;flex-basis:100%;height:0}
+.fm-q-t,.fm-q-mt{order:1;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:var(--fm-gris)}
+.fm-q-n{order:2;font-size:.84rem;font-weight:900;line-height:1.25;overflow-wrap:anywhere}
+.fm-q-e{order:3;font-size:.74rem;color:#374151;font-weight:700;overflow-wrap:anywhere}
+.fm-q-v{order:5;font-size:1.08rem;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.25;overflow-wrap:anywhere}
+.fm-q.cli .fm-q-v{color:#15803d}
+.fm-q.cli.nocobra .fm-q-v{color:#1e40af}
+.fm-q-ds{order:6;display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:0}
+.fm-q-det{order:9;flex:1 1 100%;display:flex;flex-direction:column;gap:6px;min-width:0;margin-top:4px;padding-top:6px;border-top:1px dashed var(--fm-borde)}
+.fm-q-det[hidden]{display:none !important}
+.fm-q-l{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:.76rem}
+.fm-q-l li{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;min-width:0}
 .fm-q-r{color:#374151;flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
 .fm-q-l b{font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap}
-.fm-q-doc{font-style:normal;font-size:.66rem;font-weight:900;background:var(--fm-verde-f);color:#14532d;border-radius:6px;padding:1px 7px;white-space:nowrap}
-.fm-q-nota{font-style:normal;font-size:.66rem;font-weight:800;background:var(--fm-ambar-f);color:#78350f;border-radius:6px;padding:1px 7px}
-.fm-q-av,.fm-q-cost,.fm-q-ok{font-size:.72rem;font-weight:700;border-radius:7px;padding:3px 8px;margin-top:3px;overflow-wrap:anywhere;align-self:flex-start}
+.fm-q-l .fm-q-ds{flex:1 1 100%}
+/* El chip del documento (tipo + número): verde suave = documento de cobro; azul suave = referencia de la venta; ámbar = falta */
+.fm-q-doc{display:inline-flex;align-items:center;font-style:normal;font-size:.7rem;font-weight:800;line-height:1.3;border-radius:10px;padding:2px 8px;min-width:0;
+  overflow-wrap:anywhere;background:var(--fm-verde-f);color:#14532d;border:1px solid #bbf7d0}
+.fm-q-doc.ref{background:var(--fm-azul-f);color:#1e3a8a;border-color:#bfdbfe}
+.fm-q-doc.falta{background:var(--fm-ambar-f);color:#78350f;border-color:#fde68a}
+.fm-q-av,.fm-q-cost,.fm-q-ok{font-size:.7rem;font-weight:700;border-radius:999px;padding:2px 8px;overflow-wrap:anywhere}
 .fm-q-av{background:var(--fm-ambar-f);color:#78350f}
-.fm-q-cost{background:var(--fm-gris-f);color:#374151}
-.fm-q-ok{background:var(--fm-gris-f);color:#374151}
-.fm-q .fm-lock{align-self:flex-start;margin-top:4px}
-.fm-lock.no{background:var(--fm-ambar-f);color:#78350f}
-.fm-q.cli.nocobra .fm-q-v{font-size:1rem;color:#1e40af}
-/* El margen (REGLA #57): ≥ 30 % objetivo (verde) · 20 a < 30 % tolerancia (verde suave) · < 20 % bajo (ámbar) · < 0 pérdida (rojo) */
-.fm-q-m{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;border-radius:9px;padding:6px 10px;border:1px solid var(--fm-borde);background:var(--fm-gris-f);min-width:0}
-.fm-q-mt{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:var(--fm-gris)}
-.fm-q-m b{font-size:1.02rem;font-weight:900;font-variant-numeric:tabular-nums}
-.fm-q-m em{font-style:normal;font-weight:900;font-size:.85rem}
-.fm-q-cu{font-size:.74rem;color:#374151;flex:1 1 240px;min-width:0;overflow-wrap:anywhere}
-.fm-q-pol{font-size:.7rem;font-weight:900;border-radius:999px;padding:2px 10px;background:#fff;overflow-wrap:anywhere}
-.fm-q-m.m-ok{background:var(--fm-verde-f);border-color:#86efac;color:#14532d}
-.fm-q-m.m-tol{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
-.fm-q-m.m-bajo,.fm-q-m.m-falta{background:var(--fm-ambar-f);border-color:#fde68a;color:#78350f}
-.fm-q-m.m-rojo{background:var(--fm-rojo-f);border-color:#fecaca;color:#991b1b}
-.fm-cta.c-tol{--c:#65a30d}
+.fm-q-cost,.fm-q-ok{background:var(--fm-gris-f);color:#374151}
+.fm-q-det>*{align-self:flex-start}
+.fm-q-det>.fm-q-l{align-self:stretch}
+.fm-q .fm-lock{margin-top:0}
+/* El margen (REGLA #57): la cifra y el % en la segunda línea; el SEMÁFORO es el chip chico de la primera (punto + la banda en una palabra):
+   verde = 20 % o más (objetivo o tolerancia) · ámbar = bajo · rojo = pérdida · gris = sin medir. La frase completa, en su tooltip y en el desglose. */
+.fm-q-mn{order:5;display:inline-flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0}
+.fm-q-mv{font-size:1.08rem;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.25;overflow-wrap:anywhere}
+.fm-q-mp{font-style:normal;font-size:1.08rem;font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--sem-t,#374151)}
+.fm-q-pol{order:2;display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:800;border-radius:999px;padding:2px 8px;
+  background:var(--sem-f,var(--fm-gris-f));color:var(--sem-t,#374151);overflow-wrap:anywhere}
+.fm-q-pol::before{content:"";flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:var(--sem,#9ca3af)}
+.fm-q-cu,.fm-q-frase{font-size:.74rem;color:#374151;overflow-wrap:anywhere}
+.fm-q-frase{font-weight:800}
+.fm-q-m.m-ok,.fm-q-m.m-tol{--sem:#16a34a;--sem-f:var(--fm-verde-f);--sem-t:#14532d}
+.fm-q-m.m-bajo{--sem:#f59e0b;--sem-f:var(--fm-ambar-f);--sem-t:#78350f}
+.fm-q-m.m-rojo{--sem:#dc2626;--sem-f:var(--fm-rojo-f);--sem-t:#991b1b}
+.fm-q-m.m-falta .fm-q-mv{font-size:.86rem;color:#374151}
+.fm-cta.c-tol{--c:#16a34a}
 /* Un botón por acción: el recorrido y el rechazo enlazan al botón único (no lo repiten) y este se resalta un momento al llegar */
 .fm-ir{display:inline-flex;align-items:center;gap:5px;min-height:28px;font-size:.74rem;font-weight:800;color:#1d4ed8;text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
 .fm-ir:hover,.fm-ir:focus-visible{color:#1e3a8a}
@@ -377,7 +410,7 @@
 .fm-doc-s h4{margin:0;font-size:.92rem;font-weight:900;overflow-wrap:anywhere}
 .fm-rol{font-size:.68rem;font-weight:900;border-radius:999px;padding:2px 9px;background:var(--fm-gris-f);color:#374151;overflow-wrap:anywhere}
 .fm-rol.r-cobro{background:var(--fm-verde-f);color:#14532d}
-.fm-rol.r-ref{background:var(--fm-ambar-f);color:#78350f}
+.fm-rol.r-ref{background:var(--fm-azul-f);color:#1e3a8a}      /* 2026-10-29 (v5): la referencia de la venta en azul, igual que su chip en «Cobramos a» */
 .fm-rol.r-cot{background:var(--fm-azul-f);color:#1e3a8a}
 .fm-doc-f,.fm-doc-m{font-size:.74rem;font-weight:800;color:#374151;white-space:nowrap}
 .fm-doc-m{font-variant-numeric:tabular-nums}
@@ -433,7 +466,8 @@
   .fm-ir{min-height:44px}
   .fm-doc-ver{min-height:44px;flex:1 1 100%;justify-content:center;margin-left:0}
   .fm-sec-h .fm-btn-doc{margin-left:0;flex:1 1 100%}
-  .fm-q-v{font-size:1.1rem}
+  /* 2026-10-29 (v5): «Ver el desglose» táctil y a lo ancho; las cifras no se cortan (si no caben, bajan de línea) */
+  .fm-adj-ver{min-height:44px;flex:1 1 100%;justify-content:center}
 }
 
 /* 📒 2026-10-11: la cuenta de la OT al pedir la autorización de cerrar con pérdida */

@@ -319,10 +319,12 @@ class TestElResumenDeArriba(_HarnessBase):
         self.assertIn('<small class="fm-q-t">Cobramos a</small><b class="fm-q-n">Gimnasio de prueba</b><b class="fm-q-v">$302.101</b>', q)
         self.assertIn('<small class="fm-q-t">Nos cobró</small><b class="fm-q-n">Técnico Demo</b>', q)
         self.assertIn('<b class="fm-q-v">$250.000</b>', q)
-        self.assertIn("<b>Ganamos $52.101</b><em>(17,2 %)</em>", q)
+        # 2026-10-29 (v5, Daniel: «no tarjetas tan grandes; todo bien resumido»): la cifra y el % en una línea, con un semáforo chico
+        self.assertIn('<b class="fm-q-mv">Ganamos $52.101</b><em class="fm-q-mp">17,2 %</em>', q)
         self.assertTrue(q.index("Nos cobró") < q.index("Cobramos a") < q.index("Ganamos"))
         # REGLA #57: 17,2 % está bajo el 20 %: margen bajo (ámbar), y La cuenta lleva el MISMO color
         self.assertIn('<div class="fm-q-m m-bajo" role="status">', q)
+        self.assertIn('>Margen bajo</span>', q)
         self.assertIn("Margen bajo: menos de 20 % (el objetivo es 30 %)", q)
         self.assertTrue(self._cta(html).startswith("c-bajo"))
         self.assertNotIn('class="fm-res"', self._cta(html), "las cifras no se repiten dentro de La cuenta")
@@ -335,8 +337,9 @@ class TestElResumenDeArriba(_HarnessBase):
             f["queda"].update(total=-78000, servicio=-78000, despacho=0, pct=-25.8)
         html = self._pintar("cobro_2docs", mutar=perdida)
         q = self._quien(html)
-        self.assertIn("<b>Perdimos $78.000</b><em>(−25,8 %)</em>", q)
+        self.assertIn('<b class="fm-q-mv">Perdimos $78.000</b><em class="fm-q-mp">−25,8 %</em>', q)
         self.assertIn('<div class="fm-q-m m-rojo" role="status">', q)
+        self.assertIn('<span class="fm-q-pol" title="Pérdida: lo cobrado no alcanza a cubrir lo que nos costó">Pérdida</span>', q)    # semáforo rojo
         self.assertTrue(self._cta(html).startswith("c-rojo"), "una pérdida siempre va en rojo, aunque el semáforo del servidor diga otra cosa")
         self.assertNotIn("Ganamos", q)
 
@@ -346,7 +349,10 @@ class TestElResumenDeArriba(_HarnessBase):
             rec["fin"]["me_cobraron"].update(falta_tecnico=True, tecnico=None)
             rec["fin"]["label"] = "Falta lo que te cobró el técnico"
         q = self._quien(self._pintar("cobro_2docs", mutar=falta))
-        self.assertIn("<b>Margen: falta un dato para calcularlo</b>", q)
+        # 2026-10-29 (v5): sin medir = semáforo gris «Sin medir»; lo que falta (fin.label) va en su tooltip y en el desglose. Ningún %.
+        self.assertIn('<b class="fm-q-mv">Falta un dato para calcularlo</b></span>', q)
+        self.assertIn('<span class="fm-q-pol" title="Falta lo que te cobró el técnico">Sin medir</span>', q)
+        self.assertNotIn('class="fm-q-mp"', q)
         self.assertIn('<div class="fm-q-m m-falta" role="status">', q)
         self.assertIn('<b class="fm-q-v"><span class="fm-pend">Falta declararlo</span></b>', q, "lo que nos cobraron falta: se dice en ámbar")
         self.assertNotIn("Ganamos", q)
@@ -450,8 +456,13 @@ class TestElResumenDeArriba(_HarnessBase):
         en el tooltip del bloque. La cuenta ya no la repite."""
         html = self._pintar("cobro_2docs")
         q = self._quien(html)
-        self.assertIn('<li><span class="fm-q-r">Instalación o servicio</span><b>$252.101</b><em class="fm-q-doc">FCV 11439</em></li>', q)
-        self.assertIn('<li><span class="fm-q-r">Despacho</span><b>$50.000</b><em class="fm-q-doc">BLV 23375</em></li>', q)
+        # 2026-10-29 (v5): el chip dice el tipo y el número («Factura N° 11439»); el código del ERP queda en su tooltip. Junto al total, los dos documentos;
+        # en el desglose, cada línea con el suyo.
+        fac = '<em class="fm-q-doc" title="FCV 11439: documento de cobro">Factura N° 11439</em>'
+        bol = '<em class="fm-q-doc" title="BLV 23375: documento de cobro">Boleta N° 23375</em>'
+        self.assertIn('<b class="fm-q-v">$302.101</b><span class="fm-q-ds">' + fac + bol + '</span>', q)
+        self.assertIn('<li><span class="fm-q-r">Instalación o servicio</span><b>$252.101</b><span class="fm-q-ds">' + fac + '</span></li>', q)
+        self.assertIn('<li><span class="fm-q-r">Despacho</span><b>$50.000</b><span class="fm-q-ds">' + bol + '</span></li>', q)
         self.assertIn('title="Lo cobrado sale de la FCV 11439: servicio $252.101 · la BLV 23375: despacho $50.000"', q)
         self.assertNotIn("Lo cobrado sale de", self._cta(html))
 
@@ -480,7 +491,9 @@ class TestElResumenDeArriba(_HarnessBase):
             pan["documentos"] = []
         q = self._quien(self._pintar("sin_docs", mutar=a_mano))
         self.assertIn('<span class="fm-q-av">Lo cobrado: escrito a mano (no viene de un documento de Random)</span>', q)
-        self.assertIn('<em class="fm-q-nota">sin documento de Random</em>', q)
+        # 2026-10-29 (v5): «sin documento de Random» pasó a ser el chip ámbar «Falta el documento», junto a lo cobrado (y en cada línea del desglose)
+        self.assertIn('<b class="fm-q-v">$302.101</b><span class="fm-q-ds"><em class="fm-q-doc falta">Falta el documento</em></span>', q)
+        self.assertEqual(q.count('<em class="fm-q-doc falta">Falta el documento</em>'), 3, "junto al total y en servicio y despacho")
 
     def test_la_interna_no_muestra_ni_ganamos_ni_autorizacion(self):
         """Un trabajo interno: quién lo hizo y la línea «ILUS · interno» (un rótulo, no una persona); no hay cliente, ni margen, ni autorización."""
@@ -493,7 +506,7 @@ class TestElResumenDeArriba(_HarnessBase):
 
     def test_el_modal_de_cierre_usa_el_mismo_resumen(self):
         q = self._quien(self._pintar("cobro_2docs", modo="modal"))
-        self.assertIn("<b>Ganamos $52.101</b>", q)
+        self.assertIn('<b class="fm-q-mv">Ganamos $52.101</b>', q)
         self.assertIn("Cobramos a", q)
         self.assertIn("Nos cobró", q)
 
