@@ -330,6 +330,66 @@
 #otdCardMotor .otd-fin-faltan{margin:8px 0 0}
 #otdCardMotor .otd-facprov{margin-top:8px}
 
+/* ═══ v4 · 2026-10-29 (Daniel: «evita la duplicidad de botones… indica quién se está adjudicando ese dinero… las tarjetas deben ser pequeñas») ═══ */
+/* ¿Quién se adjudica el dinero? Tres bloques chicos (Nos cobró · Cobramos a · ILUS · interno) y el margen con la política de la REGLA #57 */
+.fm-adj{background:#fff;border:1px solid var(--fm-borde);border-radius:10px;padding:9px 12px;display:flex;flex-direction:column;gap:7px;min-width:0}
+.fm-q-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:7px;min-width:0}
+.fm-q{--c:#6b7280;display:flex;flex-direction:column;gap:2px;min-width:0;border:1px solid var(--fm-borde);border-top:3px solid var(--c);border-radius:9px;padding:7px 10px;background:#fff}
+.fm-q.prov{--c:#0a0a0a}.fm-q.cli{--c:#16a34a}.fm-q.cli.nocobra{--c:#3b82f6}.fm-q.ilus{--c:#dc2626}.fm-q.falta{--c:#f59e0b;background:var(--fm-ambar-f)}
+.fm-q-t{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:var(--fm-gris)}
+.fm-q-n{font-size:.88rem;font-weight:900;line-height:1.25;overflow-wrap:anywhere}
+.fm-q-e{font-size:.74rem;color:#374151;font-weight:700;overflow-wrap:anywhere}
+.fm-q-v{font-size:1.2rem;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.2;margin-top:2px;overflow-wrap:anywhere}
+.fm-q-l{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:.74rem}
+.fm-q-l li{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 7px;min-width:0}
+.fm-q-r{color:#374151;flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.fm-q-l b{font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap}
+.fm-q-doc{font-style:normal;font-size:.66rem;font-weight:900;background:var(--fm-verde-f);color:#14532d;border-radius:6px;padding:1px 7px;white-space:nowrap}
+.fm-q-nota{font-style:normal;font-size:.66rem;font-weight:800;background:var(--fm-ambar-f);color:#78350f;border-radius:6px;padding:1px 7px}
+.fm-q-av,.fm-q-cost,.fm-q-ok{font-size:.72rem;font-weight:700;border-radius:7px;padding:3px 8px;margin-top:3px;overflow-wrap:anywhere;align-self:flex-start}
+.fm-q-av{background:var(--fm-ambar-f);color:#78350f}
+.fm-q-cost{background:var(--fm-gris-f);color:#374151}
+.fm-q-ok{background:var(--fm-gris-f);color:#374151}
+.fm-q .fm-lock{align-self:flex-start;margin-top:4px}
+.fm-lock.no{background:var(--fm-ambar-f);color:#78350f}
+.fm-q.cli.nocobra .fm-q-v{font-size:1rem;color:#1e40af}
+/* El margen (REGLA #57): ≥ 30 % objetivo (verde) · 20 a < 30 % tolerancia (verde suave) · < 20 % bajo (ámbar) · < 0 pérdida (rojo) */
+.fm-q-m{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;border-radius:9px;padding:6px 10px;border:1px solid var(--fm-borde);background:var(--fm-gris-f);min-width:0}
+.fm-q-mt{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:var(--fm-gris)}
+.fm-q-m b{font-size:1.02rem;font-weight:900;font-variant-numeric:tabular-nums}
+.fm-q-m em{font-style:normal;font-weight:900;font-size:.85rem}
+.fm-q-cu{font-size:.74rem;color:#374151;flex:1 1 240px;min-width:0;overflow-wrap:anywhere}
+.fm-q-pol{font-size:.7rem;font-weight:900;border-radius:999px;padding:2px 10px;background:#fff;overflow-wrap:anywhere}
+.fm-q-m.m-ok{background:var(--fm-verde-f);border-color:#86efac;color:#14532d}
+.fm-q-m.m-tol{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+.fm-q-m.m-bajo,.fm-q-m.m-falta{background:var(--fm-ambar-f);border-color:#fde68a;color:#78350f}
+.fm-q-m.m-rojo{background:var(--fm-rojo-f);border-color:#fecaca;color:#991b1b}
+.fm-cta.c-tol{--c:#65a30d}
+/* Un botón por acción: el recorrido y el rechazo enlazan al botón único (no lo repiten) y este se resalta un momento al llegar */
+.fm-ir{display:inline-flex;align-items:center;gap:5px;min-height:28px;font-size:.74rem;font-weight:800;color:#1d4ed8;text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
+.fm-ir:hover,.fm-ir:focus-visible{color:#1e3a8a}
+.fm-resalta{animation:fmResalta 1.1s ease 2;outline:3px solid #93c5fd;outline-offset:2px}
+@keyframes fmResalta{0%{box-shadow:0 0 0 0 rgba(37,99,235,.55)}100%{box-shadow:0 0 0 14px rgba(37,99,235,0)}}
+@media (prefers-reduced-motion:reduce){.fm-resalta{animation:none}}
+.fm-sec-h .fm-btn-doc{margin-left:auto}
+/* Documentos: tarjetas chicas; el detalle (RUT, quién lo agregó, líneas, saldo por línea) se abre con «Ver detalle» */
+.fm-doc-s{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}
+.fm-doc-s h4{margin:0;font-size:.92rem;font-weight:900;overflow-wrap:anywhere}
+.fm-rol{font-size:.68rem;font-weight:900;border-radius:999px;padding:2px 9px;background:var(--fm-gris-f);color:#374151;overflow-wrap:anywhere}
+.fm-rol.r-cobro{background:var(--fm-verde-f);color:#14532d}
+.fm-rol.r-ref{background:var(--fm-ambar-f);color:#78350f}
+.fm-rol.r-cot{background:var(--fm-azul-f);color:#1e3a8a}
+.fm-doc-f,.fm-doc-m{font-size:.74rem;font-weight:800;color:#374151;white-space:nowrap}
+.fm-doc-m{font-variant-numeric:tabular-nums}
+.fm-doc-s .fm-aporta{margin-left:0}
+.fm-doc-tz{font-size:.7rem;font-weight:800;color:#78350f;background:var(--fm-ambar-f);border-radius:6px;padding:2px 7px;overflow-wrap:anywhere}
+.fm-doc-tz.ok{color:#14532d;background:var(--fm-verde-f)}
+.fm-doc-ver{margin-left:auto;display:inline-flex;align-items:center;gap:4px;min-height:32px;padding:0 10px;border:1px dashed #cbd5e1;border-radius:8px;background:#fff;
+  font:inherit;font-size:.72rem;font-weight:800;color:#1d4ed8;cursor:pointer;white-space:nowrap}
+.fm-doc-ver:hover,.fm-doc-ver:focus-visible{border-color:#1d4ed8;outline:none}
+.fm-doc-det{margin-top:7px;padding-top:7px;border-top:1px dashed var(--fm-borde)}
+.fm-doc-det[hidden]{display:none !important}
+
 /* Bloque angosto (celular, o un modal chico): la cuenta en una fila de tres piezas apiladas y el saldo por línea en tarjetitas */
 @container (max-width:560px){
   .fm-res-i{flex:1 1 40%}
@@ -369,6 +429,11 @@
   .fm-aporta{margin-left:0;flex:1 1 100%}
   .fm-sindoc .fm-btn{margin-left:0;flex:1 1 100%}
   .fm-tg{width:52px}
+  /* 2026-10-29 (v4): enlaces al botón único, «Ver detalle» de cada documento y el botón de «Documentos», táctiles y a lo ancho */
+  .fm-ir{min-height:44px}
+  .fm-doc-ver{min-height:44px;flex:1 1 100%;justify-content:center;margin-left:0}
+  .fm-sec-h .fm-btn-doc{margin-left:0;flex:1 1 100%}
+  .fm-q-v{font-size:1.1rem}
 }
 
 /* 📒 2026-10-11: la cuenta de la OT al pedir la autorización de cerrar con pérdida */

@@ -102940,7 +102940,12 @@ def ot_api_panorama(vid):
             "       c.razon_social AS cliente, v.cobro_cero_motivo, "
             # 🛡️ 2026-10-29: lo que necesita la regla única de cobertura (_ot_cobertura) para saber si la OT se cobra.
             "       " + _ot_fin_cols_sql("v") + ", "
-            "       COALESCE(au.nombre, au.username) AS tecnico "
+            "       COALESCE(au.nombre, au.username) AS tecnico, v.proveedor_nombre, "
+            # 🧭 2026-10-29 («¿Quién se adjudica el dinero?»: «Daniel Pulgar nos cobró tanto»): la EMPRESA del técnico externo (la misma
+            # tabla con que el asistente arma el anexo), en esta misma consulta: ninguna lectura nueva por OT.
+            "       (SELECT tee.razon_social FROM mant_tecnico_externo_usuarios teu "
+            "          JOIN mant_tecnicos_externos tee ON tee.id = teu.tecnico_externo_id "
+            "         WHERE teu.user_id = v.tecnico_user_id LIMIT 1) AS tecnico_empresa "
             "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
             "  LEFT JOIN app_users au ON au.id=v.tecnico_user_id WHERE v.id=%s", (vid,))
     except Exception as e:
@@ -103072,7 +103077,11 @@ def ot_api_panorama(vid):
         "interna": interna,   # 🔒 2026-10-08: trabajo interno sin cliente: el motor no ofrece documento/cobro/autorización
         "estado": v.get("estado"), "cerrada": (v.get("estado") or "") == "cerrada",
         "contadores": cont, "documentos": docs, "saldo": saldo_ot,
-        "costos": {"registros": regs, "total": total_costo, "sin_costo": int(rep.get("n_sin_costo") or 0)},
+        "costos": {"registros": regs, "total": total_costo, "sin_costo": int(rep.get("n_sin_costo") or 0),
+                   # 🧭 2026-10-29: quién nos cobró (el técnico o proveedor de la OT y su empresa), para «¿Quién se adjudica el dinero?». Solo gestión:
+                   # esta ruta ya respondió 403 a un técnico (REGLAS #19/#26: la plata y los proveedores se quitan en el servidor).
+                   "proveedor": {"nombre": (v.get("tecnico") or "").strip(), "externo": ext,
+                                 "empresa": ((v.get("tecnico_empresa") or v.get("proveedor_nombre") or "").strip() if ext else "")}},
         "centro": {"valor": v.get("centro_costo"), "nombre": dict(_OT2_CENTROS_COSTO).get(v.get("centro_costo") or "", ""),
                    "opciones": [{"v": c, "n": n} for c, n in _OT2_CENTROS_COSTO]},
         "puede_editar": puede_cob and (v.get("estado") or "") not in ("cerrada", "cancelada", "anulada"),
@@ -103289,7 +103298,9 @@ def _ot_anexo_vinculo_vista(v):
                  "total": ax["total"], "total_txt": _oac.clp(ax["total"]), "vinculo": vinc,
                  "costo_txt": _oac.clp(suma) if suma is not None else "",
                  "abierta": (v.get("estado") or "").strip().lower() not in _oac.ESTADOS_OT_CERRADOS,
-                 "compartido": bool(ax.get("compartido")), "rol": ax.get("rol")}
+                 "compartido": bool(ax.get("compartido")), "rol": ax.get("rol"),
+                 # 🧭 2026-10-29: la empresa que firma el anexo («Nos cobró …» en el motor de la OT). Ya viene en la fila leída: nada nuevo.
+                 "proveedor": ax.get("proveedor") or ""}
         if vista["compartido"]:
             # 🧾 ANEXO ÚNICO: cuánto es SU parte y cuánto el anexo completo, con el detalle por OT (instalación / desinstalación / despacho).
             res_p = _oac.resumen_partidas(ax["items_general"])

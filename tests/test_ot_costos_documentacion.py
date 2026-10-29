@@ -303,17 +303,29 @@ class TestNotaDeVentaOmitidaNoSumaDosVeces(_HarnessBase):
 
 
 class TestElResumenDeArriba(_HarnessBase):
+    """2026-10-29 (v4): las cifras grandes (Cobramos · Nos cobraron · Ganamos/Perdimos) subieron de La cuenta al encabezado «¿Quién se adjudica el
+    dinero?» (Daniel: «arriba: Daniel Pulgar nos cobró tanto; nosotros cobramos a la empresa tanto…»). Mismos datos, mismas reglas: nunca se inventa un
+    resultado, una pérdida va en rojo y una OT que no se cobra dice «No se cobra · nos costó $X». La política de margen es la de la REGLA #57."""
+
     def _cta(self, html):
         return html.split('<section class="fm-cta ')[1].split("</section>")[0]
 
+    def _quien(self, html):
+        return html.split('<section class="fm-adj"')[1].split("</section>")[0]
+
     def test_ganamos_en_grande_con_cobramos_y_nos_cobraron(self):
-        cta = self._cta(self._pintar("cobro_2docs"))
-        self.assertIn("<small>Cobramos</small><b>$302.101</b>", cta)
-        self.assertIn("<small>Nos cobraron</small><b>$250.000</b>", cta)
-        self.assertIn('<div class="fm-res-i q"><small>Ganamos</small><b>$52.101<em>(17,2 %)</em></b></div>', cta)
-        self.assertTrue(cta.index("Cobramos</small>") < cta.index("Nos cobraron</small>") < cta.index("Ganamos</small>"))
-        self.assertIn("Margen sano", cta)
-        self.assertTrue(cta.startswith("c-ok"), "el resultado va en verde")
+        html = self._pintar("cobro_2docs")
+        q = self._quien(html)
+        self.assertIn('<small class="fm-q-t">Cobramos a</small><b class="fm-q-n">Gimnasio de prueba</b><b class="fm-q-v">$302.101</b>', q)
+        self.assertIn('<small class="fm-q-t">Nos cobró</small><b class="fm-q-n">Técnico Demo</b>', q)
+        self.assertIn('<b class="fm-q-v">$250.000</b>', q)
+        self.assertIn("<b>Ganamos $52.101</b><em>(17,2 %)</em>", q)
+        self.assertTrue(q.index("Nos cobró") < q.index("Cobramos a") < q.index("Ganamos"))
+        # REGLA #57: 17,2 % está bajo el 20 %: margen bajo (ámbar), y La cuenta lleva el MISMO color
+        self.assertIn('<div class="fm-q-m m-bajo" role="status">', q)
+        self.assertIn("Margen bajo: menos de 20 % (el objetivo es 30 %)", q)
+        self.assertTrue(self._cta(html).startswith("c-bajo"))
+        self.assertNotIn('class="fm-res"', self._cta(html), "las cifras no se repiten dentro de La cuenta")
 
     def test_perdimos_en_rojo_con_el_monto_sin_signo(self):
         def perdida(rec, pan):
@@ -321,27 +333,35 @@ class TestElResumenDeArriba(_HarnessBase):
             f.update(clase="ambar", label="Pérdida")
             f["me_cobraron"].update(tecnico=330000, total=380000)
             f["queda"].update(total=-78000, servicio=-78000, despacho=0, pct=-25.8)
-        cta = self._cta(self._pintar("cobro_2docs", mutar=perdida))
-        self.assertIn('<div class="fm-res-i q"><small>Perdimos</small><b>$78.000<em>(−25,8 %)</em></b></div>', cta)
-        self.assertTrue(cta.startswith("c-rojo"), "una pérdida siempre va en rojo, aunque el semáforo del servidor diga otra cosa")
-        self.assertNotIn("Ganamos", cta)
+        html = self._pintar("cobro_2docs", mutar=perdida)
+        q = self._quien(html)
+        self.assertIn("<b>Perdimos $78.000</b><em>(−25,8 %)</em>", q)
+        self.assertIn('<div class="fm-q-m m-rojo" role="status">', q)
+        self.assertTrue(self._cta(html).startswith("c-rojo"), "una pérdida siempre va en rojo, aunque el semáforo del servidor diga otra cosa")
+        self.assertNotIn("Ganamos", q)
 
     def test_sin_dato_para_calcular_no_inventa_ganancia_ni_perdida(self):
         def falta(rec, pan):
             rec["fin"]["queda"].update(mostrar=False, total=0, pct=None)
             rec["fin"]["me_cobraron"].update(falta_tecnico=True, tecnico=None)
-        cta = self._cta(self._pintar("cobro_2docs", mutar=falta))
-        self.assertIn("<small>Resultado</small><b>—<em>falta un dato para calcularlo</em></b>", cta)
-        self.assertNotIn("Ganamos", cta)
-        self.assertNotIn("Perdimos", cta)
+            rec["fin"]["label"] = "Falta lo que te cobró el técnico"
+        q = self._quien(self._pintar("cobro_2docs", mutar=falta))
+        self.assertIn("<b>Margen: falta un dato para calcularlo</b>", q)
+        self.assertIn('<div class="fm-q-m m-falta" role="status">', q)
+        self.assertIn('<b class="fm-q-v"><span class="fm-pend">Falta declararlo</span></b>', q, "lo que nos cobraron falta: se dice en ámbar")
+        self.assertNotIn("Ganamos", q)
+        self.assertNotIn("Perdimos", q)
 
     def test_si_no_se_cobra_dice_no_se_cobra_nos_costo(self):
         html = self._pintar("garantia_nv")
+        q = self._quien(html)
+        self.assertIn('<b class="fm-q-v">No se cobra</b>', q)
+        self.assertIn('<span class="fm-q-cost">nos costó $200.000</span>', q)
+        self.assertIn('<span class="fm-motivo">Garantía</span>', q)
+        self.assertNotIn("Ganamos", q)
+        self.assertNotIn("Perdimos", q)
+        self.assertNotIn('class="fm-q-m', q, "sin cobro no hay margen que medir")
         cta = self._cta(html)
-        self.assertIn('<div class="fm-res-i q"><small>No se cobra</small><b>nos costó $200.000</b></div>', cta)
-        self.assertIn('<span class="fm-motivo">Garantía</span>', cta)
-        self.assertNotIn("Ganamos", cta)
-        self.assertNotIn("Perdimos", cta)
         # 2026-10-25: quién autorizó el $0 (con su argumento completo) se cuenta UNA vez, en el paso ① del recorrido, y no se repite en la tarjeta
         self.assertNotIn("Autorizado por Daniel", cta)
         paso1 = html.split('<ol class="fm-pasos">')[1].split("</ol>")[0]
@@ -426,8 +446,14 @@ class TestElResumenDeArriba(_HarnessBase):
         self.assertIn(".fm-aviso{background:var(--fm-ambar-f)", _leer("static/ot_fin_motor.css"))
 
     def test_de_donde_sale_lo_cobrado_dice_el_documento_el_servicio_y_el_despacho(self):
-        cta = self._cta(self._pintar("cobro_2docs"))
-        self.assertIn('<li class="o">Lo cobrado sale de la FCV 11439: servicio $252.101 · la BLV 23375: despacho $50.000</li>', cta)
+        """2026-10-29 (v4): cada línea de «Cobramos a» lleva el documento que la cobra (el documento que lleva el cobro manda); la frase completa queda
+        en el tooltip del bloque. La cuenta ya no la repite."""
+        html = self._pintar("cobro_2docs")
+        q = self._quien(html)
+        self.assertIn('<li><span class="fm-q-r">Instalación o servicio</span><b>$252.101</b><em class="fm-q-doc">FCV 11439</em></li>', q)
+        self.assertIn('<li><span class="fm-q-r">Despacho</span><b>$50.000</b><em class="fm-q-doc">BLV 23375</em></li>', q)
+        self.assertIn('title="Lo cobrado sale de la FCV 11439: servicio $252.101 · la BLV 23375: despacho $50.000"', q)
+        self.assertNotIn("Lo cobrado sale de", self._cta(html))
 
     def test_el_valorizado_quien_lo_declaro_y_la_autorizacion_van_en_una_linea_cada_uno(self):
         def con_aut(rec, pan):
@@ -437,34 +463,39 @@ class TestElResumenDeArriba(_HarnessBase):
                                       "resuelto_at": "08/10/2026 11:00"}]
         html = self._pintar("cobro_2docs", declaro="Declaradas por Aarón Urbina el 08/10 12:30", mutar=con_aut)
         det = self._cta(html).split('<ul class="fm-det">')[1].split("</ul>")[0]
-        self.assertEqual(det.count("<li"), 4)
+        self.assertEqual(det.count("<li"), 3, "valorizado, quién declaró y la autorización (de dónde sale lo cobrado está arriba, en «Cobramos a»)")
         self.assertIn("Valorizado (referencia): <b>$959.000</b> · no se suma a lo cobrado", det)
         self.assertIn("Costos declarados por Aarón Urbina el 08/10 12:30", det)
         self.assertIn("Autorización: Cerrar sin documento, aprobada por Daniel Aguilar el 08/10/2026 11:00", det)
         self.assertNotIn("Otra", det, "solo cuenta la autorización aprobada")
 
     def test_sin_declaracion_ni_valorizado_no_hay_lineas_vacias(self):
-        det = self._cta(self._pintar("cobro_2docs")).split('<ul class="fm-det">')[1].split("</ul>")[0]
-        self.assertEqual(det.count("<li"), 1, "solo de dónde sale lo cobrado")
+        cta = self._cta(self._pintar("cobro_2docs"))
+        self.assertNotIn('<ul class="fm-det">', cta, "sin nada que contar, no hay lista (de dónde sale lo cobrado ya está arriba)")
+        self.assertNotIn("<li></li>", cta)
 
     def test_el_cobro_escrito_a_mano_dice_que_no_viene_de_un_documento(self):
         def a_mano(rec, pan):
             rec["fin"]["cobre"]["fuente"] = "escrito a mano"
             pan["documentos"] = []
-        cta = self._cta(self._pintar("sin_docs", mutar=a_mano))
-        self.assertIn("Lo cobrado: escrito a mano (no viene de un documento de Random)", cta)
+        q = self._quien(self._pintar("sin_docs", mutar=a_mano))
+        self.assertIn('<span class="fm-q-av">Lo cobrado: escrito a mano (no viene de un documento de Random)</span>', q)
+        self.assertIn('<em class="fm-q-nota">sin documento de Random</em>', q)
 
     def test_la_interna_no_muestra_ni_ganamos_ni_autorizacion(self):
-        cta = self._cta(self._pintar("interna_cerrada"))
-        self.assertIn("<small>No se cobra</small>", cta)
-        self.assertIn("nos costó $0", cta)
-        self.assertNotIn("Sin autorización", cta)
-        self.assertNotIn("Ganamos", cta)
+        """Un trabajo interno: quién lo hizo y la línea «ILUS · interno» (un rótulo, no una persona); no hay cliente, ni margen, ni autorización."""
+        q = self._quien(self._pintar("interna_cerrada"))
+        self.assertIn('<small class="fm-q-t">ILUS · interno</small><b class="fm-q-n">Trabajo interno de ILUS</b>', q)
+        self.assertIn("$0", q)
+        self.assertNotIn("Cobramos a", q)
+        self.assertNotIn("Sin autorización", q)
+        self.assertNotIn("Ganamos", q)
 
     def test_el_modal_de_cierre_usa_el_mismo_resumen(self):
-        cta = self._cta(self._pintar("cobro_2docs", modo="modal"))
-        self.assertIn("<small>Ganamos</small>", cta)
-        self.assertIn("<small>Cobramos</small>", cta)
+        q = self._quien(self._pintar("cobro_2docs", modo="modal"))
+        self.assertIn("<b>Ganamos $52.101</b>", q)
+        self.assertIn("Cobramos a", q)
+        self.assertIn("Nos cobró", q)
 
     def test_la_frase_del_modelo_queda_en_el_tooltip_y_los_numeros_no_se_cortan(self):
         html = self._pintar("cobro_2docs")
