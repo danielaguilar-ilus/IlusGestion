@@ -135,20 +135,25 @@ class TestQuienSeAdjudicaElDinero(_Motor):
         prov = q.split('<div class="fm-q prov')[1].split('<div class="fm-q ')[0]
         self.assertIn('<small class="fm-q-t">Nos cobró</small><b class="fm-q-n">Daniel Pulgar</b><span class="fm-q-e">DAP Servicio SpA · proveedor externo</span>', prov)
         self.assertIn('<b class="fm-q-v">$1.500.000</b>', prov)
-        self.assertIn('<li><span class="fm-q-r">Instalación o servicio</span><b>$1.000.000</b></li>', prov)
+        # 2026-10-29 (v5, Daniel: «todo bien resumido… la información extra se abre con clic»): servicio y despacho van en el desglose (oculto hasta el clic)
+        self.assertIn('<div class="fm-q-det" hidden><ul class="fm-q-l"><li><span class="fm-q-r">Instalación o servicio</span><b>$1.000.000</b></li>', prov)
         self.assertIn('<li><span class="fm-q-r">Despacho</span><b>$500.000</b></li>', prov)
-        self.assertIn("Anexo N° 221 · firmado", prov)
-        # 2) Cobramos a: el cliente, total y cada línea con el documento que la cobra
+        # …y el anexo queda a la vista, junto a la cifra (chip azul: firmado y alineado)
+        self.assertIn('<b class="fm-q-v">$1.500.000</b><span class="fm-q-ds"><span class="fm-lock"><i class="bi bi-lock-fill"></i> Anexo N° 221 · firmado</span></span>', prov)
+        # 2) Cobramos a: el cliente, el total y, JUNTO al total, el chip chico de la factura que lo lleva (una vez, aunque cobre servicio y despacho)
         cli = q.split('<div class="fm-q cli')[1].split("</div>")[0]
-        self.assertIn('<small class="fm-q-t">Cobramos a</small><b class="fm-q-n">Gimnasio Las Condes SpA</b><b class="fm-q-v">$2.000.000</b>', cli)
-        self.assertIn('<span class="fm-q-r">Instalación o servicio</span><b>$1.400.000</b><em class="fm-q-doc">FCV 11567</em>', cli)
-        self.assertIn('<span class="fm-q-r">Despacho</span><b>$600.000</b><em class="fm-q-doc">FCV 11567</em>', cli)
+        fac = '<em class="fm-q-doc" title="FCV 11567: documento de cobro">Factura N° 11567</em>'
+        self.assertIn('<small class="fm-q-t">Cobramos a</small><b class="fm-q-n">Gimnasio Las Condes SpA</b><b class="fm-q-v">$2.000.000</b>'
+                      '<span class="fm-q-ds">' + fac + '</span>', cli)
+        # en el desglose, cada línea con el documento que la cobra
+        self.assertIn('<span class="fm-q-r">Instalación o servicio</span><b>$1.400.000</b><span class="fm-q-ds">' + fac + '</span>', cli)
+        self.assertIn('<span class="fm-q-r">Despacho</span><b>$600.000</b><span class="fm-q-ds">' + fac + '</span>', cli)
         # 3) se cobra: no hay línea «ILUS · interno»
         self.assertNotIn("ILUS · interno", q)
-        # el margen: 25 % = tolerancia (REGLA #57)
-        self.assertIn('<div class="fm-q-m m-tol" role="status"><span class="fm-q-mt">Margen</span><b>Ganamos $500.000</b><em>(25 %)</em>', q)
-        self.assertIn("Cobramos $2.000.000 − nos costó $1.500.000", q)
-        self.assertIn("En tolerancia: entre 20 y 30 %", q)
+        # el margen: 25 % = tolerancia (REGLA #57), con su semáforo chico («Tolerancia»: verde) y la frase completa en el tooltip y el desglose
+        self.assertIn('<div class="fm-q-m m-tol" role="status"><span class="fm-q-mt">Margen</span><span class="fm-q-mn"><b class="fm-q-mv">Ganamos $500.000</b>'
+                      '<em class="fm-q-mp">25 %</em></span><span class="fm-q-pol" title="En tolerancia: entre 20 y 30 %">Tolerancia</span>', q)
+        self.assertIn('<span class="fm-q-cu">Cobramos $2.000.000 − nos costó $1.500.000</span><span class="fm-q-frase">En tolerancia: entre 20 y 30 %</span>', q)
         self.assertTrue(html.split('<section class="fm-cta ')[1].startswith("c-tol"), "La cuenta lleva el mismo color que el margen")
 
     def test_en_garantia_no_se_cobra_nos_costo_y_lo_asume_ilus_como_una_linea(self):
@@ -197,8 +202,11 @@ class TestQuienSeAdjudicaElDinero(_Motor):
         q = self.quien(self.pintar(rec, pan))
         cli = q.split('<div class="fm-q cli falta"')[1].split('<div class="fm-q-m')[0]
         self.assertIn('<b class="fm-q-v"><span class="fm-pend">Falta declararlo</span></b>', cli)
-        self.assertIn("Referencia de la venta: VD 10618. Falta la factura o boleta.", cli)
-        self.assertIn("<b>Margen: falta un dato para calcularlo</b>", q)
+        # 2026-10-29 (v5): la nota de venta en su chip AZUL (referencia de la venta) y el ÁMBAR de lo que falta, a la vista junto a lo cobrado
+        self.assertIn('<span class="fm-q-ds"><em class="fm-q-doc ref" title="VD 10618: referencia de la venta, no es el documento de cobro">'
+                      'Nota de venta N° 10618 · referencia de la venta</em><em class="fm-q-doc falta">Falta la factura o boleta</em></span>', cli)
+        self.assertIn('<b class="fm-q-mv">Falta un dato para calcularlo</b>', q)
+        self.assertIn(">Sin medir</span>", q)
         self.assertNotIn("Ganamos", q)
 
     def test_la_politica_de_margen_de_la_regla_57(self):
@@ -226,6 +234,18 @@ class TestQuienSeAdjudicaElDinero(_Motor):
         rec["anexo"].update(vinculo="difiere", costo_txt="$1.200.000")
         prov = self.quien(self.pintar(rec, pan)).split('<div class="fm-q prov')[1].split('<div class="fm-q ')[0]
         self.assertIn('<span class="fm-lock no"><i class="bi bi-lock-fill"></i> Anexo N° 221 · firmado · no coincide con la OT</span>', prov)
+        # 2026-10-29 (v5): el semáforo del anexo. «no coincide» en rojo suave; vigente o «la OT aún no lo declara», en ámbar
+        rec, pan = _ejemplo_de_daniel()
+        rec["anexo"].update(vinculo="sin_declarar", costo_txt="")
+        self.assertIn('<span class="fm-lock no sd"><i class="bi bi-lock-fill"></i> Anexo N° 221 · firmado · la OT aún no lo declara</span>', self.quien(self.pintar(rec, pan)))
+        rec, pan = _ejemplo_de_daniel()
+        rec["anexo"].update(firmado=False, estado="vigente")
+        html = self.pintar(rec, pan)
+        self.assertIn('<span class="fm-lock vig"><i class="bi bi-lock-fill"></i> Anexo N° 221 · vigente</span>', self.quien(html))
+        self.assertIn('<span class="fm-lock vig" title=', html.split('<section class="fm-cta ')[1], "La cuenta dice lo mismo, con el mismo color")
+        css = _leer("static/ot_fin_motor.css")
+        self.assertIn(".fm-lock.vig,.fm-lock.no.sd{background:var(--fm-ambar-f);color:#78350f}", css)
+        self.assertIn(".fm-lock.no{background:var(--fm-rojo-f);color:#991b1b}", css)
 
     def test_nada_se_corta_en_el_encabezado(self):
         css = _leer("static/ot_fin_motor.css")
@@ -235,6 +255,119 @@ class TestQuienSeAdjudicaElDinero(_Motor):
         for regla in (".fm-q-n{", ".fm-q-e{", ".fm-q-r{"):
             self.assertIn("overflow-wrap:anywhere", bloque.split(regla)[1].split("}")[0], regla)
         self.assertIn("grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr))", bloque.split(".fm-q-grid{")[1].split("}")[0])
+
+
+class TestResumidoConSemaforo(_Motor):
+    """v5 — 2026-10-29. Daniel, viendo la v4: «me hubiese gustado… un poco más de COLOR y se reconozca a simple vista cuánto cobré, en qué factura, el
+    margen»; y al ver un primer intento muy vistoso: «no tan colorido; ya habíamos puesto hasta un semáforo… no tarjetas tan grandes; todo bien resumido».
+    Lo que se fija: cada bloque en dos líneas sobre fondo gris suave; el color SOLO en chips chicos (el documento junto a lo cobrado, el anexo, el semáforo
+    del margen con la banda de la REGLA #57); el resto en «Ver el desglose», en la página y oculto hasta el clic (nada se pierde)."""
+
+    def test_el_semaforo_del_margen_sigue_la_politica_de_la_regla_57(self):
+        # verde = 20 % o más (objetivo o tolerancia) · ámbar = bajo · rojo = pérdida
+        for pct, total, clase, palabra in ((35.0, 700000, "m-ok", "Objetivo"), (25.0, 500000, "m-tol", "Tolerancia"),
+                                           (15.0, 300000, "m-bajo", "Margen bajo"), (-5.0, -100000, "m-rojo", "Pérdida")):
+            rec, pan = _ejemplo_de_daniel()
+            rec["fin"]["queda"].update(pct=pct, total=total)
+            q = self.quien(self.pintar(rec, pan))
+            m = q.split(f'<div class="fm-q-m {clase}" role="status">')[1]
+            self.assertIn(f'">{palabra}</span>', m.split('<div class="fm-q-det"')[0], pct)
+            self.assertIn('<em class="fm-q-mp">' + (str(pct).replace(".0", "").replace("-", "−")) + ' %</em>', m, pct)
+        # gris = sin medir: ni % ni banda inventados
+        rec, pan = _ejemplo_de_daniel()
+        rec["fin"]["queda"].update(mostrar=False, pct=None)
+        q = self.quien(self.pintar(rec, pan))
+        self.assertIn('<div class="fm-q-m m-falta" role="status">', q)
+        self.assertIn(">Sin medir</span>", q)
+        self.assertNotIn('class="fm-q-mp"', q)
+        css = _leer("static/ot_fin_motor.css")
+        self.assertIn(".fm-q-m.m-ok,.fm-q-m.m-tol{--sem:#16a34a;", css)
+        self.assertIn(".fm-q-m.m-bajo{--sem:#f59e0b;", css)
+        self.assertIn(".fm-q-m.m-rojo{--sem:#dc2626;", css)
+        self.assertIn("background:var(--sem,#9ca3af)", css.split(".fm-q-pol::before{")[1].split("}")[0], "sin banda, el punto es gris")
+
+    def test_la_politica_del_motor_es_la_de_ot_margen_politica(self):
+        import ot_margen_politica as POL
+        js = _leer("static/ot_fin_motor.js")
+        m = re.search(r"var POLITICA_MARGEN = \{ objetivo: (\d+(?:\.\d+)?), tolerancia: (\d+(?:\.\d+)?) \};", js)
+        self.assertTrue(m)
+        self.assertEqual((float(m.group(1)), float(m.group(2))), (POL.OBJETIVO_PCT, POL.TOLERANCIA_PCT))
+        self.assertEqual(POL.banda(25), "tolerancia")      # (el motor la llama «tol»: misma banda)
+
+    def test_el_chip_del_documento_va_junto_a_lo_cobrado(self):
+        # factura + boleta: los dos chips verdes junto al total
+        q = self.quien(self.pintar(*_caso("cobro_2docs")))
+        resumen = q.split('<div class="fm-q cli"')[1].split('<div class="fm-q-det"')[0]
+        self.assertIn('<b class="fm-q-v">$302.101</b><span class="fm-q-ds"><em class="fm-q-doc" title="FCV 11439: documento de cobro">Factura N° 11439</em>'
+                      '<em class="fm-q-doc" title="BLV 23375: documento de cobro">Boleta N° 23375</em></span>', resumen)
+        # cobra solo con la nota de venta (sus líneas aportan): chip AZUL de referencia + ÁMBAR «Falta la factura o boleta», junto al total y en cada línea
+        rec, pan = _caso("cobro_2docs")
+        pan["documentos"] = [_doc(1, "Nota de venta", "VD", "10618", [_linea("Instalación", "ZZINSTALACION", 252101)], [_linea("Despacho", "ZZENVIO", 50000)],
+                                  "nota_venta", cat="nota_venta")]
+        q = self.quien(self.pintar(rec, pan))
+        nv = ('<em class="fm-q-doc ref" title="VD 10618: referencia de la venta, no es el documento de cobro">Nota de venta N° 10618 · referencia de la venta</em>'
+              '<em class="fm-q-doc falta">Falta la factura o boleta</em>')
+        self.assertEqual(q.count(nv), 3, "junto al total, y en servicio y despacho del desglose")
+        self.assertNotIn('<em class="fm-q-doc" title=', q, "ningún chip verde: la nota de venta no es el documento de cobro")
+        # garantía: la venta de referencia en azul, dentro del desglose
+        q = self.quien(self.pintar(*_ejemplo_de_daniel(cobra=False)))
+        self.assertIn('<div class="fm-q-det" hidden><span class="fm-q-ds"><em class="fm-q-doc ref" title="NVV 4521: referencia de la garantía, no es el documento de cobro">'
+                      'Nota de venta N° 4521 · referencia de la garantía</em></span></div>', q)
+        css = _leer("static/ot_fin_motor.css")
+        doc = css.split(".fm-q-doc{")[1].split("}")[0]
+        self.assertIn("background:var(--fm-verde-f);color:#14532d", doc)
+        self.assertIn(".fm-q-doc.ref{background:var(--fm-azul-f)", css)
+        self.assertIn(".fm-q-doc.falta{background:var(--fm-ambar-f)", css)
+
+    def test_el_mismo_verde_en_la_tarjeta_chica_del_documento_y_en_el_chip_5_del_recorrido(self):
+        rec, pan = _caso("cobro_2docs")
+        pan["documentos"].append(_doc(3, "Nota de venta", "VD", "10618", [], [], "nota_venta", cat="nota_venta", saldo=False))
+        rec["resumen"] = {"estado": "listo", "titulo": "Lista para cerrar", "faltan": []}
+        html = self.pintar(rec, pan)
+        self.assertIn('<span class="fm-chip k-cobro">Factura</span><h4>FCV 11439</h4>', html)
+        self.assertIn('<span class="fm-chip k-ref">Nota de venta</span><h4>VD 10618</h4>', html)
+        css = _leer("static/ot_fin_motor.css")
+        self.assertIn(".fm-chip.k-cobro{background:var(--fm-verde-f);color:#14532d", css)
+        # el chip ⑤ (Margen) del recorrido plegado lleva el semáforo de su banda (17,2 % → bajo)
+        chips = html.split('<span class="fm-rec-chips">')[1]
+        self.assertIn('<span class="fm-pchip hecho m-bajo" title="5. Margen:', chips)
+        self.assertIn(".fm-pchip.m-bajo{background:var(--fm-ambar-f)", css)
+
+    def test_el_desglose_se_abre_y_se_cierra_con_un_clic(self):
+        rec, pan = _ejemplo_de_daniel()
+        cerrado = self.quien(self.pintar(rec, pan))
+        self.assertIn('<button type="button" class="fm-adj-ver" data-fm-act="quienTog" aria-expanded="false" aria-controls="fmQuien1">Ver el desglose', cerrado)
+        self.assertEqual(cerrado.count('<div class="fm-q-det" hidden>'), 3, "Nos cobró, Cobramos a y el margen")
+        abierto = self.quien(self.pintar(rec, pan, clics=("quienTog",)))
+        self.assertIn('data-fm-act="quienTog" aria-expanded="true" aria-controls="fmQuien1">Ocultar el desglose', abierto)
+        self.assertNotIn('<div class="fm-q-det" hidden>', abierto)
+        self.assertEqual(abierto.count('<div class="fm-q-det">'), 3)
+        otra = self.quien(self.pintar(rec, pan, clics=("quienTog", "quienTog")))
+        self.assertEqual(otra.count('<div class="fm-q-det" hidden>'), 3)
+        css = _leer("static/ot_fin_motor.css")
+        self.assertIn(".fm-q-det[hidden]{display:none !important}", css)            # también en el modal de cierre (fuera de #otdCardMotor)
+        self.assertIn(".fm-adj-ver{min-height:44px", css.split("@media (max-width:560px)")[-1], "táctil en el celular")
+        self.assertIn("quienTog: function (inst) { return alternar(inst, 'quienAbierto', 'quienTog'); }", _leer("static/ot_fin_motor.js"))
+
+    def test_resumido_bloques_de_dos_lineas_sin_tarjetas_teñidas_ni_numeros_gigantes(self):
+        css = _leer("static/ot_fin_motor.css")
+        bloque = css.split("/* ═══ v4 · 2026-10-29")[1].split("/* Bloque angosto")[0]
+        self.assertNotIn("border-left:", css.replace("border-left:0", ""), "ningún borde lateral de acento")
+        self.assertNotIn("border-top:3px", bloque)
+        caja = css.split(".fm-q,.fm-q-m{")[1].split("}")[0]
+        self.assertIn("background:#fafafa", caja, "fondo gris suave: el color vive en los chips")
+        self.assertIn("flex-wrap:wrap", caja)
+        self.assertIn("order:4;flex-basis:100%", css.split(".fm-q::before,.fm-q-m::before{")[1].split("}")[0], "dos líneas: el ::before parte la fila")
+        for regla in ("\n.fm-q-v{", "\n.fm-q-mv{", "\n.fm-q-mp{"):
+            tam = float(re.search(r"font-size:([\d.]+)rem", css.split(regla)[1].split("}")[0]).group(1))
+            self.assertLessEqual(tam, 1.1, regla + " sin números gigantes")
+        self.assertIn("background:#fff", css.split("\n.fm-cta{")[1].split("}")[0], "La cuenta: blanca")
+        self.assertIn("background:#fff", css.split("\n.fm-doc{")[1].split("}")[0], "la tarjeta chica del documento: blanca")
+        # nada se pierde: con el desglose cerrado, servicio, despacho, la cuenta y la frase de la política siguen en la página
+        rec, pan = _ejemplo_de_daniel()
+        q = self.quien(self.pintar(rec, pan))
+        for texto in ("Instalación o servicio", "$1.000.000", "$1.400.000", "$600.000", "Cobramos $2.000.000 − nos costó $1.500.000", "En tolerancia: entre 20 y 30 %"):
+            self.assertIn(texto, q, texto)
 
 
 class TestUnBotonPorAccion(_Motor):
