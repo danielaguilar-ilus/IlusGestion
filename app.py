@@ -85191,7 +85191,36 @@ def _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas=None):
             f"Falta foto en {len(tareas_sin_foto)} tarea(s): {', '.join(nombres)}{suf}"
         )
 
+    # 📸 2026-10-30 (Daniel: «en los hallazgos de Costanera no tenemos fotos… hazlo obligatorio; mientras más información tengamos,
+    # mejor»): un HALLAZGO (Falla o Alerta del checklist, o un «Resultado del control» distinto de «Apto») lleva su foto de evidencia.
+    # Fail-open como R3: si no se puede comprobar, no se inventa un bloqueo.
+    try:
+        razones.extend(_ot_hallazgos_sin_foto_razones(vid, excluir_maquinas))
+    except Exception as _e_hf:
+        print(f"[_ot_validar_diagnostico_y_fotos][hallazgos] vid={vid}: {_e_hf}", flush=True)
+
     return razones
+
+
+def _ot_hallazgos_sin_foto_razones(vid, excluir_maquinas=None):
+    """Razones (lista de textos) por los hallazgos de la OT que no tienen NINGUNA foto en su tarea. Usa la MISMA definición de hallazgo que la
+    tarjeta «Hallazgos de esta OT» (ot_hallazgos.evaluar_tarea: Falla/Alerta de verificación y opción de resultado distinta de «Apto»;
+    «No aplica» no cuenta). Las tareas de equipos excluidos del cierre (fuera de servicio, de baja, saltados) no se exigen."""
+    filas = mysql_fetchall(
+        "SELECT t.id, t.titulo, t.maquina_id, t.tipo_respuesta, t.valor_json, t.opciones_lista_json "
+        "  FROM mant_visita_tareas t LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
+        " WHERE t.visita_id=%s AND t.tipo_respuesta IN ('verificacion','lista') AND t.valor_json IS NOT NULL "
+        + _ot_tarea_no_trabajable_sql("t.") +
+        " GROUP BY t.id HAVING COUNT(f.id) = 0", (vid,)) or []
+    excl = {int(x) for x in (excluir_maquinas or []) if x}
+    sin = [t for t in filas
+           if not (t.get("maquina_id") and int(t["maquina_id"]) in excl) and _oh.evaluar_tarea(t)]
+    if not sin:
+        return []
+    nombres = [str(t.get("titulo") or f"#{t['id']}")[:80] for t in sin[:5]]
+    suf = "" if len(sin) <= 5 else f" y {len(sin)-5} más"
+    return [f"Falta la foto de evidencia en {len(sin)} hallazgo(s) (falla o alerta del checklist): {', '.join(nombres)}{suf}. "
+            "Sube al menos una foto en cada tarea marcada."]
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -175494,6 +175523,53 @@ def ot_api_hallazgo_descartar(vid, hid):
     _mant_log("visita", vid, "hallazgo_descartado", f"{_oh.limpio(f.get('titulo'), 300)} · lo descartó {quien} · motivo: {motivo}"[:900])
     _gc_act(_gc.ENTIDAD_HALLAZGO, hid, "descartado", "Motivo: " + motivo)
     return jsonify({"ok": True, "estado": "descartado"})
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/ligar-ot", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgo_ligar_ot(vid, hid):
+    """«Ya generé la OT: ligarla» (Daniel, 30-oct: «generamos una OT desde los hallazgos pero sigue como si no lo hubiéramos gestionado»).
+    Deja el hallazgo «con OT de seguimiento» apuntando a una OT que YA existe (creada sin pasar por «Levantar OT de seguimiento», o con el
+    vínculo quitado). Mismas reglas que el vínculo automático: la OT tiene que ser viva y del mismo cliente; solo cambia el hallazgo (y marca
+    la OT como hija de seguimiento si todavía no era hija de otra). Queda en la bitácora de las dos OT."""
+    f, _fe, _caido, err = _hall_gestion_previa(vid, hid, "levantar")
+    if err:
+        return err
+    dato = re.sub(r"\s+", "", str((request.get_json(silent=True) or {}).get("ot") or "")).upper()[:40]
+    if not dato:
+        return _ot2_err("Escribe el número de la OT que generaste (por ejemplo OT-2026-00300).", "OT_REQUERIDA")
+    destino = mysql_fetchone("SELECT id, numero_ot, cliente_id, estado, ot_madre_id FROM mant_visitas WHERE UPPER(numero_ot)=%s", (dato,))
+    if not destino and dato.isdigit():
+        destino = mysql_fetchone("SELECT id, numero_ot, cliente_id, estado, ot_madre_id FROM mant_visitas "
+                                 " WHERE numero_ot LIKE %s ORDER BY id DESC LIMIT 1", ("%-" + dato.zfill(5),))
+    if not destino:
+        return _ot2_err("No encontramos esa OT. Escribe el número completo, por ejemplo OT-2026-00300.", "OT_NO_EXISTE", http=404)
+    if int(destino["id"]) == int(vid):
+        return _ot2_err("Esa es la misma OT del hallazgo. Elige la OT nueva que generaste para atenderlo.", "OT_ES_LA_MISMA", http=409)
+    if str(destino.get("estado") or "").strip().lower() in _oh.ESTADOS_OT_CAIDA:
+        return _ot2_err("Esa OT está cancelada o anulada: el hallazgo seguiría sin gestionar. Elige una OT vigente.", "OT_CAIDA", http=409)
+    origen = mysql_fetchone("SELECT cliente_id FROM mant_visitas WHERE id=%s", (int(vid),)) or {}
+    if (origen.get("cliente_id") or None) != (destino.get("cliente_id") or None):
+        return _ot2_err("Esa OT es de otro cliente. El seguimiento tiene que ser del mismo cliente del hallazgo.", "OT_OTRO_CLIENTE", http=409)
+    quien = _hall_quien()
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_ot_hallazgos SET estado='resuelto', ot_seguimiento_id=%s, seguimiento_por=%s, seguimiento_en=NOW(), "
+        "       tomado_por_id=COALESCE(tomado_por_id, %s), tomado_por=COALESCE(tomado_por, %s), tomado_en=COALESCE(tomado_en, NOW()) "
+        " WHERE id=%s AND visita_id=%s AND retirado_en IS NULL AND estado=%s",
+        (int(destino["id"]), str(quien)[:190], _hall_uid(), str(quien)[:190], int(hid), int(vid), f["estado"]))
+    if not n:
+        return _ot2_err("Alguien más cambió este hallazgo mientras lo mirabas. Recarga la página.", "HALLAZGO_CAMBIO", http=409)
+    if not destino.get("ot_madre_id"):
+        mysql_execute("UPDATE mant_visitas SET ot_madre_id=%s, ot_relacion=%s WHERE id=%s AND ot_madre_id IS NULL",
+                      (int(vid), _oh.REL_SEGUIMIENTO, int(destino["id"])))
+    _mant_log("visita", vid, "hallazgo_ligado_ot",
+              f"{_oh.limpio(f.get('titulo'), 300)} · ligado a {destino.get('numero_ot')} por {quien}"[:900])
+    _mant_log("visita", int(destino["id"]), "hallazgo_seguimiento_ligado",
+              f"Atiende un hallazgo de la OT de origen: {_oh.limpio(f.get('titulo'), 300)} · lo ligó {quien}"[:900])
+    _gc_act(_gc.ENTIDAD_HALLAZGO, hid, "con_ot", "OT de seguimiento: " + str(destino.get("numero_ot") or ""))
+    return jsonify({"ok": True, "estado": "resuelto", "ot_id": int(destino["id"]), "numero_ot": destino.get("numero_ot")})
 
 
 @app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/reabrir", methods=["POST"])

@@ -5467,7 +5467,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             style="width:{{ (_eq_listos * 100 / (equipos|length or 1)) | round(0, 'floor') }}%"></i></div>
         </div>
         <button type="button" class="sig" id="otdWkSiguiente" onclick="otdWkIrSiguiente()"
-                title="Abrir el próximo equipo con obligatorias pendientes">
+                title="Abrir el próximo equipo con obligatorias pendientes. Puedes empezar por el equipo que quieras: toca cualquiera de la lista o búscalo.">
           <i class="bi bi-arrow-down-circle-fill"></i> Siguiente pendiente</button>
       </div>
       <div class="otd-wk-sinres" id="otdWkSinRes" style="display:none">
@@ -10862,7 +10862,10 @@ function _otdWkAbrir(el){
 window.otdWkIrSiguiente = function(){
   const pend = _otdWkPendientes();
   if (!pend.length){
-    if (window.ilusToast) ilusToast('No quedan equipos con obligatorias pendientes', {type:'success'});
+    // Todo con sus obligatorias listas: no se queda mudo, sigue con el equipo de al lado (sin orden impuesto).
+    if (window.ilusToast) ilusToast('Todos los equipos tienen sus obligatorias listas. Puedes abrir el que quieras.', {type:'success'});
+    const abierto0 = document.querySelector('#otdWkCard .otd-wk-item[open]');
+    if (abierto0 && abierto0.dataset.mid) window.otdWkSiguienteDesde(abierto0.dataset.mid);
     return;
   }
   // Si hay uno abierto, se busca el SIGUIENTE pendiente después de él;
@@ -10917,8 +10920,10 @@ window.otdWkRefrescarProgreso = function(){
   const bar = document.getElementById('otdWkProgBar');
   if (txt) txt.textContent = listos + ' de ' + items.length;
   if (bar) bar.style.width = Math.round(listos * 100 / items.length) + '%';
+  // 2026-10-30 (Daniel: «no le impongamos un orden de ejecución a los técnicos; el técnico dijo que no le dejaba presionar
+  // siguiente»): el botón NUNCA se apaga. Con todo listo sigue llevando al equipo de al lado (ver otdWkIrSiguiente).
   const btn = document.getElementById('otdWkSiguiente');
-  if (btn) btn.disabled = (listos === items.length);
+  if (btn) btn.disabled = false;
 };
 
 /* ══ FUERA DE SERVICIO POR EQUIPO ═════════════════════════════════════

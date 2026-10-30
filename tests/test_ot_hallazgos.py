@@ -2353,8 +2353,11 @@ class TestCableado(unittest.TestCase):
     def test_el_tipo_se_lee_de_aqui_y_no_se_inventa_una_columna_en_mant_visitas(self):
         self.assertIn("ot_relacion", BLOQUE)
         self.assertNotIn("seguimiento_de", BLOQUE)
-        self.assertEqual(len(re.findall(r"UPDATE mant_visitas", BLOQUE)), 1, "el único UPDATE a mant_visitas es el vínculo (ot_madre_id + ot_relacion)")
+        # Los únicos UPDATE a mant_visitas son el vínculo (ot_madre_id + ot_relacion): al crear la OT de seguimiento y, desde el 30-oct,
+        # «Ya generé la OT: ligarla» (solo si la OT todavía no tenía madre).
+        self.assertEqual(len(re.findall(r"UPDATE mant_visitas", BLOQUE)), 2)
         self.assertIn("UPDATE mant_visitas SET ot_madre_id=%s, ot_relacion=%s WHERE id=%s", BLOQUE)
+        self.assertIn("UPDATE mant_visitas SET ot_madre_id=%s, ot_relacion=%s WHERE id=%s AND ot_madre_id IS NULL", BLOQUE)
 
 
 # ═══════════════════ D) plantillas renderizadas de verdad y JS ejecutado ═══════════════════

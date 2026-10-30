@@ -96,6 +96,7 @@
       {#- El texto de cada botón va en un <span class="hz-btn-tx">: así el JS lo cambia a «Guardando…» sin tocar el icono (H-27). -#}
       {% if i.puede_tomar %}<button type="button" class="hz-btn" data-hz-tomar="{{ i.id }}"><i class="bi bi-hand-index-thumb-fill" aria-hidden="true"></i> <span class="hz-btn-tx">Tomar el caso</span></button>{% endif %}
       {% if i.puede_levantar %}<button type="button" class="hz-btn pri" data-hz-levantar="{{ i.id }}"><i class="bi bi-diagram-3-fill" aria-hidden="true"></i> <span class="hz-btn-tx">Levantar OT de seguimiento</span></button>{% endif %}
+      {% if i.puede_levantar %}<button type="button" class="hz-btn sec" data-hz-ligar="{{ i.id }}" data-hz-titulo="{{ i.titulo }}" title="Si ya generaste la OT por otro camino, lígala a este hallazgo para que figure como gestionado"><i class="bi bi-link-45deg" aria-hidden="true"></i> <span class="hz-btn-tx">Ya generé la OT: ligarla</span></button>{% endif %}
       {% if i.puede_descartar %}<button type="button" class="hz-btn sec" data-hz-descartar="{{ i.id }}" data-hz-titulo="{{ i.titulo }}"><i class="bi bi-slash-circle" aria-hidden="true"></i> <span class="hz-btn-tx">Descartar</span></button>{% endif %}
       {% if i.puede_reabrir %}<button type="button" class="hz-btn sec" data-hz-reabrir="{{ i.id }}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i> <span class="hz-btn-tx">Reabrir</span></button>{% endif %}
       {#- 🔁 26-oct: la gestión circular (editar, valorizar, ticket, repuesto) y, solo para el superadministrador, borrar. -#}

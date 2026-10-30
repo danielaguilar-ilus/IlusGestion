@@ -193,6 +193,33 @@
     });
   }
 
+  /* ── «Ya generé la OT: ligarla» (30-oct): el hallazgo queda «con OT de seguimiento» apuntando a una OT que ya existe ── */
+  function ligar(id, titulo, btn) {
+    if (ocupado || !window.ilusPrompt) return;
+    window.ilusPrompt({
+      title: 'Ligar a una OT que ya generaste',
+      message: titulo || 'Hallazgo de la OT',
+      sub: 'La OT tiene que ser del mismo cliente y estar vigente. El hallazgo pasa a «con OT de seguimiento» y queda escrito en las dos OT.',
+      placeholder: 'Número de la OT (ej. OT-2026-00300)…',
+      required: true, okLabel: 'Ligar', cancelLabel: 'Cancelar', type: 'question',
+      validate: function (v) {
+        var t = String(v || '').replace(/\s+/g, '').trim();
+        if (t.length < 3) return { ok: false, error: 'Escribe el número de la OT (por ejemplo OT-2026-00300).' };
+        return { ok: true, valor: t };
+      }
+    }).then(function (ot) {
+      if (!ot) return;
+      ocupado = true;
+      var liberar = bloquear(btn, 'Guardando…');
+      api(id + '/ligar-ot', { ot: ot }).then(function (j) {
+        ocupado = false;
+        if (!j.ok) { liberar(); toast(j.error, 'error', 8000); return; }
+        toast('✓ Hallazgo ligado a ' + (j.numero_ot || 'la OT') + '. Ya figura como gestionado.', 'success');
+        recargar();
+      });
+    });
+  }
+
   function reabrir(id, btn) {
     if (ocupado || !window.ilusConfirm) return;
     window.ilusConfirm({
@@ -255,6 +282,7 @@
     if ((b = ev.target.closest('[data-hz-levantar-sel]'))) { ev.preventDefault(); levantar(elegidos(), b); return; }
     if ((b = ev.target.closest('[data-hz-levantar]'))) { ev.preventDefault(); levantar([parseInt(b.getAttribute('data-hz-levantar'), 10)], b); return; }
     if ((b = ev.target.closest('[data-hz-descartar]'))) { ev.preventDefault(); descartar(parseInt(b.getAttribute('data-hz-descartar'), 10), b.getAttribute('data-hz-titulo'), b); return; }
+    if ((b = ev.target.closest('[data-hz-ligar]'))) { ev.preventDefault(); ligar(parseInt(b.getAttribute('data-hz-ligar'), 10), b.getAttribute('data-hz-titulo'), b); return; }
     if ((b = ev.target.closest('[data-hz-reabrir]'))) { ev.preventDefault(); reabrir(parseInt(b.getAttribute('data-hz-reabrir'), 10), b); return; }
     if ((b = ev.target.closest('[data-hz-todo]'))) { ev.preventDefault(); alternarTodo(); return; }
     if ((b = ev.target.closest('[data-hz-plegar-todo]'))) { ev.preventDefault(); alternarPlegado(); return; }
