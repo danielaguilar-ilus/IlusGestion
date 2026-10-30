@@ -32,7 +32,7 @@ BANCO = "Banco ajustable multiposición FID 45° a 90° con rodillos para pierna
 
 def _gdv(num, fecha, prods):
     return {"clave": ["GDV", num], "tipo": "GDV", "numero": num, "titulo": "GDV " + num, "tipo_txt": "Guía de despacho",
-            "fecha": fecha, "en_ot": False, "desde": "FCV 11745", "lineas": len(prods),
+            "fecha": fecha, "en_ot": False, "desde": "FCV 11745", "lineas": len(prods), "unidades": sum(q for _s, _n, q in prods),
             "texto": "Salió el stock el %s (%d producto%s)" % (fecha, len(prods), "" if len(prods) == 1 else "s"),
             "productos": [{"sku": s, "nombre": n, "cantidad": q} for s, n, q in prods]}
 
@@ -76,10 +76,14 @@ RESUMEN = {"ok": True, "visita_id": 171, "check": True, "comparacion": COMP, "gu
 B_TEXTO = TROTA + " (MT-T70): la OT gestiona 2; Check informa que salió 1."
 CON_CHECK = dict(RESUMEN, check_ot={"modo": "por_producto", "gracia_dias": 3,
                                     "hallazgos": [{"codigo": "check_expidio_menos", "texto": B_TEXTO}]}, semaforos={
-    "33193": {"color": "ambar", "texto": "Falta por salir 1 de lo que gestiona la OT · bodega expidió 1 de 1", "pendiente": False},
-    "33194": {"color": "ambar", "texto": "La guía cuadra con la OT · bodega expidió 1 de 2", "pendiente": False},
-    "33195": {"color": "verde", "texto": "Salió todo lo gestionado · bodega expidió 1 de 1", "pendiente": False},
-    "33196": {"color": "gris", "texto": "La guía cuadra con la OT · sin información de bodega (Check)", "pendiente": False}})
+    "33193": {"color": "ambar", "texto": "Falta por salir 1 de lo que gestiona la OT · bodega expidió 1 de 1", "pendiente": False,
+              "cifras": {"ot": 2, "guia": 1, "check": 1}},
+    "33194": {"color": "ambar", "texto": "La guía cuadra con la OT · bodega expidió 1 de 2", "pendiente": False,
+              "cifras": {"ot": 2, "guia": 2, "check": 1}},
+    "33195": {"color": "verde", "texto": "Salió todo lo gestionado · bodega expidió 1 de 1", "pendiente": False,
+              "cifras": {"ot": 1, "guia": 1, "check": 1}},
+    "33196": {"color": "gris", "texto": "La guía cuadra con la OT · sin información de bodega (Check)", "pendiente": False,
+              "cifras": {"ot": 1, "guia": 1, "check": None}}})
 DETALLE = dict(CON_CHECK, bodega={"33194": {
     "estado": "ok", "color": "ambar", "texto": "Bodega expidió 1 de 2 unidades.", "fuente": "GDV 33194", "fuente_es_guia": True,
     "emision": "09/10/2026", "entrega": "10/10/2026",
@@ -171,6 +175,8 @@ class TestNavegador(unittest.TestCase):
             chip = pag.inner_text("[data-gl-chip]")
             resumen = pag.inner_text("[data-gl-resumen]")
             fondo_guia = pag.eval_on_selector_all(".dc-doc.t-guia", "els => els.map(e => getComputedStyle(e).backgroundColor)")
+            cifras = pag.eval_on_selector_all("[data-gl-cif]", "els => els.map(e => e.hidden ? '' : e.innerText.replace(/\\s+/g, ' ').trim())")
+            ambar_cif = pag.eval_on_selector_all("[data-gl-cif] .dc-cif-c.ambar", "els => els.length")
             compacta = pag.evaluate(MEDIDAS)
             self._foto(pag, f"{nombre}_compacta")
             resumen_oculto = pag.eval_on_selector("[data-gl-resumen]", "e => e.hidden && e.innerText.trim() === ''")
@@ -209,7 +215,10 @@ class TestNavegador(unittest.TestCase):
         self.assertTrue(resumen_oculto, "ya no hay texto bajo la fila: la trazabilidad es chiquita")
         self.assertEqual(resumen.strip(), "")
         self.assertTrue(all(f in ("rgb(255, 255, 255)", "rgba(0, 0, 0, 0)") for f in fondo_guia), fondo_guia)
-        self.assertEqual(en_pantalla, 0, "el detalle NO se pinta en la pantalla: va en la ventana")
+        self.assertEqual([c.upper() for c in cifras], ["2 OT 1 GUÍA 1 CHECK", "2 OT 2 GUÍA 1 CHECK", "1 OT 1 GUÍA 1 CHECK", "1 OT 1 GUÍA — CHECK"],
+                         "cada tarjeta de guía dice cuánto pedía la OT, cuánto sacó la guía y cuánto expidió Check")
+        self.assertEqual(ambar_cif, 2, "ámbar solo donde no cuadra: guía ≠ OT (33193) y Check < guía (33194)")
+        self.assertEqual(en_pantalla, 0,"el detalle NO se pinta en la pantalla: va en la ventana")
         self.assertIn("No cuadra con la OT", veredicto)
         self.assertIn(B_TEXTO, veredicto, "el motivo, con nombre completo, dentro del veredicto")
         self.assertIn("La OT gestiona 3 unidades", veredicto)
@@ -232,7 +241,7 @@ class TestNavegador(unittest.TestCase):
 
     def test_escritorio_1280(self):
         m = self._revisar(1280, 900, "1280")
-        self.assertLessEqual(m["alto_tarjeta"], 150, "la trazabilidad cerrada es chica")
+        self.assertLessEqual(m["alto_tarjeta"], 520, "la trazabilidad cerrada: tarjetas medianas, no pantallas enteras")
 
     def test_celular_375(self):
         m = self._revisar(375, 812, "375")

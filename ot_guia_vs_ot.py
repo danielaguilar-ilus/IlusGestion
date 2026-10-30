@@ -969,6 +969,24 @@ def tres_bandas(comp, bodegas, fechas=None, hoy=None, dias=GRACIA_DIAS_HABILES):
     return out
 
 
+def cifras_guia(det):
+    """Las TRES cifras de una guía para su tarjeta (Daniel, 30-oct: «¿cuánto salió con la OT? ¿cuánto saqué yo por la guía?
+    ¿y cuánto salió en Check? Y pillar diferencias»): sobre los productos de ESA guía, lo que gestiona la OT (`ot`), lo que
+    dice la guía de Random (`guia`) y lo que Check expidió (`check`; None si Check no informa ninguno de esos productos).
+    {ot, guia, check}. Sin montos."""
+    ot = guia = chk = 0.0
+    hay_check = False
+    for f in (det or {}).get("productos") or []:
+        if not f.get("en_guia"):
+            continue
+        ot += cantidad(f.get("ot"))
+        guia += cantidad(f.get("guia"))
+        if f.get("check") is not None:
+            hay_check = True
+            chk += cantidad(f.get("check"))
+    return {"ot": _red(ot), "guia": _red(guia), "check": (_red(chk) if hay_check else None)}
+
+
 def detalle_guia(comp, num, tb=None, bod=None):
     """Lo que se ve al tocar la guía (Daniel: «quiero que me diga TODOS LOS MOVIMIENTOS: qué se entregó y qué no se entregó,
     y si hay DIFERENCIA con la orden de trabajo, que es lo que me interesa»):

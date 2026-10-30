@@ -99,6 +99,19 @@
     return '<span class="gl-sem' + (s.pendiente ? ' pend' : '') + '">' + dot(s.color) + '<span class="gl-sem-t">' + esc(s.texto) + '</span></span>';
   }
 
+  /* Las tres cifras de la tarjeta de una guía: lo que pedía la OT · lo que sacó la guía · lo que Check expidió. En ámbar la
+     que no cuadra (la guía sacó distinto de lo que gestiona la OT, o Check expidió menos que la guía). */
+  function htmlCifras(c) {
+    if (!c) return '';
+    var ot = Number(c.ot) || 0, g = Number(c.guia) || 0, k = c.check == null ? null : Number(c.check);
+    var eps = 0.001;
+    var gAmb = Math.abs(g - ot) > eps, kAmb = k != null && k + eps < g;
+    function celda(rot, valor, amb) {
+      return '<span class="dc-cif-c' + (amb ? ' ambar' : '') + '"><b>' + (valor == null ? '—' : esc(cant(valor))) + '</b><small>' + rot + '</small></span>';
+    }
+    return celda('OT', ot, false) + celda('Guía', g, gAmb) + celda('Check', k, kAmb);
+  }
+
   function nDiferencias(comp, cot) {
     var n = (comp && comp.estado === 'diferencias') ? (Number(comp.n_diferencias) || 0) : 0;
     return n + ((cot && cot.hallazgos) || []).length;
@@ -406,6 +419,18 @@
       var s = d ? semaforoDe(vid, num) : null;
       var p = cs[i].querySelector('[data-gl-dot]');
       if (p) p.className = 'gl-dot ' + col(s && s.color) + ((s && s.pendiente) ? ' pend' : '');   // falló la lectura: gris quieto
+      // 30-oct: la tarjeta de la guía dice, sin abrirla, qué dice Check (semáforo en palabras)
+      var cif = cs[i].querySelector ? cs[i].querySelector('[data-gl-cif]') : null;
+      if (cif) {
+        var h = htmlCifras(s && s.cifras);
+        cif.innerHTML = h;
+        cif.hidden = !h;
+      }
+      var sem = cs[i].querySelector ? cs[i].querySelector('[data-gl-sem]') : null;
+      if (sem) {
+        sem.textContent = s ? s.texto : (d ? 'Sin datos para comparar con la OT' : 'Consultando la bodega…');
+        sem.className = 'dc-c-d dc-c-sem ' + col(s && s.color);
+      }
       if (s) {
         var base = String(cs[i].getAttribute('title') || '').split(' · Semáforo')[0];
         var t = base + ' · Semáforo ' + COLOR_TXT[col(s.color)] + ': ' + s.texto;

@@ -1473,13 +1473,16 @@ class TestCadenaCompacta(unittest.TestCase):
         for n in ("33193", "33194"):
             self.assertIn('data-gl-ver="%s"' % n, h)
         self.assertEqual(h.count("data-gl-dot"), 2, "un punto de semáforo por guía")
-        self.assertIn('class="dc-doc t-nota baja"', h, "la nota dada de baja va tachada")
+        self.assertIn('class="dc-doc t-nota baja dc-card"', h, "la nota dada de baja va tachada (30-oct: cada documento es una tarjeta)")
+        self.assertIn("Dada de baja por FCV 11745", h, "la tarjeta dice su estado sin abrirla")
+        self.assertIn("Servicio: libre $709.539 de $961.640", h, "la tarjeta de la factura trae el saldo")
+        self.assertIn("data-gl-sem", h, "la tarjeta de la guía tiene su línea de Check")
         self.assertIn("Factura FCV 11745, en esta OT. Ver su detalle", h)
         self.assertIn('data-dc-panel role="region" aria-label="Detalle del documento" hidden', h)
         self.assertIn('id="dc-panel-171-0"', h)
         self.assertIn('aria-controls="dc-panel-171-0"', h)
         # lo grande ya no está en la fila…
-        for grande in ("libre $", "También la usa", "Booty Builder", "margen"):
+        for grande in ("También la usa", "Booty Builder", "margen"):
             self.assertNotIn(grande, h)
         # …pero sigue existiendo detrás del clic (REGLA #4.2): saldo por línea, otras OT y su margen, productos de la guía
         self.assertIn("libre $709.539 de $961.640", r["fcv"])
@@ -1505,6 +1508,24 @@ class TestCadenaCompacta(unittest.TestCase):
         self.assertIn("function esc(", js)
         self.assertNotIn("clp(", js)
         self.assertNotIn("'$'", js)
+
+
+class TestCifrasGuia(unittest.TestCase):
+    """30-oct (Daniel: «¿cuánto salió con la OT? ¿cuánto saqué yo por la guía? ¿y cuánto salió en Check? Y pillar diferencias»)."""
+
+    def test_suma_ot_guia_y_check_solo_de_esa_guia(self):
+        det = {"productos": [
+            {"en_guia": True, "ot": 2, "guia": 2, "check": 1},
+            {"en_guia": True, "ot": 1, "guia": 1, "check": 1},
+            {"en_guia": False, "ot": 5, "guia": 0, "check": None}]}          # lo que no salió en ninguna guía no cuenta aquí
+        self.assertEqual(G.cifras_guia(det), {"ot": 3, "guia": 3, "check": 2})
+
+    def test_sin_informacion_de_check_no_inventa_cero(self):
+        det = {"productos": [{"en_guia": True, "ot": 1, "guia": 1, "check": None}]}
+        self.assertEqual(G.cifras_guia(det), {"ot": 1, "guia": 1, "check": None})
+
+    def test_sin_detalle_es_todo_cero(self):
+        self.assertEqual(G.cifras_guia(None), {"ot": 0, "guia": 0, "check": None})
 
 
 if __name__ == "__main__":

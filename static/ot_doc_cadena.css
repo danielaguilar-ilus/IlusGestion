@@ -106,3 +106,43 @@ html.dc-mo-abierto{overflow:hidden}
   .dc-mo-h{padding:10px 14px;padding-top:max(10px,env(safe-area-inset-top))}
   .dc-mo-b{padding:12px 14px calc(20px + env(safe-area-inset-bottom))}
 }
+
+/* ───── 30-oct (Daniel: «una tarjeta para la nota de venta, una factura y otra para la guía… un poquito más grandes y con algo
+   de detalle»): cada documento es una TARJETA mediana. Sigue siendo chica (no la de antes): 3–4 líneas; el detalle completo va
+   en la ventana. Sin franja de color en el borde (REGLA #2): el estado se dice con el punto y con palabras. ───── */
+.dc-fila{align-items:stretch;gap:8px}
+.dc-fila>li{align-items:stretch;gap:8px}
+.dc-fila>li.dc-gs{flex-wrap:wrap}
+.dc-fila>li>.dc-fl{align-self:center}
+.dc-doc.dc-card{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:3px;border-radius:12px;padding:10px 12px;
+  min-height:0;min-width:200px;max-width:280px;text-align:left;white-space:normal;overflow-wrap:anywhere;font-size:.82rem;line-height:1.3}
+.dc-card.t-guia{border-style:solid}
+.dc-c-top{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%}
+.dc-c-top .gl-dot{margin-right:0}
+.dc-c-tipo{font-size:.68rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;color:#4b5563}
+.dc-c-num{font-size:1.02rem}
+.dc-c-num b{font-size:1.02rem}
+.dc-c-f{font-size:.74rem;color:#6b7280;font-variant-numeric:tabular-nums}
+.dc-c-d{font-size:.76rem;color:#374151;font-weight:600}
+.dc-c-sem{font-weight:700}
+.dc-c-sem.verde{color:#14532d}
+.dc-c-sem.ambar{color:#92400e}
+.dc-c-sem.gris{color:#4b5563}
+.dc-c-ver{margin-top:auto;padding-top:4px;font-size:.74rem;font-weight:800;color:#1d4ed8;display:inline-flex;align-items:center;gap:3px}
+@media (max-width:600px){
+  .dc-fila>li{flex-direction:column;align-items:stretch;width:100%}
+  .dc-fila>li>.dc-fl{align-self:center;transform:rotate(90deg)}
+  .dc-doc.dc-card{min-width:0;max-width:none;width:100%;min-height:44px}
+  .dc-fila>li.dc-gs{flex-direction:column}
+}
+.dc-fila>li.dc-gs{flex:1 1 100%}
+.dc-gs .dc-doc.dc-card{flex:1 1 200px;max-width:250px}
+/* Las tres cifras de la guía: OT · Guía · Check (30-oct). La que no cuadra va en ámbar. */
+.dc-cif{display:flex;gap:6px;width:100%;margin:2px 0}
+.dc-cif[hidden]{display:none}
+.dc-cif-c{flex:1 1 0;display:flex;flex-direction:column;align-items:center;border:1px solid #e5e7eb;border-radius:8px;padding:3px 4px;background:#f9fafb}
+.dc-cif-c b{font-size:1.05rem;font-variant-numeric:tabular-nums;color:#111827;line-height:1.1}
+.dc-cif-c small{font-size:.64rem;font-weight:900;letter-spacing:.04em;text-transform:uppercase;color:#4b5563}
+.dc-cif-c.ambar{background:#fff8e1;border-color:#fde68a}
+.dc-cif-c.ambar b{color:#78350f}
+.dc-cif-c.ambar small{color:#92400e}

@@ -52,6 +52,17 @@ def fecha_txt(f):
         return s[:10]
 
 
+def _unidades_guia(prods):
+    """Total de unidades que salieron en la guía (la tarjeta «Guía de despacho» lo dice sin abrirla)."""
+    total = 0.0
+    for p in prods or []:
+        try:
+            total += float(p.get("cantidad") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return int(total) if total == int(total) else round(total, 2)
+
+
 def es_nota(clave):
     return bool(clave) and clave[0] in NOTAS_VENTA
 
@@ -299,6 +310,7 @@ def armar(docs_ot, familias, info=None, guias=None, fins=None):
                               "tipo_txt": "Guía de despacho", "fecha": fecha_txt(gu.get("fecha")), "en_ot": False,
                               "desde": titulo(k), "lineas": _entero(gu.get("lineas")) or len(prods),
                               "productos": prods[:12],
+                              "unidades": _unidades_guia(prods),
                               "texto": (f"Salió el stock el {fecha_txt(gu.get('fecha'))}" if gu.get("fecha") else "Salió el stock")
                                        + (f" ({len(prods)} producto{'s' if len(prods) != 1 else ''})" if prods else "")})
         leida = all((familias.get(k) or {}).get("leida") for k in g if k in por_clave)

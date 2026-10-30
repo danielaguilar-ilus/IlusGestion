@@ -138,11 +138,44 @@
     if (!guia && n.mismo_cliente === false) marca += '<i class="bi bi-exclamation-triangle-fill dc-warn" aria-hidden="true"></i>';
     var etiqueta = (n.tipo_txt || n.tipo) + ' ' + (n.titulo || '') + (estado.length ? ', ' + estado.join(', ') : '') +
       (guia ? '. Ver qué salió y qué no' : '. Ver su detalle');
-    return '<button type="button" class="' + cls + '" data-dc-doc="' + vi + ':' + ni + '"' +
+    // 2026-10-30 (Daniel: «una tarjeta para la nota de venta, una factura y otra para la guía… un poquito más grandes y
+    // con algo de detalle»): cada documento es una TARJETA mediana (tipo, número, fecha y 2–3 líneas de lo que importa).
+    // El detalle completo sigue detrás del clic, en la ventana.
+    var detalle = lineasTarjeta(n).map(function (t) { return '<span class="dc-c-d">' + esc(t) + '</span>'; }).join('');
+    return '<button type="button" class="' + cls + ' dc-card" data-dc-doc="' + vi + ':' + ni + '"' +
       (guia ? ' data-gl-guia="' + esc(n.numero) + '" data-gl-ver="' + esc(n.numero) + '"' : '') +
       ' aria-expanded="false" aria-controls="' + esc(panelId) + '" aria-label="' + esc(etiqueta) + '" title="' + esc(etiqueta) + '">' +
-      (guia ? '<span class="gl-dot gris pend" data-gl-dot aria-hidden="true"></span>' : '') +
-      '<span class="dc-doc-t">' + esc(n.tipo) + '</span> <b>' + esc(n.numero) + '</b>' + marca + '</button>';
+      '<span class="dc-c-top"><span class="dc-c-tipo">' + esc(n.tipo_txt || n.tipo) + '</span>' +
+      (guia ? '<span class="gl-dot gris pend" data-gl-dot aria-hidden="true"></span>' : '') + '</span>' +
+      '<span class="dc-c-num"><span class="dc-doc-t">' + esc(n.tipo) + '</span> <b>' + esc(n.numero) + '</b>' + marca + '</span>' +
+      (n.fecha ? '<span class="dc-c-f">' + esc(n.fecha) + '</span>' : '') + detalle +
+      (guia ? '<span class="dc-cif" data-gl-cif hidden></span><span class="dc-c-d dc-c-sem" data-gl-sem>Consultando la bodega…</span>' : '') +
+      '<span class="dc-c-ver">' + (guia ? 'Ver qué salió y qué no' : 'Ver detalle') + ' <i class="bi bi-chevron-right" aria-hidden="true"></i></span></button>';
+  }
+
+  /* Las 2–3 líneas de la tarjeta: lo que se ve sin abrirla. Nada de montos internos de otras OT (eso vive en la ventana). */
+  function lineasTarjeta(n) {
+    var l = [];
+    if (n.tipo === 'GDV') {
+      var u = Number(n.unidades), ln = Number(n.lineas) || (n.productos || []).length;
+      if (ln) l.push(ln + (ln === 1 ? ' producto' : ' productos') + (u ? ' · ' + (Math.round(u * 100) / 100).toString().replace('.', ',') + (u === 1 ? ' unidad' : ' unidades') : ''));
+      if (n.desde) l.push('Salió desde ' + n.desde);
+      return l;
+    }
+    if (n.dada_de_baja) l.push('Dada de baja por ' + (n.reemplazado_por || 'la factura'));
+    else if (n.heredado) l.push('Copia de la OT madre');
+    else if (n.en_ot) l.push('En esta OT');
+    else l.push('No está en esta OT');
+    if (n.mismo_cliente === false) l.push('Emitida a otra empresa');
+    if (n.saldo) {
+      [['servicio', 'Servicio'], ['despacho', 'Despacho']].forEach(function (c) {
+        var x = n.saldo[c[0]];
+        if (!x || l.length >= 3) return;
+        var libre = Math.max(0, x.saldo);
+        l.push(c[1] + ': ' + (libre <= 0 ? 'usado completo' : libre >= x.total ? 'libre ' + clp(x.total) : 'libre ' + clp(libre) + ' de ' + clp(x.total)));
+      });
+    }
+    return l.slice(0, 3);
   }
 
   function htmlVenta(c, vi, pref) {

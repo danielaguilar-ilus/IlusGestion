@@ -125151,7 +125151,7 @@ def ot_api_saldo_servicio_ot(vid):
 _OT_CADENA_CACHE = {}
 _OT_CADENA_TTL = 90
 _OT_CADENA_MAX_DOCS = 12      # documentos de Random que se miran por OT (la OT y sus familias)
-_OT_CADENA_MAX_GUIAS = 4      # guías por documento
+_OT_CADENA_MAX_GUIAS = 12     # guías por documento (30-oct: con 4 se escondían las últimas y «parecía que no habían salido»)
 
 
 def _ot_cadena_guias(tido_real, nudo_real):
@@ -125159,7 +125159,7 @@ def _ot_cadena_guias(tido_real, nudo_real):
     None si Random no respondió (nunca se inventa una salida de stock)."""
     try:
         filas = _random_sql_query(
-            "SELECT TOP 80 d.NUDO AS guia, d.KOPRCT AS sku, d.NOKOPR AS producto, d.CAPRCO1 AS cantidad, "
+            "SELECT TOP 400 d.NUDO AS guia, d.KOPRCT AS sku, d.NOKOPR AS producto, d.CAPRCO1 AS cantidad, "
             "       e.FEEMDO AS fecha "
             "  FROM MAEDDO d LEFT JOIN MAEEDO e ON e.TIDO = d.TIDO AND e.NUDO = d.NUDO AND e.ENDO = d.ENDO "
             " WHERE d.TIDOPA = %s AND d.NUDOPA = %s AND d.TIDO = %s "
@@ -125958,6 +125958,15 @@ def _ot_logistica(vid, guia=None, check=False):
         for n in vivas:
             semaforos[n] = (_gvo.semaforo_guia(comp, n, None, pendiente=True) if configurado
                             else _gvo.semaforo_guia(comp, n, _gvo.bodega(None, configurado=False)))
+    # 2026-10-30: las tres cifras de cada guía (OT · guía · Check) para su tarjeta; best-effort, nunca rompe la lectura.
+    if comp.get("estado") != "sin_lectura":
+        for n in vivas:
+            s = semaforos.get(n)
+            if isinstance(s, dict) and "cifras" not in s:
+                try:
+                    s["cifras"] = _gvo.cifras_guia(_gvo.detalle_guia(comp, n, tb=tb, bod=bodegas.get(n)))
+                except Exception as e:
+                    print(f"[ot-logistica] cifras guia {n}: {type(e).__name__}", flush=True)
     res["semaforos"] = semaforos
     if tb:
         res["check_ot"] = {"modo": tb.get("modo"), "gracia_dias": _gvo.GRACIA_DIAS_HABILES,
