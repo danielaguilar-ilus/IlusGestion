@@ -125198,6 +125198,11 @@ def _ot_cadena_guias(tido_real, nudo_real):
         return None
     if filas is None:
         return None
+    return _ot_cadena_guias_armar(filas)
+
+
+def _ot_cadena_guias_armar(filas):
+    """Filas de MAEDDO (guia, sku, producto, cantidad, fecha) → guías [{numero, fecha, lineas, productos}] por fecha."""
     por_guia = {}
     for f in filas:
         num = (str(f.get("guia") or "")).strip()
@@ -125212,6 +125217,60 @@ def _ot_cadena_guias(tido_real, nudo_real):
         g["productos"].append({"sku": (str(f.get("sku") or "")).strip(), "nombre": (str(f.get("producto") or "")).strip(),
                                "cantidad": int(cant) if cant == int(cant) else round(cant, 2)})
     return sorted(por_guia.values(), key=lambda g: str(g["fecha"] or ""))[:_OT_CADENA_MAX_GUIAS]
+
+
+_OT_CADENA_GUIAS_CACHE = {}
+_OT_CADENA_GUIAS_TTL = 300
+_OT_CADENA_GUIAS_TOPE = 1500
+
+
+def _ot_cadena_guias_lote(pares):
+    """{(tido_real, nudo_real): guías | None} de TODOS los documentos de una OT en UNA sola consulta a Random (SOLO LECTURA).
+    30-oct (Aarón: «la OT va lenta»): antes era una consulta a MAEDDO por documento (hasta 12 una tras otra, ~7 s en frío).
+    Caché de 5 min por documento (por proceso). None = Random no respondió: no se cachea ni se inventa una salida."""
+    out, faltan, ahora = {}, [], time.time()
+    for p in pares:
+        p = (str(p[0]).strip().upper(), str(p[1]).strip())
+        if p in out or p in faltan:
+            continue
+        hit = _OT_CADENA_GUIAS_CACHE.get(p)
+        if hit and ahora - hit[0] < _OT_CADENA_GUIAS_TTL:
+            out[p] = hit[1]
+        else:
+            faltan.append(p)
+    if not faltan:
+        return out
+    filas = None
+    try:
+        cond = " OR ".join(["(d.TIDOPA = %s AND d.NUDOPA = %s)"] * len(faltan))
+        filas = _random_sql_query(
+            f"SELECT TOP {_OT_CADENA_GUIAS_TOPE} d.TIDOPA AS ptido, d.NUDOPA AS pnudo, d.NUDO AS guia, d.KOPRCT AS sku, "
+            "       d.NOKOPR AS producto, d.CAPRCO1 AS cantidad, e.FEEMDO AS fecha "
+            "  FROM MAEDDO d LEFT JOIN MAEEDO e ON e.TIDO = d.TIDO AND e.NUDO = d.NUDO AND e.ENDO = d.ENDO "
+            " WHERE d.TIDO = %s AND (" + cond + ") ORDER BY d.NUDO, d.NULIDO",
+            ("GDV",) + tuple(x for p in faltan for x in p), max_rows=_OT_CADENA_GUIAS_TOPE)
+    except Exception as e:
+        print(f"[ot-cadena] guias en lote: {type(e).__name__}", flush=True)
+        filas = None
+    if filas is None:
+        for p in faltan:
+            out[p] = None
+        return out
+    if len(filas) >= _OT_CADENA_GUIAS_TOPE:
+        # La consulta se topó con el máximo: puede haber cortado los últimos documentos. Se leen de a uno, como antes.
+        for p in faltan:
+            out[p] = _ot_cadena_guias(p[0], p[1])
+        return out
+    por_par = {}
+    for f in filas:
+        por_par.setdefault((str(f.get("ptido") or "").strip().upper(), str(f.get("pnudo") or "").strip()), []).append(f)
+    if len(_OT_CADENA_GUIAS_CACHE) > 600:
+        _OT_CADENA_GUIAS_CACHE.clear()
+    for p in faltan:
+        g = _ot_cadena_guias_armar(por_par.get(p, []))
+        out[p] = g
+        _OT_CADENA_GUIAS_CACHE[p] = (ahora, g)
+    return out
 
 
 def _ot_doc_cadena(vid):
@@ -125307,7 +125366,15 @@ def _ot_doc_cadena(vid):
                 except Exception:
                     pass
         info[k] = i
-        g = _ot_cadena_guias(t_r, n_r)
+    # Las guías de TODOS los documentos en una sola lectura a Random (antes: una consulta por documento, en fila).
+    try:
+        _gl = _ot_cadena_guias_lote([_ot_saldo_real(k) for k in claves])
+    except Exception as e:
+        print(f"[ot-cadena] guias lote vid={vid}: {type(e).__name__}", flush=True)
+        _gl = {}
+    for k in claves:
+        _t, _n = _ot_saldo_real(k)
+        g = _gl.get((str(_t).strip().upper(), str(_n).strip()))
         if g:
             guias[k] = g
 
@@ -172072,6 +172139,9 @@ def ot2_api_equipo_no_esta(vid, mid):
         opcion, {"motivo_clave": fd.get("motivo_clave"), "detalle": fd.get("detalle")}, n_fotos=len(archivos))
     if e_val:
         return _ot2_err(e_val[0], e_val[1])
+    if opcion != _pe.ESTADO_FALTA_STOCK and not archivos:
+        # 30-oct (Daniel: «exige también la foto en la barra de acciones»): «No está» y «Otra razón» sin foto no se registran.
+        return _ot2_err("Sube al menos una foto: es la evidencia de que el equipo no está o no se pudo revisar.", "FOTO_REQUERIDA")
     if not limpio["fotos_validas"]:
         archivos = []                                   # «No llegó · falta stock» no lleva foto
     if len(archivos) > _OTPE_MAX_FOTOS:

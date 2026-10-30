@@ -1542,8 +1542,12 @@
     estado: function (s) {
       var okO = !!s.op, okM = !!s.motivo;
       var okD = s.motivo !== 'otro' || s.detalle.replace(/\s/g, '').length >= ((LISTAS().min || {}).equipo || 10);
-      var falta = !okO ? { t: 'qué pasó con el equipo', go: 'oaSc-op' } : !okM ? { t: 'el motivo', go: 'oaSc-motivo' } : !okD ? { t: 'contar qué pasó', go: 'oaSc-motivo' } : null;
-      return { okO: okO, okM: okM && okD, falta: falta, ok: [okO, okM && okD].filter(Boolean).length };
+      // 30-oct (Daniel: «exige también la foto en la barra de acciones»): «No está» y «Otra razón» llevan foto obligatoria; solo
+      // «No llegó · falta stock» queda sin foto (no hay nada que fotografiar).
+      var pideFoto = !!s.op && s.op !== 'falta_stock', okF = !pideFoto || s.fotos.length > 0;
+      var falta = !okO ? { t: 'qué pasó con el equipo', go: 'oaSc-op' } : !okM ? { t: 'el motivo', go: 'oaSc-motivo' } : !okD ? { t: 'contar qué pasó', go: 'oaSc-motivo' } :
+        !okF ? { t: 'la foto', go: 'oaSc-foto' } : null;
+      return { okO: okO, okM: okM && okD, okF: okF, falta: falta, ok: [okO, okM && okD, okF].filter(Boolean).length, n: pideFoto ? 3 : 2 };
     },
     vista: function (s) {
       if (s.step === 'fin') return noesta.fin(s);
@@ -1559,12 +1563,12 @@
         if (s.op === 'falta_stock') {
           body += '<div class="oa-sc info"><div class="oa-sc-h"><span class="oa-sc-c"><i class="bi bi-info-lg"></i></span><span class="oa-sc-t">Sin foto</span></div><div style="color:var(--oa-muted)">«No llegó» no lleva foto: no hay nada que fotografiar. Gestión y bodega ven este equipo como pendiente por falta de stock.</div></div>';
         } else {
-          body += sc('oaSc-foto', s.fotos.length > 0, 3, 'Foto', 'Opcional', mediaCuerpo('Si ayuda a explicarlo (el lugar vacío, un letrero, el equipo bloqueado).'), 'opt');
+          body += sc('oaSc-foto', e.okF, 3, 'Foto', 'Obligatoria', mediaCuerpo('Es la evidencia: el lugar vacío, un letrero, el equipo bloqueado.'));
         }
       }
       var foot = e.falta ? faltaBtn(e.falta.t, e.falta.go) :
         '<button type="button" class="oa-btn blue block lg" data-a="enviar"' + (s.enviando ? ' aria-busy="true"' : '') + '>' + (s.enviando ? '<span class="oa-spin"></span> Enviando…' : '<i class="bi bi-check2-circle"></i> Dejarlo anotado') + '</button>';
-      return { top: topHTML({ eyebrow: 'No está / no llegó', prog: { ok: e.ok, n: 2, falta: e.falta && e.falta.t } }), body: body, foot: foot };
+      return { top: topHTML({ eyebrow: 'No está / no llegó', prog: { ok: e.ok, n: e.n, falta: e.falta && e.falta.t } }), body: body, foot: foot };
     },
     enviar: async function (s) {
       var e = noesta.estado(s);
@@ -1900,7 +1904,7 @@
     fs: { okF: 'oaSc-foto', okQ: 'oaSc-que', okR: 'oaSc-riesgo' },
     baja: { okF: 'oaSc-foto', okM: 'oaSc-mot', okT: 'oaSc-diag' },
     nollego: { okC: 'oaSc-cuantos', okQ: 'oaSc-quepaso', okW: 'oaSc-quien' },
-    noesta: { okO: 'oaSc-op', okM: 'oaSc-motivo' },
+    noesta: { okO: 'oaSc-op', okM: 'oaSc-motivo', okF: 'oaSc-foto' },
     incidencia: { okF: 'oaSc-foto', okQ: 'oaSc-que' }
   };
   function refrescarTicks() {

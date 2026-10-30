@@ -86,6 +86,31 @@ class TestLigarOt(unittest.TestCase):
         self.assertNotIn("alert(", js.replace("ilusAlert(", ""), "REGLA #1: nada de alert nativo")
 
 
+class TestFotoObligatoriaEnLaBarraDeAcciones(unittest.TestCase):
+    """30-oct (Daniel: «exige también la foto en la barra de acciones»): «No está» y «Otra razón» ya no llevan la foto opcional."""
+
+    def test_el_servidor_rechaza_no_esta_y_otra_razon_sin_foto(self):
+        src = FA.fuente_funcion("ot2_api_equipo_no_esta")
+        self.assertIn("opcion != _pe.ESTADO_FALTA_STOCK and not archivos", src)
+        self.assertIn("FOTO_REQUERIDA", src)
+        self.assertLess(src.index("FOTO_REQUERIDA"), src.index("if not limpio[\"fotos_validas\"]"),
+                        "la foto se exige ANTES de descartar las de «falta stock»")
+
+    def test_el_flujo_de_la_barra_pide_la_foto(self):
+        with open(os.path.join(RAIZ, "static", "ot_acciones.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        self.assertIn("var pideFoto = !!s.op && s.op !== 'falta_stock'", js)
+        self.assertIn("'Foto', 'Obligatoria'", js)
+        self.assertNotIn("'Foto', 'Opcional', mediaCuerpo('Si ayuda a explicarlo", js)
+        self.assertIn("noesta: { okO: 'oaSc-op', okM: 'oaSc-motivo', okF: 'oaSc-foto' }", js)
+
+    def test_falta_stock_sigue_sin_foto(self):
+        import ot_producto_estado as pe
+        r, e = pe.normalizar_equipo("falta_stock", {"motivo_clave": "sin_stock"}, 0)
+        self.assertIsNone(e)
+        self.assertEqual(r["fotos_validas"], 0)
+
+
 class TestSinOrdenImpuesto(unittest.TestCase):
     """30-oct (Daniel): «no le impongamos un orden de ejecución a los técnicos; el técnico dijo que no le dejaba presionar siguiente»."""
 
