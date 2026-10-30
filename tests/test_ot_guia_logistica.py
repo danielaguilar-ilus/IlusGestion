@@ -224,7 +224,7 @@ class TestHallazgos(unittest.TestCase):
         t, c = G.texto_campana("OT-2026-00171", "Aurum Fit Girls Spa", hs)
         self.assertEqual(t, "OT-2026-00171: 2 diferencias entre la guía de despacho y la OT")
         self.assertIn("Aurum Fit Girls Spa", c)
-        self.assertIn("«Ver logística»", c)
+        self.assertIn("toca la guía de despacho", c)      # 2026-10-29: la guía es un chip; ya no hay botón «Ver logística»
         self.assertNotIn("..", c)
         self.assertNotIn("$", c)
         for feo in ("error", "culpa", "falla tuya", "incumpl"):
@@ -318,7 +318,8 @@ class TestSemaforo(unittest.TestCase):
         c = _comparar([GUIA_33193], [_eq("BB-01", "Booty Builder Cushioned Belt")])
         s = G.semaforo_guia(c, "33193", G.bodega([], "", ["GDV 33193"]))
         self.assertEqual(s["color"], "gris")
-        self.assertEqual(s["texto"], "Salió lo que gestiona la OT · sin información de bodega (Check)")
+        self.assertEqual(s["texto"], "La guía cuadra con la OT · sin información de bodega (Check)",
+                         "la mitad de Random habla del papel; lo que salió lo dice Check")
         self.assertIn("Check no respondió ahora", G.semaforo_guia(c, "33193", G.bodega(None, respondio=False))["texto"])
         p = G.semaforo_guia(c, "33193", None, pendiente=True)
         self.assertTrue(p["pendiente"])
@@ -336,6 +337,10 @@ class TestSemaforo(unittest.TestCase):
         s = G.semaforo_guia({"estado": "sin_lectura"}, "33193", None)
         self.assertEqual((s["color"], s["texto"]), ("gris", "Random no respondió"))
 
+    def test_modulo_puro_y_feriados_de_una_sola_fuente(self):
+        self.assertIn("import cl_feriados as _clf", _leer("ot_guia_vs_ot.py"), "REGLA #31: feriados solo de cl_feriados")
+        self.test_modulo_puro()
+
     def test_modulo_puro(self):
         arbol = ast.parse(_leer("ot_guia_vs_ot.py"))
         mods = set()
@@ -347,16 +352,210 @@ class TestSemaforo(unittest.TestCase):
         self.assertFalse({"flask", "pymysql", "pymssql", "requests", "app", "urllib"} & mods, mods)
 
 
+# ═══════════════ A2) Check tiene la última palabra: reglas B y C, plazo de gracia (29-oct, tarde) ═══════════════
+HOY_VENCIDO = datetime.date(2026, 10, 29)      # la guía del 08/10/2026 venció su plazo el 14/10/2026
+HOY_EN_PLAZO = datetime.date(2026, 10, 13)     # martes 13: segundo día hábil (el lunes 12 es feriado)
+BANCO = "Banco ajustable multiposición FID 45° a 90° con rodillos para piernas (negro mate)"
+
+
+def _guia10(q_guia=10):
+    return _guia("33193", [("BAN-1", BANCO, q_guia), ("ZZENVIO", "Despacho", 1)])
+
+
+def _bod_check(*filas, fuente="GDV 33193"):
+    return G.bodega(G.lineas_check(list(filas)), fuente, [fuente])
+
+
+class TestTresBandas(unittest.TestCase):
+    """«Hice una OT por 10 productos, pero en realidad salieron 8: tiene que haber una alerta.» Algo POCO: tres reglas."""
+
+    def _tb(self, comp, bod, hoy=HOY_VENCIDO, num="33193"):
+        return G.tres_bandas(comp, {num: bod}, fechas={num: "08/10/2026"}, hoy=hoy)
+
+    def test_plazo_de_gracia_en_dias_habiles_con_feriados(self):
+        self.assertEqual(G.vence_el("08/10/2026"), datetime.date(2026, 10, 14), "jue 08 → vie 09, (lun 12 feriado), mar 13, mié 14")
+        self.assertTrue(G.en_plazo("08/10/2026", HOY_EN_PLAZO))
+        self.assertFalse(G.en_plazo("08/10/2026", datetime.date(2026, 10, 14)))
+        self.assertTrue(G.en_plazo("", HOY_VENCIDO), "sin fecha no se acusa a ciegas")
+        self.assertTrue(G.en_plazo("basura", HOY_VENCIDO))
+        self.assertEqual(G.GRACIA_DIAS_HABILES, 3)
+
+    def test_B_la_ot_gestiona_10_y_check_informa_8(self):
+        comp = _comparar([_guia10()], [_eq("BAN-1", BANCO, 10)])
+        self.assertEqual(comp["estado"], "coincide", "la guía (Random) dice 10: el papel cuadra")
+        tb = self._tb(comp, _bod_check(_fila_check("BAN-1", BANCO, 10, despachado=8)))
+        self.assertEqual([h["codigo"] for h in tb["hallazgos"]], ["check_expidio_menos"])
+        h = tb["hallazgos"][0]
+        self.assertEqual(h["detalle"], "BAN-1")
+        self.assertEqual(h["texto"], BANCO + " (BAN-1): la OT gestiona 10; Check informa que salieron 8.")
+        self.assertEqual(tb["productos"]["BAN-1"]["estado"], "menos")
+        self.assertIn(("check_expidio_menos", "BAN-1"), tb["evaluados"])
+        s = G.semaforo_guia(comp, "33193", _bod_check(_fila_check("BAN-1", BANCO, 10, despachado=8)), tb=tb)
+        self.assertEqual(s["color"], "ambar", "Check manda: aunque la guía cuadre, el semáforo no es verde")
+        self.assertIn("bodega expidió 8 de 10", s["texto"])
+
+    def test_B_mientras_bodega_prepara_dentro_del_plazo_no_alerta(self):
+        comp = _comparar([_guia10()], [_eq("BAN-1", BANCO, 10)])
+        tb = self._tb(comp, _bod_check(_fila_check("BAN-1", BANCO, 10, despachado=8)), hoy=HOY_EN_PLAZO)
+        self.assertEqual(tb["hallazgos"], [])
+        self.assertEqual(tb["productos"]["BAN-1"]["estado"], "preparando")
+        self.assertEqual(tb["por_guia"]["33193"]["color"], "ambar", "se ve en ámbar (falta expedir), pero no suena")
+
+    def test_B_si_check_ya_cerro_su_pedido_en_8_alerta_sin_esperar_el_plazo(self):
+        comp = _comparar([_guia10()], [_eq("BAN-1", BANCO, 10)])
+        tb = self._tb(comp, _bod_check(_fila_check("BAN-1", BANCO, 8, despachado=8)), hoy=HOY_EN_PLAZO)
+        self.assertEqual([h["codigo"] for h in tb["hallazgos"]], ["check_expidio_menos"], "Check no va a expedir más: ya es un descuadre")
+
+    def test_B_con_la_guia_tambien_corta_se_dicen_las_tres_cifras_y_A_sigue(self):
+        comp = _comparar([_guia10(9)], [_eq("BAN-1", BANCO, 10)])
+        tb = self._tb(comp, _bod_check(_fila_check("BAN-1", BANCO, 9, despachado=8)))
+        hs = G.hallazgos(comp, tb)
+        self.assertEqual(sorted(h["codigo"] for h in hs), ["cantidad_distinta", "check_expidio_menos"])
+        b = next(h for h in hs if h["codigo"] == "check_expidio_menos")
+        self.assertIn("la OT gestiona 10 y la guía dice 9; Check informa que salieron 8.", b["texto"])
+
+    def test_si_check_expidio_lo_de_la_guia_no_hay_B_aunque_la_guia_sea_corta(self):
+        comp = _comparar([_guia10(8)], [_eq("BAN-1", BANCO, 10)])
+        tb = self._tb(comp, _bod_check(_fila_check("BAN-1", BANCO, 8, despachado=8)))
+        self.assertEqual(tb["hallazgos"], [], "lo que falta en la guía ya lo dice la regla A (sin duplicar el aviso)")
+        self.assertEqual([h["codigo"] for h in G.hallazgos(comp, tb)], ["cantidad_distinta"])
+
+    def test_C_hay_guia_y_check_no_registra_la_salida(self):
+        comp = _comparar([GUIA_33193], [_eq("BB-01", "Booty Builder Cushioned Belt")])
+        bod = _bod_check(_fila_check("BB-01", "b", 1))
+        en_plazo = self._tb(comp, bod, hoy=HOY_EN_PLAZO)
+        self.assertEqual(en_plazo["hallazgos"], [], "sin alerta mientras se prepara")
+        self.assertEqual(en_plazo["por_guia"]["33193"]["estado"], "preparando")
+        self.assertIn("todavía en plazo (hasta el 14/10/2026)", en_plazo["por_guia"]["33193"]["texto"])
+        tb = self._tb(comp, bod)
+        self.assertEqual([(h["codigo"], h["detalle"]) for h in tb["hallazgos"]], [("guia_sin_salida_check", "33193")])
+        self.assertEqual(tb["hallazgos"][0]["texto"],
+                         "Hay guía GDV 33193 del 08/10/2026 y Check no registra que haya salido (1 unidad; el plazo de 3 días "
+                         "hábiles venció el 14/10/2026).")
+        self.assertEqual(tb["productos"]["BB-01"]["estado"], "sin_salida", "no se acusa dos veces (B se calla si ya está C)")
+        s = G.semaforo_guia(comp, "33193", bod, tb=tb)
+        self.assertEqual(s["color"], "ambar")
+        self.assertIn("Check no registra la salida (plazo vencido el 14/10/2026)", s["texto"])
+
+    def test_sin_datos_de_check_nunca_alerta_ni_resuelve(self):
+        comp = _comparar([_guia10()], [_eq("BAN-1", BANCO, 10)])
+        for bod in (G.bodega([], "", ["GDV 33193", "FCV 11745"]), G.bodega(None, respondio=False), G.bodega(None, configurado=False),
+                    _bod_check(_fila_check("OTRO", "Otro producto", 3, despachado=0))):
+            tb = self._tb(comp, bod)
+            self.assertEqual(tb["hallazgos"], [], bod.get("texto"))
+            self.assertNotIn(("check_expidio_menos", "BAN-1"), tb["evaluados"])
+            self.assertNotIn(("guia_sin_salida_check", "33193"), tb["evaluados"])
+            self.assertEqual(G.semaforo_guia(comp, "33193", bod, tb=tb)["color"], "gris", "gris = no se puede saber")
+        # sin guía, guía anulada o sin productos gestionados: «sin datos», nada que pedirle a Check
+        for c in (_comparar([], EQUIPOS_3), _comparar([_guia("1", [("X1", "T", 1)], anulada=True)], EQUIPOS_3),
+                  _comparar([GUIA_33193], [])):
+            self.assertEqual(G.tres_bandas(c, {"33193": _bod_check(_fila_check("BB-01", "b", 1))}, hoy=HOY_VENCIDO)["hallazgos"], [])
+
+    def test_falta_de_stock_declarada_no_se_le_pide_a_check(self):
+        comp = _comparar([_guia10(8)], [_eq("BAN-1", BANCO, 8), _eq("BAN-1", BANCO, 2, declarado="falta_stock")])
+        tb = self._tb(comp, _bod_check(_fila_check("BAN-1", BANCO, 8, despachado=8)))
+        self.assertEqual(G.hallazgos(comp, tb), [], "la OT ya dijo que 2 no llegaron: Check expidió los 8 que tocaban")
+
+    def test_por_total_cuando_check_no_informa_por_producto(self):
+        comp = _comparar([_guia10()], [_eq("BAN-1", BANCO, 10)])
+        fila = _fila_check("", "", 10, despachado=8)
+        fila.pop("codigoMaterial")
+        fila.pop("material")
+        tb = self._tb(comp, _bod_check(fila))
+        self.assertEqual(tb["modo"], "por_total")
+        self.assertEqual([(h["codigo"], h["detalle"]) for h in tb["hallazgos"]], [("check_expidio_menos", "TOTAL")])
+        self.assertEqual(tb["hallazgos"][0]["texto"], "La OT gestiona 10 productos; Check informa que salieron 8 (Check no informa "
+                                                      "por producto: se comparan los totales).")
+
+    def test_si_check_informa_por_la_factura_no_se_cuenta_dos_veces(self):
+        g1 = _guia("50001", [("BAN-1", BANCO, 5)])
+        g2 = _guia("50002", [("BAN-1", BANCO, 5)])
+        comp = _comparar([g1, g2], [_eq("BAN-1", BANCO, 10)])
+        fcv = _bod_check(_fila_check("BAN-1", BANCO, 10, despachado=10, tipo="FCV", num="11745"), fuente="FCV 11745")
+        tb = G.tres_bandas(comp, {"50001": fcv, "50002": fcv}, fechas={"50001": "08/10/2026", "50002": "08/10/2026"},
+                           hoy=HOY_VENCIDO)
+        self.assertEqual(tb["productos"]["BAN-1"]["check"], 10, "las dos guías salieron de la misma factura: 10, no 20")
+        self.assertEqual(tb["hallazgos"], [])
+        corta = _bod_check(_fila_check("BAN-1", BANCO, 10, despachado=6, tipo="FCV", num="11745"), fuente="FCV 11745")
+        tb2 = G.tres_bandas(comp, {"50001": corta, "50002": corta}, fechas={"50001": "08/10/2026", "50002": "08/10/2026"},
+                            hoy=HOY_VENCIDO)
+        self.assertIn("Check informa que salieron 6", tb2["hallazgos"][0]["texto"])
+
+    def test_B_necesita_check_de_todas_las_guias_del_producto(self):
+        g1 = _guia("50001", [("BAN-1", BANCO, 5)])
+        g2 = _guia("50002", [("BAN-1", BANCO, 5)])
+        comp = _comparar([g1, g2], [_eq("BAN-1", BANCO, 10)])
+        solo_una = {"50001": _bod_check(_fila_check("BAN-1", BANCO, 5, despachado=5, num="50001"), fuente="GDV 50001")}
+        tb = G.tres_bandas(comp, solo_una, fechas={"50001": "08/10/2026", "50002": "08/10/2026"}, hoy=HOY_VENCIDO)
+        self.assertEqual(tb["hallazgos"], [], "a la otra guía no se le preguntó: contaría de menos")
+        self.assertNotIn(("check_expidio_menos", "*"), tb["evaluados"])
+
+    def test_alcance_y_plan_nunca_resuelven_lo_de_check_a_ciegas(self):
+        previas = [{"id": 7, "codigo": "check_expidio_menos", "detalle": "BAN-1", "estado": "vigente", "texto": "t",
+                    "notificada_el": datetime.datetime(2026, 10, 29)},
+                   {"id": 8, "codigo": "guia_sin_salida_check", "detalle": "33193", "estado": "vigente", "texto": "t",
+                    "notificada_el": datetime.datetime(2026, 10, 29)}]
+        comp = _comparar([_guia10()], [_eq("BAN-1", BANCO, 10)])
+        ev, todo = G.alcance(comp, None)                       # lectura rápida, sin Check
+        self.assertEqual((ev, todo), ([], False))
+        self.assertEqual(G.plan_hallazgos({}, previas, ev, todo)["resolver"], [])
+        tb = self._tb(comp, _bod_check(_fila_check("BAN-1", BANCO, 10, despachado=10)))
+        ev, todo = G.alcance(comp, tb)
+        self.assertEqual(sorted(r["id"] for r in G.plan_hallazgos({}, previas, ev, todo)["resolver"]), [7, 8],
+                         "Check ya expidió todo: B y C se resuelven solos")
+        ev, todo = G.alcance(_comparar([], EQUIPOS_3), None)
+        self.assertTrue(todo, "sin guía no puede quedar nada vigente")
+        self.assertEqual(len(G.plan_hallazgos({}, previas, ev, todo)["resolver"]), 2)
+        self.assertEqual(len(G.plan_hallazgos({}, previas, [("check_expidio_menos", "*")])["resolver"]), 1)
+
+    def test_detalle_de_la_guia_diferencias_arriba_y_las_tres_bandas(self):
+        comp = _comparar([_guia10()], [_eq("BAN-1", BANCO, 10), _eq("X1", "Trotadora Matrix T70")])
+        bod = _bod_check(_fila_check("BAN-1", BANCO, 10, despachado=8))
+        tb = self._tb(comp, bod)
+        d = G.detalle_guia(comp, "33193", tb=tb, bod=bod)
+        self.assertEqual([x["regla"] for x in d["diferencias"]], ["B", "A"], "lo de Check primero")
+        self.assertIn("Check informa que salieron 8", d["diferencias"][0]["texto"])
+        self.assertIn("Trotadora Matrix T70 (X1): la OT gestiona 1 y no salió en ninguna guía.", d["diferencias"][1]["texto"])
+        fila = d["productos"][0]
+        self.assertEqual((fila["nombre"], fila["ot"], fila["guia"], fila["check"]), (BANCO, 10, 10, 8))
+        self.assertEqual(fila["check_txt"], "Según Check salieron 8 de 10")
+        self.assertEqual(fila["color"], "ambar")
+        fuera = d["productos"][1]
+        self.assertEqual((fuera["nombre"], fuera["guia"], fuera["en_guia"]), ("Trotadora Matrix T70", 0, False))
+        self.assertEqual(fuera["check_txt"], "No salió en ninguna guía")
+        c_ok = _comparar([GUIA_33193], [_eq("BB-01", "Booty")])
+        ok = G.detalle_guia(c_ok, "33193", bod=_bod_check(_fila_check("BB-01", "b", 1, despachado=1)))
+        self.assertEqual(ok["diferencias"], [])
+        self.assertEqual(ok["productos"][0]["check_txt"], "Salió de bodega (1 de 1, según Check)")
+        self.assertNotIn("59990", json.dumps(d), "el «valor» de Check jamás sale")
+
+    def test_correo_corto_con_numeros_y_sin_plata(self):
+        comp = _comparar([_guia10()], [_eq("BAN-1", BANCO, 10)])
+        tb = self._tb(comp, _bod_check(_fila_check("BAN-1", BANCO, 10, despachado=8)))
+        t, c = G.texto_correo("OT-2026-00171", "Aurum Fit Girls Spa", G.hallazgos(comp, tb))
+        self.assertEqual(t, "OT-2026-00171: 1 diferencia entre la OT y lo que salió de bodega")
+        self.assertIn("Aurum Fit Girls Spa", c)
+        self.assertIn("la OT gestiona 10; Check informa que salieron 8.", c)
+        self.assertIn("«Trazabilidad en Random»", c)
+        for feo in ("$", "monto", "costo", "precio", "proveedor", "margen", "culpa", "error"):
+            self.assertNotIn(feo, c.lower())
+        self.assertEqual(G.huella("a  b"), G.huella("a b"))
+        self.assertNotEqual(G.huella("salieron 8"), G.huella("salieron 9"), "si la diferencia cambia, sale otro correo")
+        tc, cc = G.texto_campana("OT-2026-00171", "", G.hallazgos(comp, tb))
+        self.assertIn("(guía y Check)", tc)
+        self.assertIn("lo que informa Check", cc)
+
+
 # ═══════════════════════════ B) el cableado en app.py ═══════════════════════════
 APP = FA.texto("app.py")
 _INI = APP.index("#  🚚 2026-10-29 — LOGÍSTICA (WMS)")
 BLOQUE = APP[_INI:APP.index("#  📒 2026-10-11 — LIBRO DE SALDO DE FACTURAS")]
 FUNCS = ["_ot_logi_tabla", "_ot_logi_guias_lineas", "_ot_logi_gestionados", "_ot_logi_otras_ot", "_ot_logi_check_doc",
-         "_ot_logi_movimientos", "_ot_logi_bodega", "_ot_logi_avisar", "_ot_logi_registrar", "_ot_logistica",
+         "_ot_logi_movimientos", "_ot_logi_bodega", "_ot_logi_avisar", "_ot_logi_correo", "_ot_logi_registrar", "_ot_logistica",
          "ot_api_documentos_logistica", "_ot_saldo_real"]
 CONSTS = ["_OT_LOGI_GUIAS_CACHE", "_OT_LOGI_GUIAS_TTL", "_OT_LOGI_CHECK_CACHE", "_OT_LOGI_CHECK_TTL", "_OT_LOGI_CHECK_TTL_ERR",
           "_OT_LOGI_CHECK_TIMEOUT", "_OT_LOGI_CHECK_PRESUPUESTO", "_OT_LOGI_CHECK_MAX_DOCS", "_OT_LOGI_MAX_OTRAS",
-          "_OT_LOGI_MAX_GUIAS_CHECK", "_OT_LOGI_TABLA"]
+          "_OT_LOGI_MAX_GUIAS_CHECK", "_OT_LOGI_TABLA", "_OT_LOGI_CORREO_REINTENTO", "_OT_LOGI_CORREO_ESPERA"]
 _COMPILADO = []
 
 
@@ -389,7 +588,7 @@ class Mundo(object):
     """Base, Random y Check de mentira. Registra todo lo que se le pide."""
 
     def __init__(self, tipo_ot="instalacion", equipos=None, random_ok=True, check=None, traza=None, tecnico=False,
-                 configurado=True):
+                 configurado=True, hoy=datetime.datetime(2026, 10, 29, 12, 0)):
         self.tipo_ot = tipo_ot
         self.equipos = equipos if equipos is not None else [
             {"vid": 5, "mid": 1, "sku": "BB-01", "nombre": "Booty Builder Cushioned Belt", "cant": 1},
@@ -399,6 +598,9 @@ class Mundo(object):
         self.alertas, self.notifs, self.logs, self.sql, self.random_sql, self.check_llamadas = [], [], [], [], [], []
         self.lecturas = 0
         self.swr = []
+        self.hoy = hoy
+        self.correos = []                 # lo que se le entregó a _aviso_interno_correo (el correo interno)
+        self.correo_modo = "ok"           # ok · apagado (la puerta lo frena: devuelve 0) · error (levanta)
 
     # ── base ──
     def fetchone(self, sql, p=None):
@@ -418,7 +620,10 @@ class Mundo(object):
         self.lecturas += 1
         self.sql.append(sql)
         if "FROM ot_guia_alerta" in sql:
-            return [dict(a) for a in self.alertas if a["visita_id"] == p[0]]
+            filas = [dict(a) for a in self.alertas if a["visita_id"] == p[0]]
+            if "estado='vigente'" in sql:
+                filas = [a for a in filas if a["estado"] == "vigente"]
+            return filas
         if "mant_visita_tareas" in sql:
             return [dict(e) for e in self.equipos]
         if "mant_ot_producto_estado" in sql or "mant_visita_repuestos" in sql or "mant_visita_documentos" in sql:
@@ -432,20 +637,42 @@ class Mundo(object):
             if any(a["visita_id"] == p[0] and (a["codigo"], a["detalle"]) == (p[1], p[2]) for a in self.alertas):
                 return
             self.alertas.append({"id": len(self.alertas) + 1, "visita_id": p[0], "codigo": p[1], "detalle": p[2], "texto": p[3],
-                                 "guias": p[4], "estado": "vigente", "veces": 1, "notificada_el": None})
+                                 "guias": p[4], "estado": "vigente", "veces": 1, "notificada_el": None,
+                                 "detectada_el": p[5], "actualizado_el": p[7], "correo_huella": None, "correo_el": None})
         elif s.startswith("UPDATE ot_guia_alerta SET estado='vigente'"):
             a = next(a for a in self.alertas if a["id"] == p[3])
-            a.update(estado="vigente", veces=a["veces"] + 1, texto=p[0])
+            a.update(estado="vigente", veces=a["veces"] + 1, texto=p[0], actualizado_el=p[2])
         elif s.startswith("UPDATE ot_guia_alerta SET estado='resuelta'"):
             next(a for a in self.alertas if a["id"] == p[2])["estado"] = "resuelta"
         elif s.startswith("UPDATE ot_guia_alerta SET texto="):
-            next(a for a in self.alertas if a["id"] == p[3])["texto"] = p[0]
+            next(a for a in self.alertas if a["id"] == p[3]).update(texto=p[0], actualizado_el=p[2])
+        elif s.startswith("UPDATE ot_guia_alerta SET correo_huella=NULL"):
+            next(a for a in self.alertas if a["id"] == p[0])["correo_huella"] = None
         elif s.startswith("UPDATE ot_guia_alerta SET notificada_el="):
             for a in self.alertas:
                 if a["visita_id"] == p[1] and a["estado"] == "vigente" and a["notificada_el"] is None:
                     a["notificada_el"] = p[0]
         elif s.startswith("UPDATE mant_notificaciones"):
             next(n for n in self.notifs if n["id"] == p[3]).update(titulo=p[0], cuerpo=p[1])
+
+    def execute_n(self, sql, p=None):
+        """mysql_execute_returning_rowcount: el «reclamo» atómico del correo (UPDATE … WHERE huella distinta)."""
+        self.sql.append(sql)
+        s = " ".join(sql.split())
+        if s.startswith("UPDATE ot_guia_alerta SET correo_huella=%s, correo_el=%s WHERE id=%s"):
+            a = next(a for a in self.alertas if a["id"] == p[2])
+            if a["correo_huella"] is None or a["correo_huella"] != p[3]:
+                a.update(correo_huella=p[0], correo_el=p[1])
+                return 1
+            return 0
+        raise AssertionError("SQL inesperado: " + s)
+
+    def aviso_correo(self, clave, uids, titulo, cuerpo, url, etiqueta="Aviso interno", ref=None):
+        if self.correo_modo == "error":
+            raise RuntimeError("SMTP de mentira caído")
+        self.correos.append({"clave": clave, "uids": list(uids), "titulo": titulo, "cuerpo": cuerpo, "url": url,
+                             "etiqueta": etiqueta, "ref": ref})
+        return 0 if self.correo_modo == "apagado" else len(uids)
 
     filas_random = [
         {"guia": "0000033193", "linea": "1", "sku": "BB-01", "producto": "Booty Builder Cushioned Belt", "cantidad": 1.0,
@@ -479,6 +706,9 @@ class Mundo(object):
         amb = _cargar({
             "mysql_fetchone": (_no if self.tecnico else self.fetchone), "mysql_fetchall": (_no if self.tecnico else self.fetchall),
             "mysql_execute": (_no if self.tecnico else self.execute), "_random_sql_query": (_no if self.tecnico else self.random),
+            "mysql_execute_returning_rowcount": (_no if self.tecnico else self.execute_n),
+            "_aviso_interno_correo": (_no if self.tecnico else self.aviso_correo),
+            "_now_chile": lambda: mundo.hoy, "timedelta": datetime.timedelta,
             "_checkwms_get": (_no if self.tecnico else self.checkwms), "_es_rol_tecnico": lambda: mundo.tecnico,
             "_checkwms_configurado": lambda: mundo.configurado, "_CHECKWMS_TRAZA": traza, "_CHECKWMS_STALE_MAX": 6 * 3600,
             "_CHECKWMS_TRAZA_TTL": 3600, "_checkwms_swr": lambda clave, fn: mundo.swr.append(clave),
@@ -680,7 +910,188 @@ class TestRuta(unittest.TestCase):
         m = Mundo(tipo_ot="preventiva", check=_check_gdv)
         st, j = m.llamar()
         self.assertEqual(j["comparacion"]["estado"], "sin_datos")
-        self.assertEqual((m.alertas, m.notifs), ([], []))
+        self.assertEqual((m.alertas, m.notifs, m.correos), ([], [], []))
+
+
+def _mundo10(desp=8, ped=10, **kw):
+    """La OT gestiona 10 bancos; la guía de Random dice 10; Check (bodega) informa `desp` expedidos de `ped` pedidos."""
+    m = Mundo(equipos=[{"vid": 5, "mid": 1, "sku": "BAN-1", "nombre": BANCO, "cant": 10}], **kw)
+    m.filas_random = [{"guia": "0000033193", "linea": "1", "sku": "BAN-1", "producto": BANCO, "cantidad": 10.0, "tidopa": "FCV",
+                       "nudopa": "0000011745", "fecha": datetime.datetime(2026, 10, 8), "esdo": ""}]
+    m.desp, m.ped = desp, ped
+    m.check = lambda params: ({"body": {"response": [_fila_check("BAN-1", BANCO, m.ped, despachado=m.desp)]}}
+                              if params["tipodoc"] == "GDV" else {"body": {"response": []}})
+    return m
+
+
+class TestCheckUltimaPalabra(unittest.TestCase):
+    """Daniel (29-oct, tarde): «es Check quien nos tiene que dar la ÚLTIMA PALABRA… si hay diferencia, dame una ALERTA, así
+    sea POR CORREO». Todo con Random, Check, base y correo de MENTIRA."""
+
+    def test_10_vs_8_registra_B_suena_la_campana_y_sale_UN_correo_a_la_gestion(self):
+        m = _mundo10()
+        st, j = m.llamar(check=True)
+        self.assertEqual(st, 200)
+        self.assertEqual(j["comparacion"]["estado"], "coincide", "el papel (la guía) cuadra con la OT")
+        self.assertEqual([h["codigo"] for h in j["check_ot"]["hallazgos"]], ["check_expidio_menos"])
+        self.assertEqual(j["semaforos"]["33193"]["color"], "ambar", "Check manda: no es verde")
+        self.assertEqual([(a["codigo"], a["detalle"], a["estado"]) for a in m.alertas], [("check_expidio_menos", "BAN-1", "vigente")])
+        self.assertEqual([(n["uid"], n["tipo"]) for n in m.notifs], [(2, "ot_guia_diferencia")])
+        self.assertEqual(len(m.correos), 1)
+        c = m.correos[0]
+        self.assertEqual(c["clave"], "ot_guia_diferencia")
+        self.assertEqual(c["uids"], [2], "a la gestión (el responsable primero), no a quien lo está mirando")
+        self.assertEqual(c["url"], "/ot/5")
+        self.assertEqual(c["ref"], {"tipo": "OT", "id": 5, "codigo": "OT-2026-00171"})
+        self.assertIn("la OT gestiona 10; Check informa que salieron 8.", c["cuerpo"])
+        self.assertIn("Aurum Fit Girls Spa", c["cuerpo"])
+        for feo in ("$", "monto", "costo", "zz_monto", "120000", "252101"):
+            self.assertNotIn(feo, c["cuerpo"] + c["titulo"])
+        # otra lectura igual: ni correo ni campana nuevos (UNO por hallazgo)
+        m.llamar(check=True)
+        m.llamar(guia="33193")
+        self.assertEqual((len(m.correos), len(m.notifs), len(m.alertas)), (1, 1, 1))
+        # la diferencia cambia (Check ahora informa 9): sale UN correo nuevo con lo de ahora
+        m.desp = 9
+        m.llamar(check=True)
+        self.assertEqual(len(m.correos), 2)
+        self.assertIn("Check informa que salieron 9", m.correos[1]["cuerpo"])
+        self.assertEqual(len(m.alertas), 1, "el mismo hallazgo, con el texto al día")
+        # bodega expide todo: se resuelve solo, sin correo
+        m.desp = 10
+        st, j = m.llamar(check=True)
+        self.assertEqual([a["estado"] for a in m.alertas], ["resuelta"])
+        self.assertEqual(len(m.correos), 2)
+        self.assertEqual((j["semaforos"]["33193"]["color"], j["semaforos"]["33193"]["texto"]),
+                         ("verde", "Salió todo lo gestionado · bodega expidió 10 de 10"))
+
+    def test_la_lectura_rapida_guarda_el_correo_y_la_de_check_manda_uno_solo_con_todo(self):
+        m = Mundo(check=_check_gdv)
+        m.llamar()
+        self.assertEqual((len(m.alertas), len(m.notifs), m.correos), (2, 1, []), "la campana suena; el correo espera a Check")
+        m.llamar(check=True)
+        self.assertEqual(len(m.correos), 1)
+        self.assertIn("Trotadora Matrix T70 (X1)", m.correos[0]["cuerpo"])
+        self.assertIn("Bicicleta Spinning S3 (Y2)", m.correos[0]["cuerpo"])
+        m.llamar()
+        m.llamar(check=True)
+        self.assertEqual(len(m.correos), 1)
+
+    def test_si_la_lectura_de_check_no_llega_el_correo_sale_igual_a_los_10_minutos(self):
+        m = Mundo(check=_check_gdv)
+        m.llamar()
+        self.assertEqual(m.correos, [])
+        for a in m.alertas:
+            a["detectada_el"] = a["actualizado_el"] = datetime.datetime.utcnow() - datetime.timedelta(minutes=11)
+        m.llamar()
+        self.assertEqual(len(m.correos), 1)
+
+    def test_sin_check_configurado_el_correo_sale_en_la_primera_lectura(self):
+        m = Mundo(check=_check_gdv, configurado=False)
+        m.llamar()
+        self.assertEqual(len(m.correos), 1)
+        self.assertEqual(m.check_llamadas, [])
+
+    def test_una_lectura_sin_check_no_resuelve_lo_que_dijo_check(self):
+        m = _mundo10()
+        m.llamar(check=True)
+        m.llamar()
+        self.assertEqual([a["estado"] for a in m.alertas], ["vigente"])
+        m.check = None                           # Check se cae: tampoco se resuelve a ciegas
+        st, j = m.llamar(check=True)
+        self.assertEqual(st, 200)
+        self.assertEqual([a["estado"] for a in m.alertas], ["vigente"])
+        self.assertEqual(j["semaforos"]["33193"]["color"], "gris")
+
+    def test_C_hay_guia_y_check_no_registra_la_salida_pasados_3_dias_habiles(self):
+        m = _mundo10(desp=0, hoy=datetime.datetime(2026, 10, 13, 10, 0))
+        st, j = m.llamar(check=True)
+        self.assertEqual((m.alertas, m.correos), ([], []), "dentro del plazo: se ve en ámbar, sin alerta")
+        self.assertEqual(j["semaforos"]["33193"]["color"], "ambar")
+        self.assertIn("todavía en plazo (hasta el 14/10/2026)", j["semaforos"]["33193"]["texto"])
+        m.hoy = datetime.datetime(2026, 10, 29, 10, 0)
+        st, j = m.llamar(check=True)
+        self.assertEqual([(a["codigo"], a["detalle"]) for a in m.alertas], [("guia_sin_salida_check", "33193")])
+        self.assertIn("Hay guía GDV 33193 del 08/10/2026 y Check no registra que haya salido", m.correos[0]["cuerpo"])
+        self.assertIn("Check no registra la salida (plazo vencido el 14/10/2026)", j["semaforos"]["33193"]["texto"])
+
+    def test_si_check_no_tiene_la_guia_no_se_alerta(self):
+        m = _mundo10()
+        m.check = lambda params: {"body": {"response": []}}
+        st, j = m.llamar(check=True)
+        self.assertEqual((m.alertas, m.correos), ([], []))
+        self.assertEqual(j["semaforos"]["33193"]["color"], "gris")
+
+    def test_correo_apagado_no_se_reintenta_y_un_error_si(self):
+        m = _mundo10()
+        m.correo_modo = "apagado"                # Control de correos (o la llave) lo frenó: queda en el Historial como bloqueado
+        m.llamar(check=True)
+        m.llamar(check=True)
+        self.assertEqual(len(m.correos), 1, "frenado por un interruptor no se reintenta en cada lectura")
+        m2 = _mundo10()
+        m2.correo_modo = "error"
+        m2.llamar(check=True)
+        self.assertIsNone(m2.alertas[0]["correo_huella"], "un error (no un interruptor) suelta el reclamo")
+        m2.correo_modo = "ok"
+        m2.llamar(check=True)
+        self.assertEqual(len(m2.correos), 1)
+
+    def test_el_detalle_de_la_guia_trae_las_tres_bandas_y_todos_los_semaforos(self):
+        m = _mundo10(traza=[{"doc": "GDV-0000033193", "ot": "4567", "tipoOT": "CONTROL DE SALIDA", "estado": "FINALIZADA",
+                             "usuario": "Samuel Rojas", "feInicioOT": "2026-10-08T11:02:00"}])
+        st, j = m.llamar(guia="33193")
+        d = j["detalle"]
+        self.assertEqual(d["diferencias"][0]["regla"], "B")
+        p = d["productos"][0]
+        self.assertEqual((p["nombre"], p["ot"], p["guia"], p["check"]), (BANCO, 10, 10, 8))
+        self.assertEqual(j["bodega"]["33193"]["movimientos"]["ots"][0]["personas"], ["Samuel Rojas"])
+        self.assertIn("33193", j["semaforos"])
+        self.assertNotIn("59990", json.dumps(j), "el «valor» de Check jamás sale")
+
+    def test_tecnico_403_y_ni_campana_ni_correo(self):
+        m = _mundo10(tecnico=True)
+        st, j = m.llamar(check=True)
+        self.assertEqual(st, 403)
+        self.assertEqual((m.correos, m.notifs, m.check_llamadas, m.random_sql), ([], [], [], []))
+
+
+class TestCorreoInterno(unittest.TestCase):
+    """El correo pasa por _aviso_interno_correo (el de verdad, de app.py) → _send_ilus_email con su clave del registro."""
+
+    def test_esta_en_el_registro_nace_encendido_y_se_puede_apagar(self):
+        import comm_correos_registro as R
+        c = R.por_clave("ot_guia_diferencia")
+        self.assertIsNotNone(c)
+        self.assertEqual((c["modulo_ui"], c["llave"], c["destinatario"], c["tipo"]),
+                         ("ot", "comunicacion_interna", "responsable_ot", "ilus"))
+        self.assertFalse(c["protegido"])
+        self.assertFalse(c["nace_apagado"], "Daniel lo pidió: nace encendido")
+        self.assertTrue(R.switch_de_fila("ot_guia_diferencia", None))
+        self.assertFalse(R.switch_de_fila("ot_guia_diferencia", {"activo": 0}), "Daniel lo apaga en Control de correos")
+        self.assertIn("nunca al técnico ni al cliente", c["avisa_a"])
+
+    def test_la_puerta_recibe_la_clave_y_nunca_va_a_un_tecnico(self):
+        enviados = []
+        usuarios = [{"id": 2, "username": "victor.soto@sphs.cl", "role": "supervisor"},
+                    {"id": 4, "username": "jaizer@sphs.cl", "role": "tecnico_ejecutivo"},
+                    {"id": 6, "username": "sin-correo", "role": "admin"}]
+
+        def enviar(to, asunto, html, **kw):
+            enviados.append((to, asunto, kw))
+            return True
+        amb = {"mysql_fetchall": lambda sql, p=None: [u for u in usuarios if u["id"] in p],
+               "_ilus_email_master": lambda ctx: "<p>" + ctx["message"] + "</p>", "_public_base_url": lambda: "https://ilus.test",
+               "_GESTION_CORREO_RE": re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$"), "_brand_subject": lambda t: "ILUS · " + t,
+               "_rol_familia": lambda r: "tecnico" if str(r or "").startswith("tecnico") else "gestion",
+               "_send_ilus_email": enviar, "print": lambda *a, **k: None}
+        exec(compile(ast.parse(FA.fuente_funcion("_aviso_interno_correo")), "<app.py:_aviso_interno_correo>", "exec"), amb)
+        n = amb["_aviso_interno_correo"](G.CORREO_CLAVE, [2, 4, 6], "OT-2026-00171: 1 diferencia", "cuerpo <b>", "/ot/5",
+                                         "Guía de despacho vs OT", ref={"tipo": "OT", "id": 5, "codigo": "OT-2026-00171"})
+        self.assertEqual(n, 1)
+        self.assertEqual([e[0] for e in enviados], ["victor.soto@sphs.cl"], "ni técnicos ni usuarios sin correo")
+        kw = enviados[0][2]
+        self.assertEqual((kw["correo"], kw["modulo"]), ("ot_guia_diferencia", "comunicacion_interna"))
+        self.assertEqual(enviados[0][1], "ILUS · OT-2026-00171: 1 diferencia")
 
 
 class TestCableado(unittest.TestCase):
@@ -701,13 +1112,21 @@ class TestCableado(unittest.TestCase):
         self.assertTrue(set(rutas) <= PERMITIDOS)
         self.assertEqual(len(re.findall(r"_checkwms_get\(", BLOQUE)), len(rutas), "toda llamada a Check lleva su ruta escrita")
 
-    def test_tabla_una_sentencia_barata_y_nunca_se_borra(self):
+    def test_tabla_barata_una_clausula_por_sentencia_y_nunca_se_borra(self):
+        """REGLA #18: la tabla nace con UNA sentencia CREATE TABLE IF NOT EXISTS y las dos columnas del correo (29-oct) se
+        agregan con UNA cláusula por sentencia, por mysql_execute (que las salta sin lock si ya existen)."""
         src = FA.fuente_funcion("_ot_logi_tabla")
-        self.assertEqual(src.count("mysql_execute("), 1)
+        self.assertEqual(src.count("mysql_execute("), 3)
         self.assertIn("CREATE TABLE IF NOT EXISTS ot_guia_alerta", src)
         self.assertIn("UNIQUE KEY uq_ga_ot_cod_det (visita_id, codigo, detalle)", src)
-        self.assertNotIn("ALTER TABLE", src)
+        alters = re.findall(r'mysql_execute\("(ALTER TABLE[^"]*)"\)', src)
+        self.assertEqual(alters, ["ALTER TABLE ot_guia_alerta ADD COLUMN correo_huella VARCHAR(64) NULL",
+                                  "ALTER TABLE ot_guia_alerta ADD COLUMN correo_el DATETIME NULL"])
+        for a in alters:
+            self.assertNotIn(",", a, "una sola cláusula por sentencia")
+            self.assertNotRegex(a, r"(?i)\b(DROP|MODIFY|CHANGE)\b")
         self.assertIsNone(re.search(r"(DELETE\s+FROM|TRUNCATE\s+(TABLE\s+)?)ot_guia_alerta", APP, re.I))
+        self.assertNotIn("ALTER TABLE ot_guia_alerta", APP.replace(src, ""), "solo _ot_logi_tabla toca la tabla")
 
     def test_enum_de_la_campana_tiene_el_tipo_nuevo_al_final_de_las_dos_listas(self):
         enums = re.findall(r"ALTER TABLE mant_notificaciones MODIFY COLUMN tipo \"\s*\"\s*ENUM\((.*?)\) DEFAULT 'otro'", APP, re.S)
@@ -718,12 +1137,20 @@ class TestCableado(unittest.TestCase):
             self.assertEqual(valores[-2], "tk_sla")
             self.assertEqual(valores.count(G.TIPO_AVISO), 1)
 
-    def test_sin_correo_y_nunca_al_cliente(self):
-        for prohibido in ("_send_ilus_email", "_aviso_interno_correo", "_mant_send_email", "whatsapp", "contraparte"):
+    def test_el_correo_es_interno_por_la_puerta_unica_y_nunca_al_cliente(self):
+        """2026-10-29 (Daniel: «dame una ALERTA, así sea POR CORREO»): ahora SÍ hay correo, pero solo interno: sale por
+        _aviso_interno_correo (puerta única con su clave del registro) a la gestión que decide _hall_destinos. Nunca un envío
+        directo, nunca al contacto/cliente, nunca WhatsApp."""
+        for prohibido in ("_send_ilus_email", "_mant_send_email", "whatsapp", "contraparte", "correo_contacto", "email_cliente"):
             self.assertNotIn(prohibido, BLOQUE)
+        self.assertEqual(BLOQUE.count("_aviso_interno_correo("), 1, "un solo lugar envía el correo")
         src = FA.fuente_funcion("_ot_logi_avisar")
         self.assertIn("_hall_destinos(vid, v, excluir_uid=_hall_uid())", src)
         self.assertIn("_gvo.TIPO_AVISO", src)
+        cor = FA.fuente_funcion("_ot_logi_correo")
+        self.assertIn("_hall_destinos(vid, v, excluir_uid=_hall_uid())", cor)
+        self.assertIn("_aviso_interno_correo(_gvo.CORREO_CLAVE, uids,", cor)
+        self.assertEqual(G.CORREO_CLAVE, "ot_guia_diferencia")
 
     def test_la_campana_tiene_icono_en_la_bandeja(self):
         self.assertIn("ot_guia_diferencia: { icon: 'truck'", _leer("templates/mantenciones/notificaciones.html"))
@@ -774,20 +1201,26 @@ El.prototype.closest = function (sel) { var n = this; while (n) { if (n.matches(
 El.prototype.contains = function (o) { while (o) { if (o === this) return true; o = o.parent; } return false; };
 El.prototype.addEventListener = function (ev, fn) { this._h.push(fn); };
 function clic(sec, target) { sec._h.forEach(function (h) { h({ target: target, preventDefault: function(){} }); }); }
+// 2026-10-29: la venta es UNA fila de chips (static/ot_doc_cadena.js) y el detalle se abre en el panel de la venta.
 function armar(nums) {
   var sec = new El('section', { 'class': 'dc' });
   var hd = sec.append(new El('div', { 'class': 'dc-h' }));
   hd.append(new El('span', { 'data-gl-chip': '' }));
-  var ol = sec.append(new El('ol', { 'class': 'dc-cad' }));
-  nums.forEach(function (n) {
-    var li = ol.append(new El('li', { 'class': 'dc-n t-guia' }));
-    var box = li.append(new El('div', { 'data-gl-guia': n }));
-    box.append(new El('div', { 'data-gl-estado': '' }));
-    box.append(new El('button', { 'data-gl-ver': n, 'aria-expanded': 'false' }));
-    box.append(new El('div', { 'data-gl-cuerpo': '', 'hidden': '' }));
+  var venta = sec.append(new El('div', { 'class': 'dc-venta', 'data-dc-venta': '0' }));
+  var ol = venta.append(new El('ol', { 'class': 'dc-fila' }));
+  ol.append(new El('li', {})).append(new El('button', { 'class': 'dc-doc t-cobro en-ot', 'data-dc-doc': '0:0', 'aria-expanded': 'false' }));
+  var gs = ol.append(new El('li', { 'class': 'dc-gs' }));
+  nums.forEach(function (n, i) {
+    var b = gs.append(new El('button', { 'class': 'dc-doc t-guia', 'data-dc-doc': '0:' + (i + 1), 'data-gl-guia': n, 'data-gl-ver': n,
+                                          'aria-expanded': 'false', 'title': 'Guía de despacho GDV ' + n + '. Ver qué salió y qué no' }));
+    b.append(new El('span', { 'class': 'gl-dot gris pend', 'data-gl-dot': '' }));
   });
+  venta.append(new El('p', { 'class': 'dc-res', 'data-gl-resumen': '', 'hidden': '' }));
+  venta.append(new El('div', { 'class': 'dc-panel', 'data-dc-panel': '', 'hidden': '' }));
   return sec;
 }
+function chipDe(sec, n) { return sec.querySelector('[data-gl-ver="' + n + '"]'); }
+function puntoDe(sec, n) { return chipDe(sec, n).querySelector('[data-gl-dot]').className; }
 const espera = () => new Promise(r => setTimeout(r, 5));
 """
 
@@ -806,7 +1239,7 @@ class TestJS(unittest.TestCase):
         "anuladas": [], "sin_sku": [], "equipos_del_cliente": []}, "guias": [], "check": True,
         "semaforos": {"33193": {"color": "ambar", "texto": "Faltan por salir 1 de lo que gestiona la OT · consultando la bodega (Check)…",
                                 "pendiente": True},
-                      "33194": {"color": "gris", "texto": "Salió lo que gestiona la OT · consultando la bodega (Check)…", "pendiente": True}}}
+                      "33194": {"color": "gris", "texto": "La guía cuadra con la OT · consultando la bodega (Check)…", "pendiente": True}}}
     CON_CHECK = dict(RESUMEN, semaforos={
         "33193": {"color": "ambar", "texto": "Faltan por salir 1 de lo que gestiona la OT · bodega expidió 1 de 1", "pendiente": False},
         "33194": {"color": "verde", "texto": "Salió todo lo gestionado · bodega expidió 2 de 2", "pendiente": False}})
@@ -862,52 +1295,87 @@ class TestJS(unittest.TestCase):
                                                      "estado": "FINALIZADA", "inicio": "08/10/2026 10:20", "fin": "",
                                                      "personas": ["Luis Pérez"], "uas": ["UA1012965"]}], "edad_min": 4}}}
         detalle["semaforos"] = {"33193": dict(self.CON_CHECK["semaforos"]["33193"])}
+        detalle["guias"] = [{"numero": "33193", "fecha": "08/10/2026", "desde": "FCV 11745"}]
+        # 2026-10-29: el panel lo arma el servidor (ot_guia_vs_ot.detalle_guia): diferencias arriba y OT · guía · Check.
+        detalle["detalle"] = {"guia": "33193", "check": {"estado": "completo", "color": "verde", "texto": "bodega expidió 1 de 1"},
+                              "diferencias": [{"codigo": "esta_en_la_OT_y_no_salio", "regla": "A",
+                                               "texto": "Trotadora <X> (X1): la OT gestiona 1 y no salió en ninguna guía."}],
+                              "productos": [{"sku": "BB-01", "nombre": "Booty Builder Cushioned Belt", "ot": 1, "guia": 1,
+                                             "check": 1, "estado": "coincide", "es_diferencia": False, "texto": "Salió 1 y la OT gestiona 1.",
+                                             "check_txt": "Salió de bodega (1 de 1, según Check)", "check_color": "verde",
+                                             "color": "verde", "en_guia": True},
+                                            {"sku": "X1", "nombre": "Trotadora X", "ot": 1, "guia": 0, "check": None,
+                                             "estado": "esta_en_la_OT_y_no_salio", "es_diferencia": True,
+                                             "texto": "La OT gestiona 1 y no salió en ninguna guía.",
+                                             "check_txt": "No salió en ninguna guía", "check_color": "gris", "color": "ambar",
+                                             "en_guia": False}]}
         r = self._correr(r"""
           const sec = armar(['33193', '33194']);
           L.montar(sec, 5);
           await espera(); await espera(); await espera();
           const chip = sec.querySelector('[data-gl-chip]').innerHTML;
-          const li = sec.querySelectorAll('li');
-          const clases = [li[0].classList.toString(), li[1].classList.toString()];
-          const sem = [sec.querySelectorAll('[data-gl-estado]')[0].innerHTML, sec.querySelectorAll('[data-gl-estado]')[1].innerHTML];
-          const btn = sec.querySelector('[data-gl-ver="33193"]');
-          clic(sec, btn);
-          const cargando = sec.querySelector('[data-gl-cuerpo]').innerHTML;
+          const clases = [chipDe(sec, '33193').classList.toString(), chipDe(sec, '33194').classList.toString()];
+          const puntos = [puntoDe(sec, '33193'), puntoDe(sec, '33194')];
+          const etiquetas = [chipDe(sec, '33193').getAttribute('aria-label'), chipDe(sec, '33194').getAttribute('aria-label')];
+          const res = sec.querySelector('[data-gl-resumen]');
+          const resumen = { html: res.innerHTML, hidden: res.hidden };
+          const btn = chipDe(sec, '33193');
+          const ev = { target: btn, preventDefault: function(){} };
+          sec._h.forEach(function (h) { h(ev); });
+          const marcado = !!ev.__glHecho;
+          const panel = sec.querySelector('[data-dc-panel]');
+          const cargando = panel.innerHTML;
           await espera(); await espera();
-          const cuerpo = sec.querySelector('[data-gl-cuerpo]');
-          const abierto = { html: cuerpo.innerHTML, hidden: cuerpo.hidden, exp: btn.getAttribute('aria-expanded'),
-                            largo: sec.querySelector('ol').classList.contains('largo') };
+          const abierto = { html: panel.innerHTML, hidden: panel.hidden, exp: btn.getAttribute('aria-expanded'),
+                            otro: chipDe(sec, '33194').getAttribute('aria-expanded'),
+                            doc: sec.querySelector('[data-dc-doc="0:0"]').getAttribute('aria-expanded') };
           clic(sec, btn);
-          const cerrado = { hidden: cuerpo.hidden, exp: btn.getAttribute('aria-expanded'), largo: sec.querySelector('ol').classList.contains('largo') };
-          const semDespues = [sec.querySelectorAll('[data-gl-estado]')[0].innerHTML, sec.querySelectorAll('[data-gl-estado]')[1].innerHTML];
-          console.log(JSON.stringify({ chip, clases, sem, cargando, abierto, cerrado, semDespues, pedidos }));
+          const cerrado = { hidden: panel.hidden, exp: btn.getAttribute('aria-expanded'), html: panel.innerHTML };
+          const puntosDespues = [puntoDe(sec, '33193'), puntoDe(sec, '33194')];
+          console.log(JSON.stringify({ chip, clases, puntos, etiquetas, resumen, marcado, cargando, abierto, cerrado, puntosDespues, pedidos }));
         """, {"/ot/api/5/documentos/logistica": self.RESUMEN, "/ot/api/5/documentos/logistica?check=1": self.CON_CHECK,
               "/ot/api/5/documentos/logistica?guia=33193": detalle})
         self.assertIn("2 diferencias con la OT", r["chip"])
-        self.assertEqual(r["clases"], ["dc-n t-guia", "dc-n t-guia"], "colores con medida: la tarjeta no se pinta entera")
-        # el semáforo de cada guía ya trae lo que dijo Check (2.ª lectura, ?check=1)
-        self.assertIn('class="gl-dot ambar"', r["sem"][0])
-        self.assertIn("bodega expidió 1 de 1", r["sem"][0])
-        self.assertIn('class="gl-dot verde"', r["sem"][1])
-        self.assertIn("Salió todo lo gestionado · bodega expidió 2 de 2", r["sem"][1])
+        self.assertEqual(r["clases"], ["dc-doc t-guia", "dc-doc t-guia"], "colores con medida: el chip no se pinta entero")
+        # el punto de cada guía ya trae lo que dijo Check (2.ª lectura, ?check=1)
+        self.assertEqual(r["puntos"], ["gl-dot ambar", "gl-dot verde"])
+        self.assertIn("Semáforo ámbar: Faltan por salir 1 de lo que gestiona la OT · bodega expidió 1 de 1", r["etiquetas"][0])
+        self.assertIn("Semáforo verde: Salió todo lo gestionado · bodega expidió 2 de 2", r["etiquetas"][1])
+        # bajo la fila, una línea con lo que está en ámbar (lo verde no ocupa espacio)
+        self.assertFalse(r["resumen"]["hidden"])
+        self.assertIn("GDV 33193: Faltan por salir 1", r["resumen"]["html"])
+        self.assertNotIn("GDV 33194", r["resumen"]["html"])
+        self.assertTrue(r["marcado"], "la cadena no vuelve a atender el clic de la guía")
         self.assertIn("Consultando la bodega", r["cargando"])
+        self.assertIn("Guía de despacho GDV 33193", r["cargando"])
         h = r["abierto"]["html"]
         self.assertFalse(r["abierto"]["hidden"])
-        self.assertEqual(r["abierto"]["exp"], "true")
-        self.assertTrue(r["abierto"]["largo"], "la guía abierta usa el ancho completo")
-        self.assertIn("Bodega expidió todo: 1 de 1 unidad.", h)
+        self.assertEqual((r["abierto"]["exp"], r["abierto"]["otro"], r["abierto"]["doc"]), ("true", "false", "false"))
+        # las diferencias con la OT, ARRIBA (lo que le interesa a Daniel)
+        self.assertLess(h.index("1 diferencia con la OT"), h.index("Qué salió y qué no"))
+        self.assertIn("Trotadora &lt;X&gt; (X1): la OT gestiona 1 y no salió en ninguna guía.", h, "todo se escapa")
+        self.assertNotIn("<X>", h)
+        # qué salió y qué no, por producto: OT · guía · Check
+        for txt in ("<th scope=\"col\">OT</th>", "<th scope=\"col\">Guía</th>", "<th scope=\"col\">Check</th>",
+                    "Salió de bodega (1 de 1, según Check)", "No salió en ninguna guía", "Booty Builder Cushioned Belt"):
+            self.assertIn(txt, h)
+        self.assertIn("08/10/2026 · salió desde FCV 11745", h)
+        self.assertIn("Bodega expidió 1 de 1", h, "lo que dice Check, con la regla de las tres bandas")
         self.assertIn("Según Check: esta guía", h)
-        self.assertIn("Booty Builder Cushioned Belt", h)
-        self.assertIn("bodega expidió 1 de 1", h)
-        self.assertIn("La OT gestiona y no salió en ninguna guía", h)
         self.assertIn("Luis Pérez", h)
         self.assertIn("UA1012965", h)
-        self.assertIn("&lt;S3&gt;", h, "todo se escapa")
-        self.assertNotIn("<S3>", h)
-        self.assertEqual(r["cerrado"], {"hidden": True, "exp": "false", "largo": False})
-        self.assertEqual(r["semDespues"], r["sem"], "el detalle no borra lo que Check ya dijo de las otras guías")
+        self.assertEqual(r["cerrado"], {"hidden": True, "exp": "false", "html": ""})
+        self.assertEqual(r["puntosDespues"], r["puntos"], "el detalle no borra lo que Check ya dijo de las otras guías")
         self.assertEqual(r["pedidos"], ["/ot/api/5/documentos/logistica", "/ot/api/5/documentos/logistica?check=1",
                                         "/ot/api/5/documentos/logistica?guia=33193"])
+
+    def test_el_chip_de_la_cabecera_suma_lo_que_dijo_check(self):
+        cot = {"hallazgos": [{"codigo": "check_expidio_menos", "texto": "x"}, {"codigo": "guia_sin_salida_check", "texto": "y"}]}
+        r = self._correr(r"""
+          console.log(JSON.stringify({ a: L._htmlChip(%s, %s), b: L._htmlChip({estado: 'coincide', n_diferencias: 0}, %s) }));
+        """ % (json.dumps({"estado": "diferencias", "n_diferencias": 1}), json.dumps(cot), json.dumps(cot)), {})
+        self.assertIn("3 diferencias con la OT", r["a"])
+        self.assertIn("2 diferencias con la OT", r["b"], "Check manda: aunque la guía cuadre, si Check informa menos es diferencia")
 
     def test_sin_check_configurado_no_hay_segunda_lectura(self):
         sin = dict(self.RESUMEN, check=False, semaforos={"33193": {"color": "gris", "texto": "x · sin conexión con Check", "pendiente": False}})
@@ -915,9 +1383,10 @@ class TestJS(unittest.TestCase):
           const sec = armar(['33193']);
           L.montar(sec, 7);
           await espera(); await espera();
-          console.log(JSON.stringify({ sem: sec.querySelector('[data-gl-estado]').innerHTML, pedidos }));
+          console.log(JSON.stringify({ sem: chipDe(sec, '33193').getAttribute('aria-label'), punto: puntoDe(sec, '33193'), pedidos }));
         """, {"/ot/api/7/documentos/logistica": sin})
         self.assertIn("sin conexión con Check", r["sem"])
+        self.assertEqual(r["punto"], "gl-dot gris")
         self.assertEqual(r["pedidos"], ["/ot/api/7/documentos/logistica"])
 
     def test_si_la_lectura_falla_ofrece_reintentar(self):
@@ -925,15 +1394,30 @@ class TestJS(unittest.TestCase):
           const sec = armar(['33193']);
           L.montar(sec, 6);
           await espera();
-          clic(sec, sec.querySelector('[data-gl-ver="33193"]'));
+          clic(sec, chipDe(sec, '33193'));
           await espera(); await espera();
-          console.log(JSON.stringify({ html: sec.querySelector('[data-gl-cuerpo]').innerHTML,
+          console.log(JSON.stringify({ html: sec.querySelector('[data-dc-panel]').innerHTML,
                                        chip: sec.querySelector('[data-gl-chip]').innerHTML,
-                                       sem: sec.querySelector('[data-gl-estado]').innerHTML }));
+                                       punto: puntoDe(sec, '33193') }));
         """, {})
         self.assertIn("No pudimos leer la logística ahora", r["html"])
         self.assertIn('data-gl-reintentar="33193"', r["html"])
-        self.assertEqual((r["chip"], r["sem"]), ("", ""))
+        self.assertEqual((r["chip"], r["punto"]), ("", "gl-dot gris"), "si falló, el punto queda gris y quieto (no «cargando»)")
+
+    def test_si_mientras_carga_se_abre_otro_documento_la_guia_no_lo_pisa(self):
+        r = self._correr(r"""
+          const sec = armar(['33193']);
+          L.montar(sec, 8);
+          await espera(); await espera();
+          clic(sec, chipDe(sec, '33193'));
+          const panel = sec.querySelector('[data-dc-panel]');
+          panel.removeAttribute('data-gl-abierta');    // lo que hace ot_doc_cadena.js al abrir la factura
+          panel.innerHTML = 'FACTURA';
+          await espera(); await espera();
+          console.log(JSON.stringify({ html: panel.innerHTML }));
+        """, {"/ot/api/8/documentos/logistica": self.RESUMEN, "/ot/api/8/documentos/logistica?check=1": self.CON_CHECK,
+              "/ot/api/8/documentos/logistica?guia=33193": self.CON_CHECK})
+        self.assertEqual(r["html"], "FACTURA")
 
     def test_css_con_medida_sin_tarjetas_pintadas(self):
         css = _leer("static/ot_guia_logistica.css")
@@ -941,6 +1425,78 @@ class TestJS(unittest.TestCase):
         self.assertIsNone(re.search(r"border-left\s*:\s*[3-9]px", css), "sin bordes laterales gruesos de color")
         self.assertIn(".gl-dot{", css)
         self.assertRegex(css, r"\.gl-dot\{[^}]*width:10px")
+        self.assertIn("prefers-reduced-motion", css, "el punto que late se queda quieto si la persona lo pide")
+        cad = _leer("static/ot_doc_cadena.css")
+        self.assertIsNone(re.search(r"border-left\s*:\s*[3-9]px", cad))
+        self.assertIsNone(re.search(r"\.dc-doc\.(en-ot|t-guia|baja)\{[^}]*background", cad), "el chip no se pinta por su estado")
+        self.assertRegex(cad, r"@media \(max-width:600px\)\{[^@]*\.dc-doc\{min-height:44px", "toque de 44 px en el celular")
+        self.assertNotIn("text-overflow", cad + css, "nada se corta (REGLA #15)")
+        self.assertNotIn("line-clamp", cad + css)
+
+
+@unittest.skipUnless(NODE, "Node no está instalado")
+class TestCadenaCompacta(unittest.TestCase):
+    """«En la tarjeta de la guía de despacho quiero que sea PEQUEÑA; no quiero que ocupe tanto espacio la trazabilidad de
+    Random.» Cada venta es UNA fila de chips; el detalle de cada documento sigue existiendo, detrás del clic (REGLA #4.2)."""
+    CADENA = {"ok": True, "visita_id": 171, "sugerencias": [], "alertas": [], "cadenas": [{"leida": True, "nodos": [
+        {"tipo": "VD", "numero": "10414", "titulo": "VD 10414", "tipo_txt": "Nota de venta", "fecha": "06/10/2026", "en_ot": True,
+         "dada_de_baja": True, "reemplazado_por": "FCV 11745", "saldo": None, "usos": []},
+        {"tipo": "FCV", "numero": "11745", "titulo": "FCV 11745", "tipo_txt": "Factura", "fecha": "06/10/2026", "en_ot": True,
+         "mismo_cliente": True, "saldo": {"servicio": {"total": 961640, "saldo": 709539}},
+         "usos": [{"vid": 249, "numero_ot": "OT-2026-00249", "cliente": "Physica <Ppc>", "url": "/ot/249", "servicio": 252101,
+                   "medible": True, "margen_pct": 12.4, "nivel": "ambar"}]},
+        {"tipo": "GDV", "numero": "33193", "titulo": "GDV 33193", "tipo_txt": "Guía de despacho", "fecha": "08/10/2026",
+         "desde": "FCV 11745", "texto": "Salió el stock el 08/10/2026 (1 producto)",
+         "productos": [{"sku": "BB-01", "nombre": "Booty Builder Cushioned Belt", "cantidad": 1}]},
+        {"tipo": "GDV", "numero": "33194", "titulo": "GDV 33194", "tipo_txt": "Guía de despacho", "fecha": "09/10/2026",
+         "desde": "FCV 11745", "productos": []}]}]}
+
+    def test_una_fila_chica_por_venta_y_el_detalle_detras_del_clic(self):
+        script = r"""
+          const fs = require('fs');
+          global.window = {};
+          global.document = { readyState: 'complete', querySelectorAll: () => [] };
+          eval(fs.readFileSync(process.argv[1], 'utf8'));
+          const C = window.OTDocCadena;
+          const d = %s;
+          console.log(JSON.stringify({ html: C._html(d), fcv: C._htmlNodo(d.cadenas[0].nodos[1]), vd: C._htmlNodo(d.cadenas[0].nodos[0]),
+                                       gdv: C._htmlNodo(d.cadenas[0].nodos[2]) }));
+        """ % json.dumps(self.CADENA)
+        out = subprocess.run([NODE, "-e", script, os.path.join(RAIZ, "static", "ot_doc_cadena.js")], capture_output=True,
+                             text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        r = json.loads(out.stdout.strip().splitlines()[-1])
+        h = r["html"]
+        self.assertEqual(h.count('class="dc-fila"'), 1, "una fila por venta")
+        self.assertEqual(h.count('class="bi bi-arrow-right dc-fl"'), 2, "VD → FCV → [guías], con el ícono del proyecto")
+        self.assertLess(h.index("10414"), h.index("11745"))
+        self.assertLess(h.index("11745"), h.index("33193"))
+        for n in ("33193", "33194"):
+            self.assertIn('data-gl-ver="%s"' % n, h)
+        self.assertEqual(h.count("data-gl-dot"), 2, "un punto de semáforo por guía")
+        self.assertIn('class="dc-doc t-nota baja"', h, "la nota dada de baja va tachada")
+        self.assertIn("Factura FCV 11745, en esta OT. Ver su detalle", h)
+        self.assertIn('data-dc-panel role="region" aria-label="Detalle del documento" hidden', h)
+        self.assertIn('id="dc-panel-171-0"', h)
+        self.assertIn('aria-controls="dc-panel-171-0"', h)
+        # lo grande ya no está en la fila…
+        for grande in ("libre $", "También la usa", "Booty Builder", "margen"):
+            self.assertNotIn(grande, h)
+        # …pero sigue existiendo detrás del clic (REGLA #4.2): saldo por línea, otras OT y su margen, productos de la guía
+        self.assertIn("libre $709.539 de $961.640", r["fcv"])
+        self.assertIn("También la usa", r["fcv"])
+        self.assertIn("margen 12,4 %", r["fcv"])
+        self.assertIn("Physica &lt;Ppc&gt;", r["fcv"], "todo se escapa")
+        self.assertIn("Dada de baja por FCV 11745", r["vd"])
+        self.assertIn("Booty Builder Cushioned Belt", r["gdv"])
+
+    def test_la_cadena_deja_la_guia_a_la_logistica_y_abre_lo_demas(self):
+        js = _leer("static/ot_doc_cadena.js")
+        self.assertIn("!e.__glHecho", js)
+        self.assertIn("OTGuiaLogistica.montar(sec, vid)", js)
+        self.assertIn("panel.removeAttribute('data-gl-abierta')", js)
+        log = _leer("static/ot_guia_logistica.js")
+        self.assertIn("e.__glHecho = true", log)
 
     def test_sin_nativos_y_sin_montos(self):
         js = _leer("static/ot_guia_logistica.js")

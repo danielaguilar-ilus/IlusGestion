@@ -124998,7 +124998,16 @@ def _ot_saldo_resumen(tido, nudo, excluir_vid=None, cliente_rut=None):
 #  · La comparación es pura y probada (ot_guia_vs_ot.py). Sin montos. Nunca técnicos (REGLAS #19/#26), nunca el cliente (#22).
 #  · Lo que no cuadra queda en ot_guia_alerta (nunca se borra: vigente → resuelta, y vuelve a vigente si reaparece) y avisa
 #    UNA vez por la campana a la gestión de la OT (_hall_destinos → _ot_gestion_destinatarios: el responsable primero, sin
-#    técnicos ni quien lo está mirando). Sin correo. Se calcula al abrir la trazabilidad (best-effort: si falla, nada cambia).
+#    técnicos ni quien lo está mirando). Se calcula al abrir la trazabilidad (best-effort: si falla, nada cambia).
+#  · 2026-10-29 (tarde) — CHECK TIENE LA ÚLTIMA PALABRA. Daniel: «es Check quien nos tiene que dar la ÚLTIMA PALABRA y avisar
+#    de posibles descuadres en caso de que se haya hecho guía y en el WMS no haya salido, pero algo POCO… hice una OT por 10
+#    productos, pero en realidad salieron 8: tiene que haber una alerta», y «si hay diferencia, dame una ALERTA, así sea POR
+#    CORREO». Comparación a tres bandas OT ↔ guía ↔ Check (_gvo.tres_bandas) con tres reglas: A guía ≠ OT · B Check expidió
+#    menos de lo que la OT gestiona · C hay guía y Check no registra la salida pasados 3 días hábiles. Sin información de Check
+#    no se alerta. Los hallazgos B y C solo se registran (o se dan por resueltos) en una lectura que SÍ le preguntó a Check.
+#    Además de la campana, un CORREO INTERNO a la gestión (_ot_logi_correo, clave «ot_guia_diferencia» del registro, puerta
+#    única vía _aviso_interno_correo: interruptor general, llave «comunicacion_interna» y Control de correos): uno por hallazgo,
+#    y otro solo si la diferencia cambia. Jamás al cliente ni a un técnico (REGLAS #19/#22/#26/#33).
 # ══════════════════════════════════════════════════════════════════
 _OT_LOGI_GUIAS_CACHE = {}
 _OT_LOGI_GUIAS_TTL = 300           # s: las líneas de una guía emitida no cambian
@@ -125010,37 +125019,53 @@ _OT_LOGI_CHECK_PRESUPUESTO = 20    # s máximos por petición entre todos los do
 _OT_LOGI_CHECK_MAX_DOCS = 3        # la guía y hasta 2 documentos de cobro de la venta
 _OT_LOGI_MAX_OTRAS = 8             # otras OT de la misma venta que se miran
 _OT_LOGI_MAX_GUIAS_CHECK = 6       # guías a las que se les pide su semáforo de bodega en una sola petición
-_OT_LOGI_TABLA = {"ok": False}
+_OT_LOGI_TABLA = {"ok": False, "correo": False, "correo_intento": 0.0}
+_OT_LOGI_CORREO_REINTENTO = 600    # s: si las columnas del correo no se pudieron agregar (lock), se reintenta cada 10 min
+_OT_LOGI_CORREO_ESPERA = 600       # s: una lectura SIN Check guarda el correo hasta 10 min (la de Check llega enseguida y
+                                   #    manda UN solo correo con todo lo que no cuadra, no dos seguidos)
 
 
 def _ot_logi_tabla():
     """La tabla de hallazgos «guía vs OT». UNA sola sentencia CREATE TABLE IF NOT EXISTS, barata si ya existe (REGLA #18:
     mysql_execute la salta sin pedir lock). Se crea al primer uso —dentro de una petición, con contexto de Flask— y se
-    recuerda por proceso. Nunca se borra una fila: vigente → resuelta (con fecha) y, si vuelve a pasar, vigente (veces + 1)."""
-    if _OT_LOGI_TABLA["ok"]:
-        return True
-    try:
-        mysql_execute(
-            "CREATE TABLE IF NOT EXISTS ot_guia_alerta ("
-            "  id BIGINT AUTO_INCREMENT PRIMARY KEY,"
-            "  visita_id INT NOT NULL,"
-            "  codigo VARCHAR(40) NOT NULL COMMENT 'salio_y_no_esta_en_la_OT | esta_en_la_OT_y_no_salio | cantidad_distinta',"
-            "  detalle VARCHAR(80) NOT NULL COMMENT 'SKU normalizado',"
-            "  texto VARCHAR(500) NULL,"
-            "  guias VARCHAR(200) NULL,"
-            "  estado ENUM('vigente','resuelta') NOT NULL DEFAULT 'vigente',"
-            "  veces INT NOT NULL DEFAULT 1,"
-            "  detectada_el DATETIME NOT NULL,"
-            "  detectada_por VARCHAR(190) NULL,"
-            "  notificada_el DATETIME NULL,"
-            "  resuelta_el DATETIME NULL,"
-            "  actualizado_el DATETIME NULL,"
-            "  UNIQUE KEY uq_ga_ot_cod_det (visita_id, codigo, detalle),"
-            "  KEY idx_ga_estado (estado, visita_id)"
-            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
-        _OT_LOGI_TABLA["ok"] = True
-    except Exception as e:
-        print(f"[ot-logistica] tabla: {type(e).__name__}: {e}", flush=True)
+    recuerda por proceso. Nunca se borra una fila: vigente → resuelta (con fecha) y, si vuelve a pasar, vigente (veces + 1).
+    2026-10-29 (correo interno): dos columnas para saber qué diferencia ya se envió por correo (correo_huella, correo_el),
+    agregadas con UNA cláusula por sentencia (REGLA #18: mysql_execute las salta sin lock si ya existen). Si no se pudieron
+    agregar, la tabla funciona igual y solo el correo espera (se reintenta cada 10 minutos)."""
+    if not _OT_LOGI_TABLA["ok"]:
+        try:
+            mysql_execute(
+                "CREATE TABLE IF NOT EXISTS ot_guia_alerta ("
+                "  id BIGINT AUTO_INCREMENT PRIMARY KEY,"
+                "  visita_id INT NOT NULL,"
+                "  codigo VARCHAR(40) NOT NULL COMMENT 'salio_y_no_esta_en_la_OT | esta_en_la_OT_y_no_salio | cantidad_distinta | check_expidio_menos | guia_sin_salida_check',"
+                "  detalle VARCHAR(80) NOT NULL COMMENT 'SKU normalizado, TOTAL o número de la guía',"
+                "  texto VARCHAR(500) NULL,"
+                "  guias VARCHAR(200) NULL,"
+                "  estado ENUM('vigente','resuelta') NOT NULL DEFAULT 'vigente',"
+                "  veces INT NOT NULL DEFAULT 1,"
+                "  detectada_el DATETIME NOT NULL,"
+                "  detectada_por VARCHAR(190) NULL,"
+                "  notificada_el DATETIME NULL,"
+                "  resuelta_el DATETIME NULL,"
+                "  actualizado_el DATETIME NULL,"
+                "  correo_huella VARCHAR(64) NULL,"
+                "  correo_el DATETIME NULL,"
+                "  UNIQUE KEY uq_ga_ot_cod_det (visita_id, codigo, detalle),"
+                "  KEY idx_ga_estado (estado, visita_id)"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+            _OT_LOGI_TABLA["ok"] = True
+        except Exception as e:
+            print(f"[ot-logistica] tabla: {type(e).__name__}: {e}", flush=True)
+            return False
+    if not _OT_LOGI_TABLA["correo"] and time.time() - _OT_LOGI_TABLA["correo_intento"] >= _OT_LOGI_CORREO_REINTENTO:
+        _OT_LOGI_TABLA["correo_intento"] = time.time()
+        try:
+            mysql_execute("ALTER TABLE ot_guia_alerta ADD COLUMN correo_huella VARCHAR(64) NULL")
+            mysql_execute("ALTER TABLE ot_guia_alerta ADD COLUMN correo_el DATETIME NULL")
+            _OT_LOGI_TABLA["correo"] = True
+        except Exception as e:
+            print(f"[ot-logistica] columnas del correo: {type(e).__name__}: {e}", flush=True)
     return _OT_LOGI_TABLA["ok"]
 
 
@@ -125261,11 +125286,12 @@ def _ot_logi_bodega(num, claves, meta, comp, guias, hasta=None, detalle=True):
     return bod
 
 
-def _ot_logi_avisar(vid, v, lista):
-    """Campana a la gestión de la OT por las diferencias «guía vs OT»: a quienes decide _ot_gestion_destinatarios (vía
-    _hall_destinos: el responsable primero, sin la familia técnico y sin quien lo está mirando, que ya lo ve en pantalla).
-    Una sola campana por OT y persona mientras no la lea (se actualiza su texto). Tono amable, sin montos, sin correo y
-    JAMÁS al cliente (REGLAS #19/#22/#26/#33). → a cuántas personas, o None si no se pudo saber a quién."""
+def _ot_logi_avisar(vid, v, lista, crear=True):
+    """Campana a la gestión de la OT por las diferencias «guía vs OT» (y, desde el 29-oct, «OT vs Check»): a quienes decide
+    _ot_gestion_destinatarios (vía _hall_destinos: el responsable primero, sin la familia técnico y sin quien lo está mirando,
+    que ya lo ve en pantalla). Una sola campana por OT y persona mientras no la lea (se actualiza su texto). Con crear=False
+    solo se pone al día el texto de las campanas aún sin leer (la diferencia cambió). Tono amable, sin montos y JAMÁS al
+    cliente (REGLAS #19/#22/#26); el correo va aparte (_ot_logi_correo). → a cuántas personas, o None si no se supo a quién."""
     try:
         destinos = _hall_destinos(vid, v, excluir_uid=_hall_uid())
     except Exception as e:
@@ -125283,6 +125309,8 @@ def _ot_logi_avisar(vid, v, lista):
             if ex:
                 mysql_execute("UPDATE mant_notificaciones SET titulo=%s, cuerpo=%s, mensaje=%s WHERE id=%s",
                               (titulo, cuerpo, cuerpo, int(ex["id"])))
+            elif not crear:
+                continue
             else:
                 _mant_notificar(uid, _gvo.TIPO_AVISO, titulo, cuerpo, url_accion=f"/ot/{int(vid)}", prioridad="media",
                                 visita_id=int(vid))
@@ -125293,19 +125321,83 @@ def _ot_logi_avisar(vid, v, lista):
     return n
 
 
-def _ot_logi_registrar(vid, v, comp):
+def _ot_logi_correo(vid, v, diferir=False):
+    """CORREO INTERNO a la gestión de la OT por lo que no cuadra (Daniel, 29-oct: «si hay diferencia, dame una ALERTA, así
+    sea POR CORREO»). UNO por hallazgo: cada fila vigente se RECLAMA con un UPDATE atómico (correo_huella = huella de su
+    texto), así dos personas que abren la OT a la vez no mandan dos correos; si la diferencia cambia (otro texto), sale uno
+    nuevo. Destinatarios: los mismos de la campana (_hall_destinos → _ot_gestion_destinatarios: el responsable primero, sin
+    técnicos ni quien lo está mirando). Sale por _aviso_interno_correo: puerta única con la clave «ot_guia_diferencia» del
+    registro (interruptor general, llave «comunicacion_interna» y Control de correos, REGLA #33). Jamás al cliente (REGLA
+    #22), sin montos ni proveedores (REGLAS #19/#26). Un correo frenado por un interruptor queda en el Historial como
+    «bloqueado» y no se reintenta (al encenderlo no sale nada retroactivo).
+    `diferir`: la lectura rápida (sin Check) solo manda lo que lleva más de 10 minutos esperando; la lectura con Check llega
+    enseguida y junta todo en UN correo. → cuántos correos salieron, o None si no se pudo."""
+    if not _OT_LOGI_TABLA.get("correo"):
+        return None
+    filas = [dict(r) for r in (mysql_fetchall(
+        "SELECT id, codigo, detalle, texto, correo_huella, detectada_el, actualizado_el FROM ot_guia_alerta "
+        " WHERE visita_id=%s AND estado='vigente' ORDER BY id", (int(vid),)) or [])]
+    pend = [f for f in filas if (f.get("texto") or "").strip() and (f.get("correo_huella") or "") != _gvo.huella(f.get("texto"))]
+    if not pend:
+        return 0
+    if diferir:
+        limite = datetime.utcnow() - timedelta(seconds=_OT_LOGI_CORREO_ESPERA)
+
+        def _viejo(f):
+            t = f.get("actualizado_el") or f.get("detectada_el")
+            return not isinstance(t, datetime) or t <= limite
+        if not any(_viejo(f) for f in pend):
+            return 0
+    try:
+        uids = [int(p["id"]) for p in (_hall_destinos(vid, v, excluir_uid=_hall_uid()) or [])]
+    except Exception as e:
+        print(f"[ot-logistica] correo, destinatarios vid={vid}: {type(e).__name__}", flush=True)
+        return None
+    if not uids:
+        return 0                                # nadie más de la gestión: quien mira ya lo ve en pantalla
+    ahora, mios = datetime.utcnow(), []
+    for f in pend:
+        h = _gvo.huella(f.get("texto"))
+        try:
+            if mysql_execute_returning_rowcount(
+                    "UPDATE ot_guia_alerta SET correo_huella=%s, correo_el=%s WHERE id=%s "
+                    "   AND (correo_huella IS NULL OR correo_huella <> %s)", (h, ahora, int(f["id"]), h)):
+                mios.append(f)
+        except Exception as e:
+            print(f"[ot-logistica] correo, reclamar {f.get('id')}: {type(e).__name__}", flush=True)
+    if not mios:
+        return 0                                # otra petición ya lo envió
+    num = v.get("numero_ot") or f"V-{int(vid):05d}"
+    titulo, cuerpo = _gvo.texto_correo(num, v.get("razon_social") or "", mios)
+    try:
+        return _aviso_interno_correo(_gvo.CORREO_CLAVE, uids, titulo, cuerpo, f"/ot/{int(vid)}", "Guía de despacho vs OT",
+                                     ref={"tipo": "OT", "id": int(vid), "codigo": num})
+    except Exception as e:                      # un error (no un interruptor): se suelta para reintentar en la próxima lectura
+        print(f"[ot-logistica] correo vid={vid}: {type(e).__name__}", flush=True)
+        for f in mios:
+            try:
+                mysql_execute("UPDATE ot_guia_alerta SET correo_huella=NULL WHERE id=%s", (int(f["id"]),))
+            except Exception:
+                pass
+        return None
+
+
+def _ot_logi_registrar(vid, v, comp, tb=None, diferir_correo=False):
     """Deja PERSISTENTE lo que no cuadra (ot_guia_alerta) y avisa UNA vez por hallazgo. Nueva → vigente + bitácora +
-    campana; ya no pasa → resuelta (con fecha) + bitácora; vuelve → vigente otra vez (veces + 1). Nunca se borra una fila.
-    Si Random no respondió (comp «sin_lectura») no se toca nada: no se resuelve a ciegas. → resumen o None."""
+    campana + correo interno; ya no pasa → resuelta (con fecha) + bitácora; vuelve → vigente otra vez (veces + 1). Nunca se
+    borra una fila. Si Random no respondió (comp «sin_lectura») no se toca nada: no se resuelve a ciegas. Los hallazgos de
+    Check (reglas B y C) solo se registran o se resuelven con `tb` (una lectura que SÍ le preguntó a Check, _gvo.alcance).
+    → resumen o None."""
     if (comp or {}).get("estado") not in ("coincide", "diferencias", "sin_datos"):
         return None
     if not _ot_logi_tabla():
         return None
-    actuales = {(h["codigo"], h["detalle"]): h for h in _gvo.hallazgos(comp)}
+    actuales = {(h["codigo"], h["detalle"]): h for h in _gvo.hallazgos(comp, tb)}
     previas = [dict(r) for r in (mysql_fetchall(
         "SELECT id, codigo, detalle, estado, texto, guias, notificada_el FROM ot_guia_alerta WHERE visita_id=%s",
         (int(vid),)) or [])]
-    plan = _gvo.plan_hallazgos(actuales, previas)
+    evaluados, todo = _gvo.alcance(comp, tb)
+    plan = _gvo.plan_hallazgos(actuales, previas, evaluados=evaluados, todo=todo)
     ahora = datetime.utcnow()
     quien = (current_username() or "Revisión al abrir la OT")[:190]
     for h in plan["insertar"]:
@@ -125329,14 +125421,27 @@ def _ot_logi_registrar(vid, v, comp):
                       (ahora, ahora, int(r["id"])))
         _mant_log("visita", vid, "guia_diferencia_resuelta",
                   f"Guía de despacho vs OT · ya cuadra: {r.get('texto') or r.get('detalle')}. Queda en el historial de la OT."[:1000])
+    # Lo que sigue vigente: lo de esta lectura + lo de Check que esta lectura no revisó (no se resolvió a ciegas).
+    resueltas = {int(r["id"]) for r in plan["resolver"]}
+    lista = list(actuales.values()) + [
+        {"codigo": r.get("codigo"), "detalle": r.get("detalle"), "texto": r.get("texto") or ""} for r in previas
+        if r.get("estado") == "vigente" and (r.get("codigo"), r.get("detalle")) not in actuales and int(r["id"]) not in resueltas]
     avisadas = None
     if plan["avisar"]:
-        avisadas = _ot_logi_avisar(vid, v, list(actuales.values()))
+        avisadas = _ot_logi_avisar(vid, v, lista)
         if avisadas is not None:
             mysql_execute("UPDATE ot_guia_alerta SET notificada_el=%s WHERE visita_id=%s AND estado='vigente' "
                           "   AND notificada_el IS NULL", (ahora, int(vid)))
-    return {"vigentes": len(actuales), "nuevas": len(plan["insertar"]) + len(plan["reabrir"]),
-            "resueltas": len(plan["resolver"]), "avisadas": avisadas or 0}
+    elif lista and (plan["actualizar"] or plan["reabrir"] or plan["resolver"]):
+        _ot_logi_avisar(vid, v, lista, crear=False)   # la diferencia cambió: la campana sin leer dice lo de ahora
+    correos = None
+    if lista:
+        try:
+            correos = _ot_logi_correo(vid, v, diferir=diferir_correo)
+        except Exception as e:                  # best-effort: el registro y la tarjeta siguen igual
+            print(f"[ot-logistica] correo vid={vid}: {type(e).__name__}: {e}", flush=True)
+    return {"vigentes": len(lista), "nuevas": len(plan["insertar"]) + len(plan["reabrir"]),
+            "resueltas": len(plan["resolver"]), "avisadas": avisadas or 0, "correos": correos or 0}
 
 
 def _ot_logistica(vid, guia=None, check=False):
@@ -125384,10 +125489,6 @@ def _ot_logistica(vid, guia=None, check=False):
             if g2:
                 otras_ot.append({"vid": o["vid"], "numero_ot": o.get("numero_ot") or f"OT {o['vid']}", "productos": g2})
         comp = _gvo.comparar(guias, gest, otras_ot=otras_ot, es_servicio=_sku_es_servicio, no_comparados=fuera)
-        try:
-            comp["alerta"] = _ot_logi_registrar(vid, v, comp)
-        except Exception as e:                 # best-effort: la tarjeta se muestra igual
-            print(f"[ot-logistica] registrar vid={vid}: {type(e).__name__}: {e}", flush=True)
     configurado = _checkwms_configurado()
     res = {"comparacion": comp, "check": configurado,
            "guias": [{"numero": g["numero"], "fecha": g.get("fecha") or "", "desde": g.get("desde") or "",
@@ -125397,25 +125498,47 @@ def _ot_logistica(vid, guia=None, check=False):
     semaforos = {g["numero"]: {"color": "gris", "texto": "Guía anulada en Random: no cuenta", "pendiente": False}
                  for g in guias if g.get("anulada")}
     num = re.sub(r"\D", "", str(guia or ""))[:12].lstrip("0")
-    if num:
-        bod = _ot_logi_bodega(num, claves, meta, comp, guias)
-        res["bodega"] = {num: bod}
-        semaforos = {num: semaforos.get(num) or _gvo.semaforo_guia(comp, num, bod)}
-    elif check and configurado:
-        hasta, caido, res["bodega_resumen"] = time.time() + _OT_LOGI_CHECK_PRESUPUESTO, False, {}
-        for n in vivas[:_OT_LOGI_MAX_GUIAS_CHECK]:
+    # 2026-10-29 (Check tiene la última palabra): con ?check=1 o ?guia=<n> se le pregunta a Check por TODAS las guías vivas
+    # (la elegida primero, con su detalle; las demás salen de la caché de 2 min de la lectura ?check=1), con un solo
+    # presupuesto de tiempo. Si Check no responde en una, no se insiste con las demás.
+    bodegas = {}
+    if num or (check and configurado):
+        hasta, caido = time.time() + _OT_LOGI_CHECK_PRESUPUESTO, False
+        orden = ([num] if num else []) + [n for n in vivas if n != num]
+        for n in orden[:_OT_LOGI_MAX_GUIAS_CHECK]:
             bod = (_gvo.bodega(None, respondio=False) if caido
-                   else _ot_logi_bodega(n, claves, meta, comp, guias, hasta=hasta, detalle=False))
+                   else _ot_logi_bodega(n, claves, meta, comp, guias, hasta=hasta, detalle=(n == num)))
             caido = caido or bod.get("estado") == "sin_conexion"
-            semaforos[n] = _gvo.semaforo_guia(comp, n, bod)
+            bodegas[n] = bod
+    tb = None
+    if bodegas and comp.get("estado") != "sin_lectura":
+        tb = _gvo.tres_bandas(comp, {n: b for n, b in bodegas.items() if n in vivas},
+                              fechas={g["numero"]: g.get("fecha") for g in guias}, hoy=_now_chile().date())
+    if num:
+        res["bodega"] = {num: bodegas[num]}
+        res["detalle"] = _gvo.detalle_guia(comp, num, tb=tb, bod=bodegas[num])
+    if bodegas:
+        res["bodega_resumen"] = {}
+        for n, bod in bodegas.items():
+            semaforos[n] = semaforos.get(n) or _gvo.semaforo_guia(comp, n, bod, tb=tb)
             res["bodega_resumen"][n] = {k: bod.get(k) for k in ("estado", "color", "texto", "fuente", "pedidas", "despachadas")}
-        for n in vivas[_OT_LOGI_MAX_GUIAS_CHECK:]:      # más guías que el tope: su detalle se consulta al abrirlas
-            semaforos[n] = _gvo.semaforo_guia(comp, n, _gvo.bodega([], "", []))
+        for n in vivas:
+            if n not in bodegas:                  # más guías que el tope: su detalle se consulta al abrirlas
+                semaforos[n] = _gvo.semaforo_guia(comp, n, _gvo.bodega([], "", []))
     else:
         for n in vivas:
             semaforos[n] = (_gvo.semaforo_guia(comp, n, None, pendiente=True) if configurado
                             else _gvo.semaforo_guia(comp, n, _gvo.bodega(None, configurado=False)))
     res["semaforos"] = semaforos
+    if tb:
+        res["check_ot"] = {"modo": tb.get("modo"), "gracia_dias": _gvo.GRACIA_DIAS_HABILES,
+                           "hallazgos": [{"codigo": h["codigo"], "texto": h["texto"]} for h in tb.get("hallazgos") or []]}
+    if comp.get("estado") in ("coincide", "diferencias", "sin_datos"):
+        try:
+            # Una lectura SIN Check (la rápida) guarda el correo: la de Check llega enseguida y manda uno solo con todo.
+            comp["alerta"] = _ot_logi_registrar(vid, v, comp, tb=tb, diferir_correo=(tb is None and configurado))
+        except Exception as e:                 # best-effort: la tarjeta se muestra igual
+            print(f"[ot-logistica] registrar vid={vid}: {type(e).__name__}: {e}", flush=True)
     return res
 
 
@@ -125427,8 +125550,10 @@ def ot_api_documentos_logistica(vid):
     """La logística de las guías de despacho de la OT dentro de «Trazabilidad en Random»: «lo que salió» (Random) vs «lo
     que gestiona la OT», con el veredicto, los hallazgos y un semáforo por guía. ?check=1 le pregunta a Check (bodega) para
     cerrar el semáforo de cada guía; ?guia=<número> trae el detalle de esa guía (lo que Check informa que salió
-    físicamente: estado, unidades juntadas y expedidas, fechas, OT de bodega, operador y UA). SOLO LECTURA de Random y de
-    Check (REGLAS #4.1/#4.4). Sin montos. Solo gestión: un técnico recibe 403 antes de leer nada (REGLAS #19/#26)."""
+    físicamente: estado, unidades juntadas y expedidas, fechas, OT de bodega, operador y UA). 2026-10-29: con Check se
+    compara a tres bandas (OT ↔ guía ↔ Check: reglas A/B/C, `check_ot`) y ?guia= trae además `detalle` (las diferencias
+    con la OT arriba y «qué salió y qué no» por producto). SOLO LECTURA de Random y de Check (REGLAS #4.1/#4.4). Sin
+    montos. Solo gestión: un técnico recibe 403 antes de leer nada (REGLAS #19/#26)."""
     if _es_rol_tecnico():
         return jsonify({"ok": False, "error": "Sin permiso para ver la logística de las guías."}), 403
     guia = re.sub(r"\D", "", request.args.get("guia") or "")[:12]

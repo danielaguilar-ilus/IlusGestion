@@ -28,18 +28,31 @@
 .dc-al i{color:#b45309;margin-top:2px}
 .dc-al p{margin:0;overflow-wrap:anywhere}
 
-/* La cadena: en fila en pantallas anchas (con flecha entre documentos), en columna en el celular. */
-.dc-cad{list-style:none;margin:0;padding:0;display:flex;flex-wrap:nowrap;gap:8px 24px;align-items:stretch;overflow-x:auto}
-/* 4 o más documentos en una venta: en columna (las flechas nunca quedan sueltas al cortar la fila). */
-.dc-cad.largo{flex-direction:column;gap:18px;overflow:visible}
-.dc-cad.largo .dc-n{flex-basis:auto}
-.dc-cad.largo .dc-n+.dc-n::before{content:"↓" / "";left:14px;top:-17px}
-.dc-n{position:relative;flex:1 1 220px;min-width:0;border:1px solid var(--fm-borde,#e5e7eb);border-radius:10px;padding:8px 10px;background:#fff;display:flex;flex-direction:column;gap:4px}
-.dc-n+.dc-n::before{content:"→" / "";position:absolute;left:-19px;top:10px;color:var(--fm-gris,#6b7280);font-weight:900}
-.dc-n.en-ot{border-color:#86efac;background:#f7fef9}
-.dc-n.baja{background:var(--fm-gris-f,#f3f4f6)}
-.dc-n.baja .dc-n-h b{text-decoration:line-through;text-decoration-color:#9ca3af}
-.dc-n.t-guia{border-style:dashed}
+/* 2026-10-29 (Daniel: «quiero que sea PEQUEÑA; no quiero que ocupe tanto espacio la trazabilidad de Random»): cada venta es
+   UNA fila fina de chips (nota de venta → factura → guías). El detalle de un documento se abre en el panel de abajo. */
+.dc-venta{display:flex;flex-direction:column;gap:4px;min-width:0}
+.dc-fila{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.dc-fila>li{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+.dc-fl{color:var(--fm-gris,#6b7280);font-weight:900}
+.dc-doc{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:2px 10px;border-radius:999px;border:1px solid #d1d5db;
+  background:#fff;color:#111827;font:inherit;font-size:.8rem;line-height:1.2;cursor:pointer;white-space:nowrap}
+.dc-doc .dc-doc-t{font-size:.68rem;font-weight:900;letter-spacing:.04em;color:#4b5563}
+.dc-doc b{font-weight:800;font-variant-numeric:tabular-nums}
+.dc-doc.en-ot{border-color:#86efac}
+.dc-doc.baja b{text-decoration:line-through;text-decoration-color:#9ca3af}
+.dc-doc.t-guia{border-style:dashed}
+.dc-doc:hover{border-color:#93c5fd;background:#f8fafc}
+.dc-doc[aria-expanded="true"]{border-color:#2563eb;border-style:solid;background:#eff6ff}
+.dc-doc:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+.dc-ok{color:#16a34a}
+.dc-warn{color:#b45309}
+.dc-res{margin:0;display:flex;flex-direction:column;gap:2px;font-size:.76rem;font-weight:700;color:#78350f;overflow-wrap:anywhere}
+.dc-res[hidden]{display:none}
+.dc-res>span{display:flex;align-items:baseline}
+.dc-panel{border:1px solid var(--fm-borde,#e5e7eb);border-radius:10px;padding:8px 10px;background:#fff;min-width:0}
+.dc-panel[hidden]{display:none}
+/* El detalle de un documento dentro del panel (lo que antes era su tarjeta grande): sin caja propia. */
+.dc-n{min-width:0;display:flex;flex-direction:column;gap:4px}
 .dc-n-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px}
 .dc-tipo{font-size:.74rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;color:var(--fm-gris,#6b7280)}
 .dc-n-h b{font-size:.92rem;font-variant-numeric:tabular-nums}
@@ -71,8 +84,6 @@
 @media (max-width:600px){
   .dc-sug{grid-template-columns:22px minmax(0,1fr)}
   .dc-btn{grid-column:1/-1;width:100%;justify-content:center;white-space:normal}
-  .dc-cad{flex-direction:column;gap:18px}
-  .dc-n{flex-basis:auto}
+  .dc-doc{min-height:44px;padding:4px 12px}
   .dc-usos a{display:inline-flex;align-items:center;min-height:44px;padding:0 4px}
-  .dc-n+.dc-n::before{content:"↓" / "";left:14px;top:-17px}
 }
