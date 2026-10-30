@@ -83,3 +83,56 @@ p.gl-meta{margin:0}
   .gl-tab td[data-l]::before{content:attr(data-l) " ";font-size:.68rem;font-weight:800;color:#4b5563;text-transform:uppercase}
   .gl-tab td.gl-td-b{display:block}
 }
+
+/* ───── Dentro de la ventana (29-oct noche): veredicto en grande, comparación y línea de tiempo ───── */
+.dc-mo-b .gl-cab{font-size:.86rem;margin:0 0 8px;color:#374151}
+.gl-sel{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.gl-sel-b{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid #d1d5db;background:#fff;color:#111827;font-weight:800;font-size:.8rem;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.gl-sel-b .gl-dot{margin-right:0}
+.gl-sel-b.on{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+.gl-sel-b:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+
+.gl-ver{display:flex;align-items:flex-start;gap:14px;border-radius:12px;padding:14px 16px;margin:0 0 10px;border:1px solid transparent}
+.gl-ver.si{background:#dcfce7;border-color:#bbf7d0}
+.gl-ver.no{background:#fff8e1;border-color:#fde68a}
+.gl-ver.sin{background:#f3f4f6;border-color:#e5e7eb}
+.gl-ver-i{flex:0 0 44px;width:44px;height:44px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:1.6rem;color:#fff}
+.gl-ver.si .gl-ver-i{background:#16a34a}
+.gl-ver.no .gl-ver-i{background:#f59e0b}
+.gl-ver.sin .gl-ver-i{background:#6b7280}
+.gl-ver-t{min-width:0}
+.gl-ver-t h4{margin:0 0 2px;font-size:1.15rem;font-weight:900;color:#111827}
+.gl-ver.si h4{color:#14532d}
+.gl-ver.no h4{color:#78350f}
+.gl-ver-t p{margin:0;font-size:.88rem;color:#1f2937;overflow-wrap:anywhere}
+.gl-ver-l{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+.gl-ver-l li{display:flex;align-items:baseline;font-size:.86rem;font-weight:700;color:#78350f;overflow-wrap:anywhere;min-width:0}
+
+.dc-mo-b .gl-sec{padding:12px 0;border-top:1px solid #e5e7eb}
+.dc-mo-b .gl-sec h5{font-size:.78rem}
+.dc-mo-b .gl-tab{font-size:.84rem}
+.dc-mo-b .gl-td-b{display:table-cell}
+.dc-mo-b .gl-td-b .gl-dot{margin-right:6px}
+
+/* Línea de tiempo vertical: un punto por paso, con la línea que los une. Random en negro, bodega (Check) en rojo ILUS. */
+.gl-tl{list-style:none;margin:6px 0 0;padding:0}
+.gl-tl-i{position:relative;display:flex;gap:12px;padding:0 0 14px 0}
+.gl-tl-i::before{content:"";position:absolute;left:6px;top:14px;bottom:-2px;width:2px;background:#e5e7eb}
+.gl-tl-i:last-child::before{display:none}
+.gl-tl-i:last-child{padding-bottom:2px}
+.gl-tl-pt{flex:0 0 14px;width:14px;height:14px;border-radius:50%;margin-top:3px;background:#0a0a0a;box-shadow:0 0 0 3px #f3f4f6;position:relative;z-index:1}
+.gl-tl-i.check .gl-tl-pt{background:#dc2626;box-shadow:0 0 0 3px #fee2e2}
+.gl-tl-i.gris .gl-tl-pt{background:#fff;box-shadow:inset 0 0 0 2px #6b7280}
+.gl-tl-c{min-width:0}
+.gl-tl-c p{margin:0}
+.gl-tl-t{font-size:.9rem;font-weight:800;color:#111827;overflow-wrap:anywhere}
+.gl-tl-i.gris .gl-tl-t{color:#4b5563;font-weight:600}
+.gl-tl-src{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;font-size:.66rem;font-weight:900;letter-spacing:.03em;text-transform:uppercase;vertical-align:1px;background:#f3f4f6;color:#374151}
+.gl-tl-i.check .gl-tl-src{background:#fee2e2;color:#991b1b}
+.gl-tl-m{font-size:.8rem;color:#374151;overflow-wrap:anywhere}
+.gl-tl-d{font-size:.76rem;color:#6b7280;overflow-wrap:anywhere}
+@media (max-width:600px){
+  .gl-ver{padding:12px}
+  .gl-ver-t h4{font-size:1.05rem}
+  .gl-sel-b{min-height:44px}
+}

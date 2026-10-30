@@ -172,7 +172,7 @@
 
   function html(d) {
     var h = '<div class="dc-h"><h3><i class="bi bi-diagram-3-fill" aria-hidden="true"></i> Trazabilidad en Random</h3>' +
-      '<small>Nota de venta → factura o boleta → guía de despacho · toca un documento para ver su detalle</small>' +
+      '<small>toca un documento para ver su detalle</small>' +
       '<span class="gl-chip-slot" data-gl-chip></span></div>';
     (d.sugerencias || []).forEach(function (s, i) { h += htmlSugerencia(s, i); });
     (d.alertas || []).forEach(function (a) {
@@ -186,7 +186,61 @@
     return h;
   }
 
-  /* ── El panel de una venta: un documento abierto a la vez ─────────────── */
+  /* ── La VENTANA del detalle (2026-10-29, Daniel: «si quiero ver el detalle, no quiero ver eso ahí en la pantalla. Quiero darle
+        clic y verlo, así como en Retiros»). Una sola ventana a la vez; Esc, la X o tocar afuera la cierran; en el celular
+        ocupa toda la pantalla. La usa también static/ot_guia_logistica.js (OTDocCadena.modal). ─────────────────────────── */
+  var modalAbierto = null;
+  function cerrarModal() {
+    var m = modalAbierto;
+    if (!m) return;
+    modalAbierto = null;
+    document.removeEventListener('keydown', m.tecla, true);
+    if (m.el.parentNode) m.el.parentNode.removeChild(m.el);
+    document.documentElement.classList.remove('dc-mo-abierto');
+    if (m.abridor && typeof m.abridor.focus === 'function') { try { m.abridor.focus(); } catch (e) { /* el botón ya no existe */ } }
+  }
+  function modal(o) {
+    o = o || {};
+    cerrarModal();
+    var el = document.createElement('div');
+    el.className = 'dc-mo';
+    el.setAttribute('data-dc-modal', '');
+    el.innerHTML = '<div class="dc-mo-c" role="dialog" aria-modal="true" aria-labelledby="dc-mo-t" tabindex="-1">' +
+      '<div class="dc-mo-h"><h3 id="dc-mo-t">' + esc(o.titulo || '') + '</h3>' +
+      '<button type="button" class="dc-mo-x" data-dc-mo-x aria-label="Cerrar"><i class="bi bi-x-lg" aria-hidden="true"></i></button></div>' +
+      '<div class="dc-mo-b" data-dc-mo-body></div></div>';
+    var cuerpo = el.querySelector('[data-dc-mo-body]');
+    cuerpo.innerHTML = o.html || '';
+    var m = { el: el, abridor: o.abridor, tecla: function (e) { if (e.key === 'Escape') { e.stopPropagation(); cerrarModal(); } } };
+    el.addEventListener('click', function (e) {
+      var t = e.target;
+      if (t === el || (t && t.closest && t.closest('[data-dc-mo-x]'))) { e.preventDefault(); cerrarModal(); }
+    });
+    document.addEventListener('keydown', m.tecla, true);
+    document.body.appendChild(el);
+    document.documentElement.classList.add('dc-mo-abierto');
+    modalAbierto = m;
+    var x = el.querySelector('[data-dc-mo-x]');
+    if (x && typeof x.focus === 'function') x.focus();
+    return {
+      cuerpo: cuerpo,
+      poner: function (h) { cuerpo.innerHTML = h; cuerpo.scrollTop = 0; },
+      cerrar: cerrarModal,
+      activo: function () { return modalAbierto === m; }
+    };
+  }
+
+  /* Los documentos de la venta donde está esa guía (nota de venta → factura → guías), para armar su línea de tiempo. */
+  function cadenaDe(vid, num) {
+    var cs = (datos[vid] || {}).cadenas || [];
+    for (var i = 0; i < cs.length; i++) {
+      var ns = cs[i].nodos || [];
+      for (var j = 0; j < ns.length; j++) { if (ns[j].tipo === 'GDV' && String(ns[j].numero) === String(num)) return ns; }
+    }
+    return [];
+  }
+
+  /* ── El panel de una venta (respaldo si no hay ventana): un documento abierto a la vez ─────────────── */
   function marcar(venta, chip) {
     var bs = venta.querySelectorAll('[data-dc-doc]');
     for (var i = 0; i < bs.length; i++) bs[i].setAttribute('aria-expanded', bs[i] === chip ? 'true' : 'false');
@@ -200,6 +254,10 @@
     var c = ((datos[vid] || {}).cadenas || [])[parseInt(pos[0], 10)] || {};
     var n = (c.nodos || [])[parseInt(pos[1], 10)];
     if (!n) return;
+    if (document.body && typeof document.body.appendChild === 'function') {
+      modal({ titulo: (n.tipo_txt || n.tipo || 'Documento') + ' ' + (n.numero || ''), html: htmlNodo(n), abridor: chip });
+      return;
+    }
     marcar(venta, chip);
     panel.removeAttribute('data-gl-abierta');      // si una guía seguía cargando, ya no pinta encima
     panel.innerHTML = htmlNodo(n);
@@ -279,7 +337,7 @@
     for (var i = 0; i < els.length; i++) montar(els[i]);
   }
 
-  global.OTDocCadena = { iniciar: iniciar, _html: html, _htmlNodo: htmlNodo };
+  global.OTDocCadena = { iniciar: iniciar, modal: modal, cerrarModal: cerrarModal, cadenaDe: cadenaDe, _html: html, _htmlNodo: htmlNodo };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);
   else iniciar();
 })(window);

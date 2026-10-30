@@ -1269,10 +1269,10 @@ class TestJS(unittest.TestCase):
             sg: L._htmlSemaforo({color: 'gris', texto: 'Sin información de bodega (Check)', pendiente: true}),
             raro: L._htmlSemaforo({color: 'rojo', texto: 'x'}) }));
         """ % json.dumps(self.RESUMEN), {})
-        self.assertIn("2 diferencias con la OT", r["chip"])
+        self.assertIn("No cuadra con la OT · 2 diferencias", r["chip"])
         self.assertIn('class="gl-chip ambar"', r["chip"])
         self.assertIn("data-gl-ir", r["chip"])
-        self.assertIn("coincide con la OT", r["verde"])
+        self.assertIn("Cuadra con la OT", r["verde"])
         self.assertEqual(r["nada"], "")
         self.assertIn('class="gl-dot verde"', r["sv"])
         self.assertIn("Semáforo verde", r["sv"], "el color también se dice con palabras (lector de pantalla)")
@@ -1335,16 +1335,15 @@ class TestJS(unittest.TestCase):
           console.log(JSON.stringify({ chip, clases, puntos, etiquetas, resumen, marcado, cargando, abierto, cerrado, puntosDespues, pedidos }));
         """, {"/ot/api/5/documentos/logistica": self.RESUMEN, "/ot/api/5/documentos/logistica?check=1": self.CON_CHECK,
               "/ot/api/5/documentos/logistica?guia=33193": detalle})
-        self.assertIn("2 diferencias con la OT", r["chip"])
+        self.assertIn("No cuadra con la OT · 2 diferencias", r["chip"])
         self.assertEqual(r["clases"], ["dc-doc t-guia", "dc-doc t-guia"], "colores con medida: el chip no se pinta entero")
         # el punto de cada guía ya trae lo que dijo Check (2.ª lectura, ?check=1)
         self.assertEqual(r["puntos"], ["gl-dot ambar", "gl-dot verde"])
         self.assertIn("Semáforo ámbar: Faltan por salir 1 de lo que gestiona la OT · bodega expidió 1 de 1", r["etiquetas"][0])
         self.assertIn("Semáforo verde: Salió todo lo gestionado · bodega expidió 2 de 2", r["etiquetas"][1])
-        # bajo la fila, una línea con lo que está en ámbar (lo verde no ocupa espacio)
-        self.assertFalse(r["resumen"]["hidden"])
-        self.assertIn("GDV 33193: Faltan por salir 1", r["resumen"]["html"])
-        self.assertNotIn("GDV 33194", r["resumen"]["html"])
+        # 29-oct noche: ya no hay texto bajo la fila (la trazabilidad es chiquita; el detalle va al clic)
+        self.assertTrue(r["resumen"]["hidden"])
+        self.assertEqual(r["resumen"]["html"], "")
         self.assertTrue(r["marcado"], "la cadena no vuelve a atender el clic de la guía")
         self.assertIn("Consultando la bodega", r["cargando"])
         self.assertIn("Guía de despacho GDV 33193", r["cargando"])
@@ -1374,8 +1373,8 @@ class TestJS(unittest.TestCase):
         r = self._correr(r"""
           console.log(JSON.stringify({ a: L._htmlChip(%s, %s), b: L._htmlChip({estado: 'coincide', n_diferencias: 0}, %s) }));
         """ % (json.dumps({"estado": "diferencias", "n_diferencias": 1}), json.dumps(cot), json.dumps(cot)), {})
-        self.assertIn("3 diferencias con la OT", r["a"])
-        self.assertIn("2 diferencias con la OT", r["b"], "Check manda: aunque la guía cuadre, si Check informa menos es diferencia")
+        self.assertIn("No cuadra con la OT · 3 diferencias", r["a"])
+        self.assertIn("No cuadra con la OT · 2 diferencias", r["b"],"Check manda: aunque la guía cuadre, si Check informa menos es diferencia")
 
     def test_sin_check_configurado_no_hay_segunda_lectura(self):
         sin = dict(self.RESUMEN, check=False, semaforos={"33193": {"color": "gris", "texto": "x · sin conexión con Check", "pendiente": False}})

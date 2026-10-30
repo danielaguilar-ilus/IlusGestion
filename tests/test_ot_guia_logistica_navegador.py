@@ -143,7 +143,8 @@ class TestNavegador(unittest.TestCase):
     def setUpClass(cls):
         cls.dir = tempfile.mkdtemp(prefix="glogi_")
         resp = {"/ot/api/171/documentos/cadena": CADENA, "/ot/api/171/documentos/logistica": RESUMEN,
-                "/ot/api/171/documentos/logistica?check=1": CON_CHECK, "/ot/api/171/documentos/logistica?guia=33194": DETALLE}
+                "/ot/api/171/documentos/logistica?check=1": CON_CHECK, "/ot/api/171/documentos/logistica?guia=33194": DETALLE,
+                "/ot/api/171/documentos/logistica?guia=33193": dict(DETALLE, detalle=dict(DETALLE["detalle"], guia="33193", diferencias=[]))}
         est = RAIZ / "static"
         html = PAGINA % {"iconos": (est / "bootstrap-icons.css").as_uri(),     # los íconos del proyecto (local, sin red)
                          "css1": (est / "ot_doc_cadena.css").as_uri(), "css2": (est / "ot_guia_logistica.css").as_uri(),
@@ -172,40 +173,61 @@ class TestNavegador(unittest.TestCase):
             fondo_guia = pag.eval_on_selector_all(".dc-doc.t-guia", "els => els.map(e => getComputedStyle(e).backgroundColor)")
             compacta = pag.evaluate(MEDIDAS)
             self._foto(pag, f"{nombre}_compacta")
-            # la guía con la diferencia de Check: el panel con TODOS los movimientos
+            resumen_oculto = pag.eval_on_selector("[data-gl-resumen]", "e => e.hidden && e.innerText.trim() === ''")
+            # la guía con la diferencia de Check: la VENTANA (no el panel en pantalla) con veredicto, comparación y línea de tiempo
             pag.click("[data-gl-ver='33194']")
-            pag.wait_for_selector(".gl-det", timeout=10000)
-            detalle = pag.inner_text(".gl-det")
-            panel = pag.evaluate(MEDIDAS)
-            self._foto(pag, f"{nombre}_guia_abierta")
-            # la factura: su detalle de siempre (saldo por línea y otras OT), ahora detrás del clic
+            pag.wait_for_selector(".dc-mo .gl-tl", timeout=10000)
+            en_pantalla = pag.eval_on_selector_all(".dc .gl-det, .dc .dc-panel:not([hidden])", "els => els.length")
+            detalle = pag.inner_text(".dc-mo")
+            veredicto = pag.inner_text(".dc-mo .gl-ver")
+            orden = pag.eval_on_selector_all(".dc-mo .gl-tl-t", "els => els.map(e => e.innerText)")
+            modal = pag.evaluate(MEDIDAS.replace(".dc *", ".dc-mo *"))
+            caja = pag.eval_on_selector(".dc-mo-c", "e => { const r = e.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }")
+            self._foto(pag, f"{nombre}_ventana_guia")
+            # otra guía desde la propia ventana
+            pag.click(".dc-mo [data-gl-modal-guia='33193']")
+            pag.wait_for_function("document.querySelector('.dc-mo .gl-cab').innerText.includes('33193')", timeout=10000)
+            pag.keyboard.press("Escape")
+            cerrada = pag.eval_on_selector_all(".dc-mo", "els => els.length === 0")
+            # la factura: su detalle de siempre (saldo por línea y otras OT), ahora también en la ventana
             pag.click("[data-dc-doc='0:1']")
-            pag.wait_for_selector(".dc-panel .dc-sal", timeout=10000)
-            factura = pag.inner_text(".dc-panel")
-            exp = pag.eval_on_selector_all("[data-dc-doc]", "els => els.map(e => e.getAttribute('aria-expanded'))")
-            self._foto(pag, f"{nombre}_factura_abierta")
+            pag.wait_for_selector(".dc-mo .dc-sal", timeout=10000)
+            factura = pag.inner_text(".dc-mo")
+            self._foto(pag, f"{nombre}_ventana_factura")
+            pag.click(".dc-mo-x")
+            sin_ventana = pag.eval_on_selector_all(".dc-mo", "els => els.length === 0")
             nav.close()
         self.assertEqual(errores, [], errores)
-        for m in (compacta, panel):
+        for m in (compacta, modal):
             self.assertLessEqual(m["scroll"], m["ancho"], "sin scroll horizontal")
             self.assertEqual(m["cortados"], [], "nada truncado (REGLA #15)")
             self.assertEqual(m["fuera"], [], "nada se sale de la pantalla")
         self.assertEqual(compacta["dot"], [10, 10], "semáforo chico")
         self.assertEqual(puntos, ["gl-dot ambar", "gl-dot ambar", "gl-dot verde", "gl-dot gris"])
         self.assertIn("Semáforo ámbar: La guía cuadra con la OT · bodega expidió 1 de 2", etiquetas[1])
-        self.assertIn("2 diferencias con la OT", chip, "1 de la guía + 1 de Check")
-        self.assertIn("GDV 33193: Falta por salir 1", resumen)
-        self.assertIn("GDV 33194: La guía cuadra con la OT · bodega expidió 1 de 2", resumen)
-        self.assertNotIn("GDV 33195", resumen, "lo verde no ocupa espacio")
+        self.assertIn("No cuadra con la OT · 2 diferencias", chip, "1 de la guía + 1 de Check")
+        self.assertTrue(resumen_oculto, "ya no hay texto bajo la fila: la trazabilidad es chiquita")
+        self.assertEqual(resumen.strip(), "")
         self.assertTrue(all(f in ("rgb(255, 255, 255)", "rgba(0, 0, 0, 0)") for f in fondo_guia), fondo_guia)
-        self.assertIn(B_TEXTO, detalle, "la diferencia de Check, arriba y con nombre completo")
-        self.assertLess(detalle.index("DIFERENCIAS CON LA OT"), detalle.index("QUÉ SALIÓ Y QUÉ NO"))
+        self.assertEqual(en_pantalla, 0, "el detalle NO se pinta en la pantalla: va en la ventana")
+        self.assertIn("No cuadra con la OT", veredicto)
+        self.assertIn(B_TEXTO, veredicto, "el motivo, con nombre completo, dentro del veredicto")
+        self.assertIn("La OT gestiona 3 unidades", veredicto)
+        self.assertLess(detalle.index("No cuadra con la OT"), detalle.index("COMPARACIÓN PRODUCTO POR PRODUCTO"))
+        self.assertLess(detalle.index("COMPARACIÓN PRODUCTO POR PRODUCTO"), detalle.index("PASO A PASO"))
         self.assertIn(BICI, detalle)
         self.assertIn("Según Check salió 1 de 2", detalle)
         self.assertIn("Luis Alberto Pérez Contreras", detalle)
+        self.assertIn("Samuel Rojas", detalle)
+        self.assertEqual([o.split(" ")[0:3] for o in orden],
+                         [["Se", "emitió", "nota"], ["Se", "emitió", "factura"], ["Se", "despachó", "la"],
+                          ["Bodega", "juntó", "los"], ["Bodega", "controló", "y"]],
+                         "línea de tiempo en orden: nota de venta → factura → guía → picking → control de salida")
+        if nombre == "375":
+            self.assertEqual(caja, [375, 812], "en el celular la ventana ocupa toda la pantalla")
+        self.assertTrue(cerrada and sin_ventana, "Esc y la X cierran la ventana")
         self.assertIn("libre $709.539 de $961.640", factura)
         self.assertIn("OT-2026-00249", factura)
-        self.assertEqual(exp, ["false", "true", "false", "false", "false", "false"], "un documento abierto a la vez")
         return compacta
 
     def test_escritorio_1280(self):

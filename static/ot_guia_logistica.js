@@ -108,12 +108,12 @@
     if (!comp) return '';
     var n = nDiferencias(comp, cot);
     if (n > 0) {
-      return '<button type="button" class="gl-chip ambar" data-gl-ir aria-label="' + esc(n + plural(n, ' diferencia', ' diferencias') +
-        ' entre la OT y lo que salió (guía de despacho y Check). Abrir el detalle') + '"><i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i> ' +
-        n + plural(n, ' diferencia', ' diferencias') + ' con la OT</button>';
+      return '<button type="button" class="gl-chip ambar" data-gl-ir aria-label="' + esc('No cuadra con la OT: ' + n + plural(n, ' diferencia', ' diferencias') +
+        ' entre la OT y lo que salió (guía de despacho y Check). Ver el detalle') + '"><i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i> No cuadra con la OT · ' +
+        n + plural(n, ' diferencia', ' diferencias') + '</button>';
     }
     if (comp.estado === 'coincide') {
-      return '<span class="gl-chip verde"><i class="bi bi-check2" aria-hidden="true"></i> Lo que salió coincide con la OT</span>';
+      return '<button type="button" class="gl-chip verde" data-gl-ir aria-label="Cuadra con la OT. Ver el detalle"><i class="bi bi-check2" aria-hidden="true"></i> Cuadra con la OT</button>';
     }
     return '';
   }
@@ -219,6 +219,169 @@
       htmlBodega(bod, det && det.check) + htmlMovimientos(bod) + htmlNotas(r.comparacion) + '</div>';
   }
 
+  /* ── La VENTANA (Daniel, 29-oct noche: «no se entiende nada… necesito una comparación bien clara: ¿está cuadrando con la OT
+        o no?… el detalle al darle clic, así como en Retiros: qué hizo quién y cuándo, organizadito»). Arriba el VEREDICTO en
+        grande; después la comparación producto por producto y la línea de tiempo (Random + bodega). ─────────────────── */
+  function sumar(filas, k) {
+    return filas.reduce(function (a, f) { return a + (f[k] == null ? 0 : (Number(f[k]) || 0)); }, 0);
+  }
+  function unidades(n) { return cant(n) + plural(n, ' unidad', ' unidades'); }
+
+  function tsDe(s) {
+    var m = /(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T,]+(\d{1,2}):(\d{2}))?/.exec(String(s || ''));
+    return m ? Date.UTC(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0)) : null;
+  }
+
+  function veredictoDe(r) {
+    var det = r.detalle || {}, comp = r.comparacion || {};
+    if ((det.diferencias || []).length) return 'no';
+    if (comp.estado === 'sin_datos' || comp.estado === 'sin_lectura') return 'sin';
+    return 'si';
+  }
+
+  function htmlSelectorGuias(vid, r, num) {
+    var gs = (r && r.guias) || [];
+    if (gs.length < 2) return '';
+    return '<div class="gl-sel" role="group" aria-label="Guías de despacho de esta OT">' + gs.map(function (g) {
+      var s = semaforoDe(vid, g.numero), on = String(g.numero) === String(num);
+      return '<button type="button" class="gl-sel-b' + (on ? ' on' : '') + '" data-gl-modal-guia="' + esc(g.numero) + '" aria-pressed="' + (on ? 'true' : 'false') + '">' +
+        dot(s && s.color) + 'GDV ' + esc(g.numero) + '</button>';
+    }).join('') + '</div>';
+  }
+
+  function htmlVeredicto(r) {
+    var v = veredictoDe(r), det = r.detalle || {}, comp = r.comparacion || {};
+    var filas = det.productos || [], difs = det.diferencias || [];
+    var icono = { si: 'bi-check-lg', no: 'bi-exclamation-lg', sin: 'bi-question-lg' }[v];
+    var titulo = { si: 'Sí cuadra con la OT', no: 'No cuadra con la OT', sin: 'Todavía no se puede comparar' }[v];
+    var sub;
+    if (v === 'sin') {
+      sub = esc(comp.veredicto || 'Falta información para comparar la OT con lo que salió de bodega.');
+    } else {
+      var hayCheck = filas.some(function (f) { return f.check != null; });
+      sub = 'La OT gestiona <b>' + esc(unidades(sumar(filas, 'ot'))) + '</b> · la guía de despacho sacó <b>' + esc(unidades(sumar(filas, 'guia'))) + '</b>' +
+        (hayCheck ? ' · bodega (Check) expidió <b>' + esc(unidades(sumar(filas, 'check'))) + '</b>' : ' · Check no informa esta guía');
+    }
+    var h = '<section class="gl-ver ' + v + '" aria-label="Veredicto"><span class="gl-ver-i" aria-hidden="true"><i class="bi ' + icono + '"></i></span>' +
+      '<div class="gl-ver-t"><h4>' + titulo + '</h4><p>' + sub + '</p>';
+    if (v === 'no' && difs.length) {
+      h += '<ul class="gl-ver-l">' + difs.map(function (d) { return '<li>' + dot('ambar') + '<span>' + esc(d.texto) + '</span></li>'; }).join('') + '</ul>';
+    }
+    return h + '</div></section>';
+  }
+
+  function htmlComparacion(det) {
+    var filas = (det && det.productos) || [];
+    if (!filas.length) return '';
+    return '<section class="gl-sec gl-prods"><h5><i class="bi bi-list-check" aria-hidden="true"></i> Comparación producto por producto</h5>' +
+      '<table class="gl-tab"><thead><tr><th scope="col">Producto</th><th scope="col">OT</th><th scope="col">Guía</th>' +
+      '<th scope="col">Check</th><th scope="col">Resultado</th></tr></thead><tbody>' +
+      filas.map(function (f) {
+        var c = col(f.color);
+        var res = c === 'verde' ? 'Cuadra' : (f.check_txt || f.texto || (c === 'gris' ? 'Sin dato' : 'No cuadra'));
+        return '<tr class="' + (f.en_guia ? '' : 'fuera') + '"><td class="gl-td-p"><span class="gl-l">' + esc(f.nombre || f.sku || 'Producto') +
+          (f.sku && f.nombre ? ' <small>' + esc(f.sku) + '</small>' : '') + '</span></td>' +
+          '<td data-l="OT">' + num0(f.ot) + '</td><td data-l="Guía">' + num0(f.guia) + '</td><td data-l="Check">' + num0(f.check) + '</td>' +
+          '<td data-l="Resultado" class="gl-td-b ' + c + '">' + dot(c) + esc(res) + '</td></tr>';
+      }).join('') + '</tbody></table></section>';
+  }
+
+  /* La línea de tiempo: lo de Random (nota de venta → factura → guía) y lo de bodega (Check), en orden, con quién y cuándo. */
+  function eventosDe(vid, r, num) {
+    var ev = [], idx = 0;
+    var OD = global.OTDocCadena;
+    var nodos = (OD && typeof OD.cadenaDe === 'function') ? OD.cadenaDe(vid, num) : [];
+    nodos.forEach(function (n) {
+      if (n.tipo === 'GDV' && String(n.numero) !== String(num)) return;       // las otras guías tienen su propia pestaña
+      var tipo = String(n.tipo_txt || n.tipo || 'documento').toLowerCase();
+      var titulo = n.tipo === 'GDV' ? 'Se despachó la guía GDV ' + n.numero : 'Se emitió ' + tipo + ' ' + (n.numero || '');
+      var det = [];
+      if (n.tipo === 'GDV' && n.desde) det.push('Salió desde ' + n.desde);
+      if (n.dada_de_baja) det.push('Dada de baja por ' + (n.reemplazado_por || 'la factura'));
+      ev.push({ t: tsDe(n.fecha), i: idx++, fuente: 'Random', cuando: n.fecha || '', quien: '', titulo: titulo, detalle: det.join(' · ') });
+    });
+    var bod = (r.bodega || {})[num] || null, m = (bod && bod.movimientos) || {};
+    var hay = false;
+    (m.ots || []).forEach(function (o) {
+      hay = true;
+      var tipo = String(o.tipo || ''), hecho = /finaliz/i.test(o.estado || '');
+      var cuando = hecho && o.fin ? o.fin : (o.inicio || o.fin || '');
+      var titulo = /pick/i.test(tipo) ? 'Bodega juntó los productos' : /control|salida/i.test(tipo) ? 'Bodega controló y expidió la salida'
+        : (tipo ? 'Bodega: ' + tipo.toLowerCase() : 'Movimiento de bodega');
+      if (!hecho && o.estado) titulo += ' (' + String(o.estado).toLowerCase() + ')';
+      var det = ['OT ' + (o.ot || 's/n') + ' de Check'];
+      if (o.inicio && o.fin) det.push('empezó ' + o.inicio + ' · terminó ' + o.fin);
+      if ((o.uas || []).length) det.push('UA ' + o.uas.join(', '));
+      ev.push({ t: tsDe(cuando), i: idx++, fuente: 'Check', cuando: cuando, quien: (o.personas || []).join(', '), titulo: titulo, detalle: det.join(' · ') });
+    });
+    ev.sort(function (a, b) {
+      var x = a.t == null ? Infinity : a.t, y = b.t == null ? Infinity : b.t;
+      return x === y ? a.i - b.i : (x < y ? -1 : 1);
+    });
+    if (!hay) ev.push({ t: null, i: idx, fuente: 'Check', cuando: '', quien: '', gris: true, detalle: '',
+      titulo: m.texto || 'Check no tiene movimientos de bodega para esta guía' });
+    return ev;
+  }
+
+  function htmlLineaTiempo(vid, r, num) {
+    var ev = eventosDe(vid, r, num);
+    if (!ev.length) return '';
+    var h = '<section class="gl-sec gl-tlsec"><h5><i class="bi bi-clock-history" aria-hidden="true"></i> Paso a paso: qué pasó, quién y cuándo</h5><ol class="gl-tl">';
+    ev.forEach(function (e) {
+      var meta = [];
+      if (e.cuando) meta.push(esc(e.cuando));
+      if (e.quien) meta.push('<b>' + esc(e.quien) + '</b>');
+      h += '<li class="gl-tl-i ' + (e.fuente === 'Check' ? 'check' : 'random') + (e.gris ? ' gris' : '') + '"><span class="gl-tl-pt" aria-hidden="true"></span>' +
+        '<div class="gl-tl-c"><p class="gl-tl-t">' + esc(e.titulo) + ' <span class="gl-tl-src">' + esc(e.fuente) + '</span></p>' +
+        (meta.length ? '<p class="gl-tl-m">' + meta.join(' · ') + '</p>' : '') +
+        (e.detalle ? '<p class="gl-tl-d">' + esc(e.detalle) + '</p>' : '') + '</div></li>';
+    });
+    return h + '</ol></section>';
+  }
+
+  function htmlCabModal(r, num) {
+    var g = ((r && r.guias) || []).filter(function (x) { return String(x.numero) === String(num); })[0] || {};
+    return '<p class="gl-cab">Guía de despacho <b>GDV ' + esc(num) + '</b>' + (g.fecha ? ' · ' + esc(g.fecha) : '') +
+      (g.desde ? ' · salió desde ' + esc(g.desde) : '') + '</p>';
+  }
+
+  function htmlModal(vid, r, num) {
+    if (!r) {
+      return '<div class="gl-err" role="note"><span>No pudimos leer la logística ahora. La ficha sigue igual.</span>' +
+        '<button type="button" class="gl-btn" data-gl-reintentar="' + esc(num) + '"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i> Reintentar</button></div>';
+    }
+    var det = r.detalle || null, bod = (r.bodega || {})[num] || null;
+    return htmlSelectorGuias(vid, r, num) + htmlCabModal(r, num) + htmlVeredicto(r) + htmlComparacion(det) +
+      htmlLineaTiempo(vid, r, num) + htmlBodega(bod, det && det.check) + htmlNotas(r.comparacion);
+  }
+
+  function htmlCargandoModal(vid, num) {
+    return htmlSelectorGuias(vid, resumenes[vid], num) + htmlCabModal(resumenes[vid], num) +
+      '<p class="gl-meta"><i class="bi bi-hourglass-split" aria-hidden="true"></i> Consultando la bodega (Check) y Random…</p>';
+  }
+
+  function abrirVentana(sec, vid, num, abridor, forzar) {
+    var h = global.OTDocCadena.modal({ titulo: '¿Cuadra con la orden de trabajo?', abridor: abridor, html: htmlCargandoModal(vid, num) });
+    function ir(n, f) {
+      h.poner(htmlCargandoModal(vid, n));
+      return cargarGuia(vid, n, f).then(function (r) {
+        if (!h.activo()) return r;                    // la cerraron mientras tanto
+        h.poner(htmlModal(vid, r, n));
+        pintar(sec, vid);
+        return r;
+      });
+    }
+    h.cuerpo.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!t || !t.closest) return;
+      var g = t.closest('[data-gl-modal-guia]');
+      if (g) { e.preventDefault(); ir(g.getAttribute('data-gl-modal-guia'), false); return; }
+      var re = t.closest('[data-gl-reintentar]');
+      if (re) { e.preventDefault(); ir(re.getAttribute('data-gl-reintentar'), true); }
+    });
+    return ir(num, forzar);
+  }
+
   /* ── Montaje y clics ─────────────────────────────────────────────────── */
   function chips(sec) { return sec.querySelectorAll('[data-gl-ver]'); }
   function chipDe(sec, num) {
@@ -249,17 +412,17 @@
         cs[i].setAttribute('title', t);
         cs[i].setAttribute('aria-label', t);
       }
-      // La línea bajo la fila: solo lo que está en ámbar (lo verde y lo gris se ven en el punto y al tocar).
+      // 2026-10-29 noche: ya no se pinta texto bajo la fila (Daniel: «hazla chiquitita»). Lo que dice cada guía está en su
+      // punto de semáforo (y en el detalle de la ventana); la fila queda de una sola línea.
       var venta = ventaDe(cs[i]);
       var k = venta ? venta.getAttribute('data-dc-venta') : '';
-      if (!lineas[k]) lineas[k] = { venta: venta, txt: [] };
-      if (s && s.color === 'ambar') lineas[k].txt.push('GDV ' + num + ': ' + s.texto);
+      if (!lineas[k]) lineas[k] = { venta: venta };
     }
     Object.keys(lineas).forEach(function (k) {
       var v = lineas[k].venta, res = v && v.querySelector('[data-gl-resumen]');
       if (!res) return;
-      res.innerHTML = lineas[k].txt.map(function (t) { return '<span>' + dot('ambar') + esc(t) + '</span>'; }).join('');
-      res.hidden = !lineas[k].txt.length;
+      res.innerHTML = '';
+      res.hidden = true;
     });
   }
 
@@ -270,6 +433,9 @@
 
   function abrir(sec, vid, num, forzar) {
     var chip = chipDe(sec, num), panel = panelDe(chip);
+    if (chip && global.OTDocCadena && typeof global.OTDocCadena.modal === 'function' && document.body && typeof document.body.appendChild === 'function') {
+      return abrirVentana(sec, vid, num, chip, forzar);       // lo normal: el detalle va en una ventana, no en la pantalla
+    }
     if (!chip || !panel) return Promise.resolve(null);
     marcar(ventaDe(chip), chip);
     panel.hidden = false;
@@ -351,7 +517,7 @@
 
   global.OTGuiaLogistica = {
     montar: montar, iniciar: iniciar, abrir: abrir, cerrar: cerrar,
-    _htmlChip: htmlChip, _htmlSemaforo: htmlSemaforo, _htmlDetalle: htmlDetalle,
+    _htmlChip: htmlChip, _htmlSemaforo: htmlSemaforo, _htmlDetalle: htmlDetalle, _htmlModal: htmlModal,
     _limpiar: function () { resumenes = {}; semaforos = {}; checkOT = {}; pidiendo = {}; detalles = {}; }
   };
   if (typeof document !== 'undefined') {
