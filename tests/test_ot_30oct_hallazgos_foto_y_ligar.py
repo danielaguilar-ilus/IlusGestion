@@ -125,6 +125,14 @@ class TestTarjetaDeFotosAAnchoCompleto(unittest.TestCase):
         self.assertTrue(g < self.t.index('id="otdCardMotor"') < i < cierre, "queda al final de la grilla, después de las dos columnas")
         self.assertNotIn('class="otd-card" data-bal="1">\n        <h3><i class="bi bi-camera-fill"></i> Fotos de la OT', self.t)
 
+    def test_no_queda_dentro_de_la_tarjeta_de_costos_que_el_tecnico_no_ve(self):
+        """El bloque de costos solo se dibuja para gestión ({% if not es_tecnico %}): la tarjeta de fotos tiene que quedar DESPUÉS de ese
+        {% endif %}, o el técnico (que sube las fotos) no la vería. Error real al mover la tarjeta, corregido el mismo día."""
+        k = self.t.index("ya no ocupa lugar en la página")
+        e = self.t.index("{% endif %}", k)
+        self.assertLess(e, self.t.index('id="otdCardFotos"'), "después del endif que cierra el bloque de gestión")
+        self.assertEqual(self.t[k:self.t.index('id="otdCardFotos"')].count("{% if "), 0, "ningún if abierto entre medio")
+
     def test_se_conservan_los_ids_del_js(self):
         for ident in ("otdEvGrid", "otdEvEmpty", "otdEvBtn", "otdEvCount", "otdEvCountWrap", "otdEnzOpenBtn"):
             self.assertIn(f'id="{ident}"', self.t)

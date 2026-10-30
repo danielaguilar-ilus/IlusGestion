@@ -4998,6 +4998,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         {% if not puede_metadata %}
         {{ facprov_bloque(factura_prov if factura_prov is defined else none, factura_prov_aplica if factura_prov_aplica is defined else false) }}
         {% endif %}
+      </div>
+      {#- 2026-10-08 (Daniel, con la captura de la OT-2026-00245): «hay un botón que dice Editar finanzas que no lo veo muy necesario…
+          es casi la misma información que está arriba». La tarjeta de edición (#otdCardFinanzas, con TODOS sus ids y funciones: REGLA #4.2)
+          ya no ocupa lugar en la página: vive en el modal «Editar cobro y costos» (#otdFinModal), a nivel raíz, más abajo (antes de los
+          scripts). Se abre con el botón «Editar cobro y costos» del bloque único de arriba (quien puede editar). -#}
+      {% endif %}
       {# 🖼️ 2026-10-30 (Daniel, viendo la OT con 53 fotos: «la tarjeta de las fotos igual deja espacio»): la tarjeta de fotos medía unos 650 px
          dentro de la columna izquierda y dejaba un hueco al lado (REGLA #16: una tarjeta que sola supera ~600 px va a ANCHO COMPLETO). Pasa al final
          de la grilla, debajo de las dos columnas, con la galería repartida en más columnas. Mismos ids, mismo JS y mismos endpoints. #}
@@ -5093,12 +5099,6 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             </div>
           </div>
       </div>
-      </div>
-      {#- 2026-10-08 (Daniel, con la captura de la OT-2026-00245): «hay un botón que dice Editar finanzas que no lo veo muy necesario…
-          es casi la misma información que está arriba». La tarjeta de edición (#otdCardFinanzas, con TODOS sus ids y funciones: REGLA #4.2)
-          ya no ocupa lugar en la página: vive en el modal «Editar cobro y costos» (#otdFinModal), a nivel raíz, más abajo (antes de los
-          scripts). Se abre con el botón «Editar cobro y costos» del bloque único de arriba (quien puede editar). -#}
-      {% endif %}
   </div>
 
   {# 🔽 2026-09-02 (Daniel: "la actividad de la OT mándala hacia
