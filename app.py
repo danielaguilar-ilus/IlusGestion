@@ -73,6 +73,7 @@ import ot_que_paso as _qp  # «¿Qué pasó?» de una OT y la OT hija pendiente 
 import ot_piezas_medidas as _pm    # 2026-10-20: fichas de medidas por pieza, validación, aprendizaje del modelo y árbol «¿Qué le pasa?» (módulo puro con pruebas)
 import ot_producto_estado as _pe    # acciones por producto de una OT interna (No se puede usar / No tiene arreglo / No llegó) y repuestos sugeridos por defecto (módulo puro con pruebas)
 import ot_anexo_costo as _oac    # 2026-10-20: el costo de la OT y el anexo del proveedor son UN solo valor (módulo puro con pruebas)
+import ot_valorizar as _valz     # 2026-10-29 (REGLA #60): valorización SUGERIDA desde las cotizaciones (escalera A–E, rango, confianza): módulo puro con pruebas
 import anexo_anulacion as _axa   # 2026-10-28 (REGLA #52): anexo FIRMADO + OT eliminada → anexo inválido y aviso a las dos partes (módulo puro con pruebas)
 import ot_intenciones as _oint   # 2026-10-25 (REGLA #47): intenciones del costeo (por qué, quién lo asume) y su validación: módulo puro con pruebas
 import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
@@ -88110,7 +88111,13 @@ _OT_FIN_BASE_MONTOS = ("costo", "zz_monto", "zz_envio_monto", "costo_proveedor",
 # De dónde puede salir un valorizado (columna valorizado_fuente, VARCHAR(20)). Lo que no esté en la lista se
 # guarda como 'a_mano': nunca se escribe un rótulo inventado por el navegador.
 _OT_FIN_VALORIZADO_FUENTES = ("cotizador", "contrato", "documento", "a_mano", "dato_antiguo", "estimado",
-                              "supuesto", "interno", "cotizacion", "zz", "doc_total")
+                              "supuesto", "interno", "cotizacion", "zz", "doc_total",
+                              # 2026-10-29 (REGLA #60): la valorización SUGERIDA desde las cotizaciones. Estas cuatro solo las
+                              # escribe el servidor por su camino propio (POST /ot/api/<vid>/valorizacion-aplicar), tras recalcular.
+                              "cotiz_propia", "cotiz_cliente", "cotiz_comparable", "ot_comparable")
+# 🧮 2026-10-29 (REGLA #60): rótulos que el navegador NUNCA puede fijar por /ot/api/finanzas ni al crear: si llegan desde la pantalla
+# quedan 'a_mano' (solo el servidor sabe si el monto es de verdad la sugerencia). Espejo de ot_valorizar.FUENTES_SOLO_SERVIDOR.
+_OT_FIN_VALORIZADO_FUENTES_SERVIDOR = ("cotiz_propia", "cotiz_cliente", "cotiz_comparable", "ot_comparable")
 
 
 def _ot_fin_base(v):
@@ -98371,7 +98378,9 @@ def ot2_api_finanzas(vid):
         _val_fuente = (str(d.get("valorizado_fuente") or "").strip().lower()[:20]) or None
         if _val_clp is None:
             _val_fuente = None
-        elif _val_fuente not in _OT_FIN_VALORIZADO_FUENTES:
+        elif (_val_fuente not in _OT_FIN_VALORIZADO_FUENTES
+              # 2026-10-29 (REGLA #60): la fuente de una sugerencia de cotizaciones la fija SOLO el servidor (valorizacion-aplicar).
+              or _val_fuente in globals().get("_OT_FIN_VALORIZADO_FUENTES_SERVIDOR", ())):
             _val_fuente = "a_mano"
 
     # estado_facturacion se deriva, no se pide: la pantalla no debería
@@ -114278,6 +114287,9 @@ def _ot_fin_valorizado_fuente(valor_origen=None, fuente=None):
     """valorizado_fuente de un monto de referencia: la `fuente` explícita si es del vocabulario; si no, la que
     corresponde al origen del número (valor_origen); 'a_mano' si no se sabe de dónde salió."""
     f = (str(fuente or "").strip().lower())[:20]
+    # 2026-10-29 (REGLA #60): una fuente de la sugerencia de cotizaciones no la fija quien crea la OT: solo el camino propio del servidor.
+    if f in globals().get("_OT_FIN_VALORIZADO_FUENTES_SERVIDOR", ()):
+        return "a_mano"
     if f in _OT_FIN_VALORIZADO_FUENTES:
         return f
     return _OT_FIN_VALORIZADO_FUENTE_POR_ORIGEN.get((valor_origen or "").strip().lower(), "a_mano")
@@ -127651,6 +127663,634 @@ def ot2_api_costo_sugerido(vid):
     except (TypeError, ValueError):
         out["margen_pct"] = None
     return jsonify(out)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  🧮 2026-10-29 — VALORIZACIÓN SUGERIDA DESDE LAS COTIZACIONES (REGLA #60; fase 3 del plan de costeo)
+#  Daniel: «Necesito que TODO sea VALORIZADO. Si no está valorizado por el usuario, TÚ lo SUGIERES: busca en las COTIZACIONES cuál es
+#  el precio más acorde, e indícame (ej.: "esta revisión saldría en 600 lucas"). Trabajos internos también valorizados para saber
+#  cuánto se nos escapa.»
+#  · La cuenta vive en ot_valorizar.py (puro, con pruebas). Aquí solo se LEE MySQL (jamás Random ni Check) y se arma lo que necesita.
+#  · Sugerir NUNCA escribe (ni INSERT, ni UPDATE, ni DDL). La escritura va por su camino propio, solo superadmin:
+#    POST /ot/api/<vid>/valorizacion-aplicar RECALCULA la sugerencia en el servidor y solo si el monto es exactamente el sugerido lo
+#    rotula con su fuente; si no, queda 'a_mano' con motivo. Escribe SOLO valorizado_clp y valorizado_fuente (nunca zz_monto, el cobro
+#    ni el estado), con bitácora, el registro inmutable de correcciones y la constancia en ot_valorizado_sugerencias.
+#  · El valorizado es SOLO referencia: no se suma a lo cobrado (REGLAS #44/#45/#56). En una OT que se cobra no se guarda por esta vía.
+#  · El botón «Valorizar con el cotizador» (tarifa de lista) se conserva tal cual (REGLA #4.2): es el escalón E de esta escalera.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+_VALZ_TTL_S = 90                               # caché corta del mercado (cotizaciones + OT comparables) y de cada lote
+_VALZ_MERCADO = {"t": 0.0, "indice": None, "n_cot": 0, "n_ot": 0}
+_VALZ_LOTE_CACHE = {}
+_VALZ_LIMITE_LOTE = 3000                       # OT leídas por lote (si se toca, la pantalla lo dice)
+_VALZ_LIMITE_COT = 4000                        # cotizaciones de los últimos 12 meses
+_VALZ_LIMITE_OT_COMP = 3000                    # OT cerradas y cobradas de los últimos 12 meses
+_VALZ_TABLA = {"ok": False}
+
+
+def _ensure_ot_valorizado_sugerencias():
+    """Tabla de SOLO INSERCIÓN con cada decisión sobre la valorización sugerida (aceptada, editada, descartada). UNA sentencia CREATE
+    TABLE IF NOT EXISTS, barata si ya existe (REGLA #18: mysql_execute la salta sin pedir lock). Nunca un UPDATE ni un DELETE."""
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS ot_valorizado_sugerencias ("
+            "  id BIGINT AUTO_INCREMENT PRIMARY KEY,"
+            "  visita_id INT NOT NULL,"
+            "  numero_ot VARCHAR(60) NULL,"
+            "  monto_sugerido DECIMAL(14,2) NULL,"
+            "  monto_guardado DECIMAL(14,2) NULL,"
+            "  decision VARCHAR(12) NOT NULL COMMENT 'aceptada | editada | descartada',"
+            "  fuente VARCHAR(20) NULL COMMENT 'rótulo con que quedó el valorizado (cotiz_*, ot_comparable, cotizador, a_mano)',"
+            "  fuente_sugerida VARCHAR(20) NULL,"
+            "  confianza VARCHAR(8) NULL,"
+            "  cobertura_equipos DECIMAL(6,4) NULL,"
+            "  motivo VARCHAR(500) NULL,"
+            "  base_json TEXT NULL COMMENT 'ids de cotizaciones y OT usadas, percentiles y traslado',"
+            "  usuario VARCHAR(190) NULL,"
+            "  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "  KEY idx_ovs_visita (visita_id, creado_en),"
+            "  KEY idx_ovs_decision (decision, creado_en)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        _VALZ_TABLA["ok"] = True
+    except Exception as e:
+        print(f"[valorizar] tabla: {type(e).__name__}: {e}", flush=True)
+    return _VALZ_TABLA["ok"]
+
+
+def _valz_tabla_ok():
+    return _VALZ_TABLA["ok"] or _ensure_ot_valorizado_sugerencias()
+
+
+def _valz_cols_dir():
+    """Región y comuna de la OT (la dirección de la visita manda sobre la ficha del cliente). Las columnas de la visita se usan solo
+    si existen (information_schema, cacheado 10 min)."""
+    cols = _ger_columnas_visitas()
+    reg = "COALESCE(NULLIF(v.direccion_region,''), c.region)" if "direccion_region" in cols else "c.region"
+    com = "COALESCE(NULLIF(v.direccion_comuna,''), c.comuna)" if "direccion_comuna" in cols else "c.comuna"
+    return f"{reg} AS valz_region, {com} AS valz_comuna"
+
+
+def _valz_select():
+    """SELECT de las OT con lo que necesitan la cuenta única (_ot_finanzas) y la sugerencia. Nombres de columna de código."""
+    return ("SELECT v.id, v.numero_ot, v.estado, v.cerrada_at, v.created_at, v.fecha_programada, " + _ot_fin_cols_sql("v") + ", "
+            "       c.razon_social AS cliente, " + _valz_cols_dir() + " "
+            "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id ")
+
+
+def _valz_equipos(vids):
+    """{vid: [equipo]} — la MISMA unión de costo-sugerido y la ficha (tareas ∪ equipos de la OT), sin los dados de baja ni los saltados,
+    en LOTE. Cada equipo: {maquina_id, nombre, sku, cantidad, clase, clase_nombre}. Solo lectura."""
+    out = {}
+    for lote in _ger_chunks(vids, 300):
+        ph = ",".join(["%s"] * len(lote))
+        try:
+            filas = mysql_fetchall(
+                "SELECT x.visita_id, m.id, m.nombre, m.sku, COALESCE(m.cantidad,1) AS cant, cc.slug AS clase_slug, cc.nombre AS clase_nombre "
+                "  FROM (SELECT DISTINCT visita_id, maquina_id FROM mant_visita_tareas WHERE visita_id IN (" + ph + ") AND maquina_id IS NOT NULL "
+                "        UNION SELECT visita_id, maquina_id FROM mant_visita_equipos WHERE visita_id IN (" + ph + ")) x "
+                "  JOIN mant_maquinas m ON m.id = x.maquina_id "
+                "  LEFT JOIN mant_visita_equipos ve ON ve.maquina_id = m.id AND ve.visita_id = x.visita_id "
+                "  LEFT JOIN cat_productos cp ON cp.sku = m.sku "
+                "  LEFT JOIN cat_clases_producto cc ON cc.slug = cp.clase_producto AND cc.activo = 1 "
+                " WHERE COALESCE(m.estado,'activo') <> 'baja' AND COALESCE(ve.estado_revision,'') <> 'saltado'",
+                tuple(lote) + tuple(lote)) or []
+        except Exception as e:
+            print(f"[valorizar] equipos: {type(e).__name__}", flush=True)
+            continue
+        vistos = set()
+        for r in filas:
+            k = (int(r["visita_id"]), int(r["id"]))
+            if k in vistos:              # un SKU repetido en el catálogo o dos filas de equipo no duplican unidades
+                continue
+            vistos.add(k)
+            try:
+                _c = r.get("cant")
+                cant = 1.0 if _c is None else max(float(_c), 0.0)
+            except (TypeError, ValueError):
+                cant = 1.0
+            out.setdefault(k[0], []).append({"maquina_id": k[1], "nombre": (r.get("nombre") or "").strip(), "sku": (r.get("sku") or "").strip(),
+                                             "cantidad": cant, "clase": (r.get("clase_slug") or "").strip() or None,
+                                             "clase_nombre": r.get("clase_nombre")})
+    return out
+
+
+def _valz_clase_por_sku(skus):
+    """{SKU en mayúsculas: clase del catálogo} para las líneas de cotización que quedaron sin su clase guardada."""
+    skus = sorted({(s or "").strip().upper() for s in skus if s})
+    out = {}
+    for i in range(0, len(skus), 500):
+        lote = skus[i:i + 500]
+        try:
+            for r in (mysql_fetchall("SELECT UPPER(sku) AS sku, clase_producto FROM cat_productos WHERE UPPER(sku) IN ("
+                                     + ",".join(["%s"] * len(lote)) + ") AND clase_producto IS NOT NULL", tuple(lote)) or []):
+                out[(r.get("sku") or "").strip()] = r.get("clase_producto")
+        except Exception as e:
+            print(f"[valorizar] clase por SKU: {type(e).__name__}", flush=True)
+    return out
+
+
+_VALZ_COT_COLS = ("id, numero_cotizacion, estado, tipo_servicio, cliente_id, empresa, region, subtotal_items, subtotal, descuento_monto, "
+                  "costo_ruta, ruta_excluida, created_at, eliminada")
+
+
+def _valz_normalizar_cabs(cabs):
+    """[cabecera] → [cotización normalizada] (con sus líneas NETAS). Una consulta de ítems por cada 500 cotizaciones."""
+    cabs = [dict(c) for c in cabs or [] if c.get("id")]
+    if not cabs:
+        return []
+    items = {}
+    ids = [int(c["id"]) for c in cabs]
+    for i in range(0, len(ids), 500):
+        lote = ids[i:i + 500]
+        try:
+            for it in (mysql_fetchall(
+                    "SELECT cotizacion_id, item_tipo, erp_kopr, clase_producto, cantidad, precio_unitario, precio_manual, total, "
+                    "       descuento_pct, maquina_id FROM tk_cotizacion_items WHERE cotizacion_id IN ("
+                    + ",".join(["%s"] * len(lote)) + ")", tuple(lote)) or []):
+                items.setdefault(int(it["cotizacion_id"]), []).append(dict(it))
+        except Exception as e:
+            print(f"[valorizar] ítems de cotización: {type(e).__name__}", flush=True)
+    sin_clase = [it.get("erp_kopr") for lst in items.values() for it in lst if not it.get("clase_producto") and it.get("erp_kopr")]
+    mapa = _valz_clase_por_sku(sin_clase) if sin_clase else {}
+    return [_valz.normalizar_cotizacion(c, items.get(int(c["id"]), []), mapa) for c in cabs]
+
+
+def _valz_propias(vids):
+    """{vid: [cotización normalizada]} — las cotizaciones de ESA OT: por el documento de la OT (origen 'cotizacion'), por el ticket de
+    la OT o porque sus líneas vienen del mismo documento de Random que la OT declaró. Sin ventana de fecha; rechazadas y eliminadas
+    quedan fuera (las descarta normalizar_cotizacion). Solo lectura."""
+    ids = {}
+    consultas = (
+        "SELECT visita_id, cotizacion_id AS cid FROM mant_visita_documentos "
+        " WHERE origen='cotizacion' AND cotizacion_id IS NOT NULL AND visita_id IN ({ph})",
+        "SELECT tk.visita_id, c.id AS cid FROM tk_tickets tk JOIN tk_cotizaciones c ON c.ticket_id = tk.id "
+        " WHERE tk.visita_id IN ({ph})",
+        "SELECT DISTINCT d.visita_id, i.cotizacion_id AS cid FROM mant_visita_documentos d "
+        "  JOIN tk_cotizacion_items i ON i.erp_tido = d.erp_tido AND i.erp_nudo = d.erp_nudo "
+        " WHERE d.origen='erp' AND COALESCE(d.erp_nudo,'')<>'' AND d.visita_id IN ({ph})",
+    )
+    for lote in _ger_chunks(vids, 300):
+        ph = ",".join(["%s"] * len(lote))
+        for sql in consultas:
+            try:
+                for r in (mysql_fetchall(sql.format(ph=ph), tuple(lote)) or []):
+                    if r.get("cid"):
+                        ids.setdefault(int(r["visita_id"]), set()).add(int(r["cid"]))
+            except Exception as e:
+                print(f"[valorizar] cotizaciones de la OT: {type(e).__name__}", flush=True)
+    todas = sorted({c for s in ids.values() for c in s})
+    norm = {}
+    for i in range(0, len(todas), 500):
+        lote = todas[i:i + 500]
+        try:
+            cabs = mysql_fetchall("SELECT " + _VALZ_COT_COLS + " FROM tk_cotizaciones WHERE id IN ("
+                                  + ",".join(["%s"] * len(lote)) + ")", tuple(lote)) or []
+        except Exception as e:
+            print(f"[valorizar] cabeceras propias: {type(e).__name__}", flush=True)
+            cabs = []
+        for c in _valz_normalizar_cabs(cabs):
+            norm[c["id"]] = c
+    return {vid: [norm[c] for c in sorted(s) if c in norm and norm[c].get("valida")] for vid, s in ids.items()}
+
+
+def _valz_no_cobrables(slugs):
+    """Las clases que el cotizador NO cobra (accesorios): la misma regla de _tk_cotiz_calcular_item, sin consultar tarifas."""
+    _calc = globals().get("_tk_cotiz_calcular_item")
+    _pricing = globals().get("_tk_cotiz_pricing_config")
+    if not (_calc and _pricing) or not slugs:
+        return set()
+    try:
+        cfg = _pricing()
+    except Exception:
+        return set()
+    out = set()
+    for s in set(slugs):
+        try:
+            it = _calc(s, "mantencion", 1, 0, cfg, tarifa={})   # tarifa vacía: no consulta; solo responde si es accesorio
+        except Exception:
+            it = None
+        if it and it.get("no_cobrable"):
+            out.add(s)
+    return out
+
+
+def _valz_tarifas(pares):
+    """{(tipo_servicio, clase): {'unit', 'heredada'}} — el precio por unidad que el COTIZADOR le cobraría al cliente (escalón E): el
+    mismo motor de «Valorizar con el cotizador» (_tk_cotiz_calcular_item con la tarifa de la clase; precio fijo y precio piso incluidos)."""
+    _calc = globals().get("_tk_cotiz_calcular_item")
+    _pricing = globals().get("_tk_cotiz_pricing_config")
+    _batch = globals().get("_cat_tarifas_clases_batch")
+    out = {}
+    if not (_calc and _pricing and _batch) or not pares:
+        return out
+    try:
+        cfg = _pricing()
+    except Exception as e:
+        print(f"[valorizar] cotizador: {type(e).__name__}", flush=True)
+        return out
+    por_ts = {}
+    for ts, slug in pares:
+        if ts and slug:
+            por_ts.setdefault(ts, set()).add(slug)
+    for ts, slugs in por_ts.items():
+        try:
+            tarifas = _batch(sorted(slugs), ts) or {}
+        except Exception as e:
+            print(f"[valorizar] tarifas {ts}: {type(e).__name__}", flush=True)
+            continue
+        for slug in slugs:
+            t = tarifas.get(slug)
+            if not t:
+                continue
+            try:
+                it = _calc(slug, ts, 1, 0, cfg, tarifa=t)
+            except Exception:
+                it = None
+            if it and not it.get("no_cobrable") and (it.get("total") or 0) > 0:
+                out[(ts, slug)] = {"unit": float(it["total"]),
+                                   "heredada": bool(t.get("tipo_servicio_origen") and t.get("tipo_servicio_origen") != ts)}
+    return out
+
+
+def _valz_traslados(comunas):
+    """{comuna en minúsculas: precio del traslado} desde la tabla de rutas del cotizador (neto, como lo suma la cotización)."""
+    coms = sorted({(c or "").strip().lower() for c in comunas if c and str(c).strip()})
+    out = {}
+    for i in range(0, len(coms), 300):
+        lote = coms[i:i + 300]
+        try:
+            for r in (mysql_fetchall("SELECT LOWER(comuna) AS c, precio_final FROM tk_cotiz_rutas WHERE activa=1 AND LOWER(comuna) IN ("
+                                     + ",".join(["%s"] * len(lote)) + ")", tuple(lote)) or []):
+                if r.get("precio_final"):
+                    out.setdefault((r.get("c") or "").strip(), float(r["precio_final"]))
+        except Exception as e:
+            print(f"[valorizar] rutas: {type(e).__name__}", flush=True)
+    return out
+
+
+def _valz_mercado(forzar=False):
+    """El índice de mercado (cotizaciones de los últimos 12 meses + OT cerradas y cobradas comparables), cacheado 90 s. Solo lectura."""
+    ahora = time.time()
+    if not forzar and _VALZ_MERCADO["indice"] is not None and ahora - _VALZ_MERCADO["t"] < _VALZ_TTL_S:
+        return _VALZ_MERCADO["indice"]
+    hoy_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    desde = hoy_utc - timedelta(days=_valz.VENTANA_DIAS + 1)
+    try:
+        cabs = mysql_fetchall(
+            "SELECT " + _VALZ_COT_COLS + " FROM tk_cotizaciones "
+            " WHERE COALESCE(eliminada,0)=0 AND estado IN ('approved','sent','draft','expired') AND created_at >= %s "
+            " ORDER BY id DESC LIMIT %s", (desde, _VALZ_LIMITE_COT)) or []
+    except Exception as e:
+        print(f"[valorizar] cotizaciones: {type(e).__name__}", flush=True)
+        cabs = []
+    cots = _valz_normalizar_cabs(cabs)
+    comps = []
+    try:
+        filas = mysql_fetchall(
+            "SELECT v.id, v.numero_ot, v.cerrada_at, " + _ot_fin_cols_sql("v") + ", c.razon_social AS cliente "
+            "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+            " WHERE v.estado='cerrada' AND v.valor_origen='zz' AND v.zz_monto > 0 AND v.cerrada_at >= %s "
+            " ORDER BY v.id DESC LIMIT %s", (desde, _VALZ_LIMITE_OT_COMP)) or []
+        fins = _ot_fin_lote(filas, repuestos=False) if filas else {}
+        eqs = _valz_equipos([r["id"] for r in filas]) if filas else {}
+        no_cob = _valz_no_cobrables({e["clase"] for lst in eqs.values() for e in lst if e.get("clase")})
+        for r in filas:
+            vid = int(r["id"])
+            f = fins.get(vid) or {}
+            o = _valz.ot_comparable_de(dict(r, cobra=bool(f.get("cobra"))), eqs.get(vid) or [], no_cob)
+            if o:
+                comps.append(o)
+    except Exception as e:
+        print(f"[valorizar] OT comparables: {type(e).__name__}", flush=True)
+    indice = _valz.indice_mercado(cots, comps, hoy_utc)
+    _VALZ_MERCADO.update({"t": ahora, "indice": indice, "n_cot": len(cots), "n_ot": len(comps)})
+    return indice
+
+
+def _valz_sugerir_filas(filas, fins=None):
+    """{vid: sugerencia} y {vid: cuenta única} para filas de _valz_select. Todo en LOTE: equipos, cotizaciones propias, tarifas,
+    rutas; el mercado sale de la caché. Solo lectura."""
+    filas = [r for r in filas or [] if r.get("id")]
+    if not filas:
+        return {}, {}
+    fins = fins if fins is not None else _ot_fin_lote(filas, repuestos=False)
+    vids = [int(r["id"]) for r in filas]
+    eqs = _valz_equipos(vids)
+    propias = _valz_propias(vids)
+    indice = _valz_mercado()
+    clases = {e["clase"] for lst in eqs.values() for e in lst if e.get("clase")}
+    no_cob = _valz_no_cobrables(clases)
+    pares = set()
+    for r in filas:
+        ts, _a = _valz.tipo_servicio_de(r.get("tipo"))
+        for e in eqs.get(int(r["id"])) or []:
+            if ts and e.get("clase") and e["clase"] not in no_cob:
+                pares.add((ts, e["clase"]))
+    tarifas = _valz_tarifas(pares)
+    rutas = _valz_traslados(r.get("valz_comuna") for r in filas)
+    out = {}
+    for r in filas:
+        vid = int(r["id"])
+        f = fins.get(vid) or _ot_finanzas(r)
+        cobre = f.get("cobre") or {}
+        com = (r.get("valz_comuna") or "").strip()
+        tr = ({"monto": rutas[com.lower()], "comuna": com, "fuente": "tabla_rutas"} if com and com.lower() in rutas else
+              ({"monto": None, "comuna": com} if com else None))
+        ot = {"id": vid, "tipo": r.get("tipo"), "cobertura": f.get("cobertura"), "cliente_id": r.get("cliente_id"),
+              "region": r.get("valz_region"),
+              "cobrado_servicio": (cobre.get("servicio") if (f.get("cobra") and cobre.get("hay") and (cobre.get("servicio") or 0) > 0) else None)}
+        try:
+            out[vid] = _valz.sugerir(ot, eqs.get(vid) or [], indice, propias.get(vid) or [], tarifas, tr, no_cob)
+        except Exception as e:
+            print(f"[valorizar] sugerir vid={vid}: {type(e).__name__}: {e}", flush=True)
+            out[vid] = {"ok": False, "hay": False, "texto": "No se pudo calcular la sugerencia de esta OT.", "motivos": ["error"]}
+    return out, fins
+
+
+def _valz_una(vid):
+    """(sugerencia, fila, cuenta) de UNA OT, recalculada. (None, None, None) si la OT no existe."""
+    fila = mysql_fetchone(_valz_select() + " WHERE v.id=%s", (vid,))
+    if not fila:
+        return None, None, None
+    sugs, fins = _valz_sugerir_filas([fila])
+    return sugs.get(int(vid)), fila, fins.get(int(vid))
+
+
+def _valz_ultima_decision(vids):
+    """{vid: {decision, usuario, cuando}} — la última constancia de cada OT (si la tabla existe). Solo lectura: NUNCA crea la tabla
+    (eso lo hacen el arranque y el camino de escritura); si aún no existe, el SELECT falla y se sigue sin constancias."""
+    out = {}
+    if not vids:
+        return out
+    for lote in _ger_chunks(vids, 500):
+        try:
+            for r in (mysql_fetchall(
+                    "SELECT visita_id, decision, usuario, creado_en FROM ot_valorizado_sugerencias WHERE visita_id IN ("
+                    + ",".join(["%s"] * len(lote)) + ") ORDER BY id", tuple(lote)) or []):
+                out[int(r["visita_id"])] = {"decision": r.get("decision"), "usuario": r.get("usuario"),
+                                            "cuando": chile_fmt_filter(r.get("creado_en"), "%d/%m/%Y %H:%M")}
+        except Exception as e:
+            print(f"[valorizar] decisiones: {type(e).__name__}", flush=True)
+    return out
+
+
+def _valz_fuente_txt(f):
+    return _valz.FUENTE_CORTA.get(f) or {"dato_antiguo": "Precio al cliente anotado antes", "documento": "Documento",
+                                         "cotizador": "Tarifa del cotizador", "estimado": "Estimado", "interno": "Valor interno",
+                                         "contrato": "Contrato", "cotizacion": "Cotización", "supuesto": "Escrito a mano",
+                                         "zz": "Documento", "doc_total": "Total del documento"}.get(f or "", f or "")
+
+
+@app.route("/ot/api/<int:vid>/valorizacion-sugerida", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot2_api_valorizacion_sugerida(vid):
+    """La valorización SUGERIDA de una OT (REGLA #60): monto, rango P25–P75, cobertura de equipos, confianza, fuente por clase y el texto
+    para la persona. SOLO LECTURA: no escribe nada (ni la caché de la base). Gestión; un técnico recibe 403 antes de leer nada."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
+    try:
+        sug, fila, fin = _valz_una(vid)
+    except Exception as e:
+        print(f"[valorizar] vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return _ot2_err("No pudimos calcular la sugerencia ahora. Inténtalo de nuevo.", "ERROR_SUGERENCIA", 500)
+    if fila is None:
+        return _ot2_err("No encontramos esa orden.", "NO_ENCONTRADA", 404)
+    val = (fin or {}).get("valorizado") or {}
+    ult = _valz_ultima_decision([vid]).get(int(vid))
+    return jsonify(dict(sug or {}, ot={
+        "id": int(vid), "numero": fila.get("numero_ot"), "estado": fila.get("estado"),
+        "cerrada": (fila.get("estado") or "").lower() == "cerrada",
+        "cobertura": (fin or {}).get("cobertura"), "cobertura_txt": (fin or {}).get("cobertura_txt"),
+        "valorizado": {"monto": val.get("monto"), "fuente": val.get("fuente"), "fuente_txt": _valz_fuente_txt(val.get("fuente"))}},
+        ultima_decision=ult, es_superadmin=_ot_fin_es_superadmin()))
+
+
+@app.route("/ot/api/<int:vid>/valorizacion-aplicar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot2_api_valorizacion_aplicar(vid):
+    """Guarda (o descarta) la valorización sugerida de UNA OT. Solo superadmin; funciona también con la OT cerrada (es solo referencia).
+    Body: {monto, decision: aceptada|editada|descartada, motivo}. El servidor RECALCULA la sugerencia: solo si el monto es exactamente el
+    sugerido queda con la fuente de la sugerencia; si no, 'a_mano' con su motivo (o 409 si no trae motivo). Escribe SOLO valorizado_clp y
+    valorizado_fuente, con bitácora, el registro inmutable de correcciones y la constancia en ot_valorizado_sugerencias (todo en la misma
+    transacción). En una OT que se cobra no se guarda por esta vía."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
+    if not _ot_fin_es_superadmin():
+        return _ot2_err("Solo el superadministrador puede guardar la valorización sugerida.", "SOLO_SUPERADMIN", 403)
+    d = request.get_json(silent=True) or {}
+    try:
+        sug, fila, fin = _valz_una(vid)
+    except Exception as e:
+        print(f"[valorizar] aplicar vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return _ot2_err("No pudimos recalcular la sugerencia ahora. Inténtalo de nuevo.", "ERROR_SUGERENCIA", 500)
+    if fila is None:
+        return _ot2_err("No encontramos esa orden.", "NO_ENCONTRADA", 404)
+    if (fila.get("estado") or "").lower() in ("cancelada", "anulada"):
+        return _ot2_err("Esta OT está cancelada o anulada: no se valoriza.", "OT_NO_VIGENTE", 409)
+    # Doble candado: aunque la sugerencia no se haya podido calcular, una OT que se cobra no recibe un valorizado por esta vía.
+    if (fin or {}).get("cobra") and (d.get("decision") or "").strip().lower() != "descartada":
+        return jsonify({"ok": False, "error_codigo": "SE_COBRA",
+                        "error": "Esta OT se cobra: lo cobrado con su documento es el valor. La sugerencia es solo referencia de "
+                                 "mercado y no se guarda."}), 409
+    r = _valz.decidir(sug, d.get("decision"), d.get("monto"), d.get("motivo"))
+    if not r.get("ok"):
+        return jsonify({"ok": False, "error": r["error"], "error_codigo": r["codigo"], "sugerido": (sug or {}).get("monto"),
+                        "confianza": (sug or {}).get("confianza"), "fuente": (sug or {}).get("fuente")}), r["http"]
+    if not _valz_tabla_ok():
+        return _ot2_err("No se pudo guardar la constancia de la decisión. Inténtalo de nuevo.", "SIN_TABLA", 503)
+    quien = current_username() or "?"
+    motivo = (d.get("motivo") or "").strip()[:500]
+    decision = (d.get("decision") or "").strip().lower()
+    if r["escribe"]:
+        decision = "aceptada" if r["fuente"] != "a_mano" else "editada"
+    antes = mysql_fetchone(_OT_FIN_SELECT, (vid,)) or {}
+    av = None if antes.get("valorizado_clp") is None else int(round(float(antes["valorizado_clp"])))
+    af = antes.get("valorizado_fuente") or None
+    if r["escribe"] and av == r["monto"] and af == r["fuente"]:
+        return jsonify({"ok": True, "sin_cambios": True, "valorizado": {"monto": av, "fuente": af, "fuente_txt": _valz_fuente_txt(af)}})
+    base = json.dumps(_valz.base_json(sug), ensure_ascii=False, default=str)[:60000]
+    fuente_txt = _valz.FUENTE_TXT.get((sug or {}).get("fuente") or "", "")
+    if not motivo:
+        motivo = (f"Valorizado con la sugerencia de {fuente_txt} (≈ {_valz.clp((sug or {}).get('monto'))}, confianza "
+                  f"{(sug or {}).get('confianza') or '—'}). Solo referencia: no se suma a lo cobrado (REGLA #60).")
+    _rep = _ot_fin_rep_de(vid) if r["escribe"] else None
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            if r["escribe"]:
+                # SOLO estas dos columnas: el cobro, los costos, el estado, las firmas y los documentos NO se tocan.
+                cur.execute("UPDATE mant_visitas SET valorizado_clp=%s, valorizado_fuente=%s WHERE id=%s", (r["monto"], r["fuente"], vid))
+                _desp = dict(antes, valorizado_clp=r["monto"], valorizado_fuente=r["fuente"])
+                cur.execute(
+                    "INSERT INTO mant_ot_finanzas_correcciones "
+                    "(visita_id, numero_ot, usuario, motivo, antes_json, despues_json, ganancia_antes, ganancia_despues) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (vid, fila.get("numero_ot"), quien, motivo,
+                     json.dumps({"valorizado_clp": av, "valorizado_fuente": af}, ensure_ascii=False),
+                     json.dumps({"valorizado_clp": r["monto"], "valorizado_fuente": r["fuente"]}, ensure_ascii=False),
+                     _ot_fin_ganancia(antes, _rep), _ot_fin_ganancia(_desp, _rep)))
+            cur.execute(
+                "INSERT INTO ot_valorizado_sugerencias (visita_id, numero_ot, monto_sugerido, monto_guardado, decision, fuente, "
+                " fuente_sugerida, confianza, cobertura_equipos, motivo, base_json, usuario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (vid, fila.get("numero_ot"), (sug or {}).get("monto"), r.get("monto"), decision, r.get("fuente"),
+                 (sug or {}).get("fuente"), (sug or {}).get("confianza"), (sug or {}).get("cobertura_equipos"),
+                 (d.get("motivo") or "").strip()[:500] or None, base, quien))
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[valorizar] guardar vid={vid}: {type(e).__name__}", flush=True)
+        return _ot2_err("No se pudo guardar. Inténtalo de nuevo.", "ERROR_GUARDAR", 500)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    for _k in list(_VALZ_LOTE_CACHE):          # la pantalla del lote vuelve a leer lo guardado
+        _VALZ_LOTE_CACHE.pop(_k, None)
+    try:
+        numero = fila.get("numero_ot") or f"OT {vid}"
+        if r["escribe"]:
+            _mant_log("visita", vid, "valorizado_sugerido_aplicado",
+                      f"{quien} guardó el valorizado de referencia de {numero} en {_valz.clp(r['monto'])} "
+                      f"({_valz_fuente_txt(r['fuente'])}; sugerido {_valz.clp((sug or {}).get('monto'))}, confianza "
+                      f"{(sug or {}).get('confianza') or '—'}). Antes: {_valz.clp(av) if av is not None else 'sin valorizar'}. "
+                      f"Solo referencia: no se suma a lo cobrado." + (f" Motivo: {d.get('motivo').strip()[:300]}" if (d.get('motivo') or '').strip() else ""))
+        else:
+            _mant_log("visita", vid, "valorizado_sugerido_descartado",
+                      f"{quien} descartó la valorización sugerida de {numero} ({_valz.clp((sug or {}).get('monto'))}, {fuente_txt or 'sin fuente'})."
+                      + (f" Motivo: {d.get('motivo').strip()[:300]}" if (d.get('motivo') or '').strip() else ""))
+    except Exception:
+        pass
+    return jsonify({"ok": True, "decision": decision, "escribio": bool(r["escribe"]),
+                    "valorizado": ({"monto": r["monto"], "fuente": r["fuente"], "fuente_txt": _valz_fuente_txt(r["fuente"])}
+                                   if r["escribe"] else {"monto": av, "fuente": af, "fuente_txt": _valz_fuente_txt(af)})})
+
+
+def _valz_lote_cargar(p):
+    """Las OT del período que NO se cobran: las que ya tienen valorizado (para «Dejamos de cobrar») y las que no, con su sugerencia.
+    Solo lectura. {filas, kpis, truncado, n_leidas, periodo_txt}."""
+    estado = p["estado"]
+    where, params = [], []
+    if estado == "cerradas":
+        where.append("v.estado = 'cerrada'")
+        col = "v.cerrada_at"
+    elif estado == "abiertas":
+        where.append("v.estado NOT IN ('cerrada','cancelada','anulada')")
+        col = "v.created_at"
+    else:
+        where.append("v.estado NOT IN ('cancelada','anulada')")
+        col = "COALESCE(v.cerrada_at, v.created_at)"
+    periodo_txt = "Todo el historial"
+    if p["modo"] != "todo":
+        hoy = _now_chile().date()
+        per = _ger.rango_periodo(hoy, p["modo"], p["desde"].date() if p.get("desde") else None,
+                                 p["hasta"].date() if p.get("hasta") else None, p["ancla"].date() if p.get("ancla") else None)
+        where.append(f"{col} >= %s AND {col} < %s")
+        params += [per["ini_utc"], per["fin_utc"]]
+        periodo_txt = per.get("etiqueta") or f"Del {per['desde'].strftime('%d/%m/%Y')} al {per['hasta'].strftime('%d/%m/%Y')}"
+    filas = mysql_fetchall(_valz_select() + " WHERE " + " AND ".join(where) + " ORDER BY v.id DESC LIMIT %s",
+                           tuple(params) + (_VALZ_LIMITE_LOTE,)) or []
+    truncado = len(filas) >= _VALZ_LIMITE_LOTE
+    fins = _ot_fin_lote(filas, repuestos=False) if filas else {}
+    valorizadas, por_valorizar = [], []
+    for r in filas:
+        f = fins.get(int(r["id"])) or {}
+        if f.get("cobra", True):
+            continue
+        if (f.get("valorizado") or {}).get("monto") is not None:
+            valorizadas.append({"cobertura": f.get("cobertura"), "monto": f["valorizado"]["monto"]})
+        else:
+            por_valorizar.append(r)
+    sugs, _f = _valz_sugerir_filas(por_valorizar, fins) if por_valorizar else ({}, {})
+    ultimas = _valz_ultima_decision([r["id"] for r in por_valorizar])
+    salida = []
+    for r in por_valorizar:
+        vid = int(r["id"])
+        s = sugs.get(vid) or {}
+        f = fins.get(vid) or {}
+        fecha = r.get("cerrada_at") if (r.get("estado") or "").lower() == "cerrada" else r.get("created_at")
+        eqs = []
+        for c in s.get("por_clase") or []:
+            eqs.append(f"{c['clase_nombre']} × {_valz._cant_txt(c['unidades'])}")
+        for c in s.get("sin_precio") or []:
+            eqs.append(f"{c['clase_nombre']} × {_valz._cant_txt(c['unidades'])} (sin precio)")
+        for c in s.get("sin_clasificar") or []:
+            eqs.append(f"{c['nombre']} (sin clasificar)")
+        ult = ultimas.get(vid) or {}
+        salida.append({
+            "id": vid, "numero": r.get("numero_ot") or f"VS-{vid:05d}", "cliente": r.get("cliente") or "Trabajo interno (sin cliente)",
+            "estado": (r.get("estado") or "").lower(), "tipo": (r.get("tipo") or "").lower(),
+            "tipo_txt": _TIPO_OT_LABEL.get((r.get("tipo") or "").lower()) or (r.get("tipo") or "").replace("_", " ").capitalize(),
+            "cobertura": f.get("cobertura"), "cobertura_txt": _OT_FIN_COBERTURA_CORTA.get(f.get("cobertura")) or f.get("cobertura_txt"),
+            "fecha": chile_fmt_filter(fecha, "%d/%m/%Y") if fecha else "",
+            "equipos": eqs, "unidades": s.get("unidades") or 0,
+            "monto": s.get("monto") if s.get("hay") else None, "rango": s.get("rango"),
+            "cobertura_equipos": s.get("cobertura_equipos"), "confianza": s.get("confianza"), "fuente": s.get("fuente"),
+            "fuente_corta": s.get("fuente_corta"), "texto": s.get("texto") or "", "motivos": s.get("motivos") or [],
+            "puede_aplicar": bool(s.get("hay") and s.get("puede_guardar")),
+            "descartada": ult.get("decision") == "descartada",
+            "descartada_txt": (f"Descartada por {ult.get('usuario') or '—'} el {ult.get('cuando') or ''}"
+                               if ult.get("decision") == "descartada" else ""),
+        })
+    kpis = _valz.kpis_lote(valorizadas, [{"cobertura": x["cobertura"], "monto": x["monto"]} for x in salida if not x["descartada"]])
+    return {"filas": salida, "kpis": kpis, "truncado": truncado, "n_leidas": len(filas), "periodo_txt": periodo_txt,
+            "generado": _now_chile().strftime("%d/%m/%Y %H:%M"), "mercado": {"cotizaciones": _VALZ_MERCADO.get("n_cot"),
+                                                                              "ot": _VALZ_MERCADO.get("n_ot")}}
+
+
+@app.route("/ot/api/valorizacion/lote", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_api_valorizacion_lote():
+    """«Valorizar en lote» (solo superadmin, SOLO LECTURA): las OT que no se cobran y no tienen valorizado, cada una con su sugerencia,
+    paginadas (?page=&por=), con los filtros del tablero (?modo=todo|semana|mes|trimestre|rango &ancla= &desde= &hasta=) y además
+    ?estado=cerradas|abiertas|todas &cobertura= &confianza= &q= &ver_descartadas=1. Caché de 90 s por filtro (?actualizar=1 la salta).
+    Trae los totales «Dejamos de cobrar» y «Se nos escapa en internos», y `alta`: todas las OT de confianza alta que se pueden aplicar
+    (para «Marcar las de confianza alta» en todas las páginas)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
+    if not _ot_fin_es_superadmin():
+        return _ot2_err("Solo el superadministrador.", "SOLO_SUPERADMIN", 403)
+    p = _valz.leer_parametros_lote(request.args)
+    clave = (p["modo"], str(p["ancla"]), str(p["desde"]), str(p["hasta"]), p["estado"])
+    ahora = time.time()
+    hit = _VALZ_LOTE_CACHE.get(clave)
+    try:
+        if hit and request.args.get("actualizar") != "1" and ahora - hit[0] < _VALZ_TTL_S:
+            datos = hit[1]
+        else:
+            if request.args.get("actualizar") == "1":
+                _valz_mercado(forzar=True)
+            datos = _valz_lote_cargar(p)
+            if len(_VALZ_LOTE_CACHE) > 12:
+                _VALZ_LOTE_CACHE.clear()
+            _VALZ_LOTE_CACHE[clave] = (ahora, datos)
+    except Exception as e:
+        print(f"[valorizar] lote: {type(e).__name__}: {str(e)[:200]}", flush=True)
+        return _ot2_err("No se pudo armar la lista. Inténtalo de nuevo.", "ERROR_LISTA", 500)
+    filas = _valz.filtrar_filas(datos["filas"], p)
+    pag = _valz.paginar(filas, p["page"], p["por"])
+    alta = [{"id": f["id"], "numero": f["numero"], "monto": f["monto"]} for f in filas
+            if f["puede_aplicar"] and f["confianza"] == "alta"]
+    return jsonify(dict(pag, ok=True, kpis=datos["kpis"], alta=alta, periodo=datos["periodo_txt"], generado=datos["generado"],
+                        truncado=datos["truncado"], tope=_VALZ_LIMITE_LOTE, mercado=datos.get("mercado"),
+                        n_lista=len(datos["filas"])))
+
+
+@app.route("/ot/valorizar", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot2_valorizar_pagina():
+    """Pantalla «Valorizar en lote» (solo superadmin). Los datos los trae el navegador de /ot/api/valorizacion/lote (solo lectura) y se
+    aplican de a 3 por /ot/api/<vid>/valorizacion-aplicar, que recalcula cada una antes de escribir."""
+    if not _ot_fin_es_superadmin():
+        return _friendly_error_page("Sin acceso", "Esta pantalla es solo para el superadministrador.", 403)
+    return render_template("ot2/valorizar.html")
 
 
 @app.route("/ot/api/<int:vid>/repuestos-costo", methods=["GET"])
@@ -182383,6 +183023,14 @@ try:
         _ensure_ot_finanzas_correcciones()
 except Exception as _ensure_fc_err:
     print(f"[ILUS][WARN] _ensure_ot_finanzas_correcciones: {_ensure_fc_err}", flush=True)
+
+# 🧮 2026-10-29 (REGLA #60): constancia de cada decisión sobre la valorización sugerida (solo inserción). UNA sentencia
+# CREATE TABLE IF NOT EXISTS, barata si ya existe (REGLA #18). Si falla aquí, se vuelve a intentar al primer uso.
+try:
+    with app.app_context():
+        _ensure_ot_valorizado_sugerencias()
+except Exception as _ensure_valz_err:
+    print(f"[ILUS][WARN] _ensure_ot_valorizado_sugerencias: {_ensure_valz_err}", flush=True)
 
 # 🔏 Autorizaciones remotas de Daniel (documento absoluto), 2026-10-07 — SIEMPRE, incluso con
 # ILUS_SKIP_MIGRATIONS=1: sin la tabla, la puerta y las solicitudes no funcionan.

@@ -1,0 +1,127 @@
+/* 🧮 Valorización sugerida desde las cotizaciones (REGLA #60, 2026-10-29).
+   Dos piezas con el mismo lenguaje (formato Retiros, REGLA #15: nombres y textos completos, nada truncado):
+     · .vz   la línea compacta de la ficha de la OT (dentro de «Costos y documentación»), con el detalle al hacer clic;
+     · .vzl  la pantalla «Valorizar en lote» (solo superadmin).
+   Paleta ILUS (REGLA #2) y «guiar sin gritar»: lo que toca en ámbar, lo hecho en verde, lo que no aplica en gris; el rojo solo es la
+   marca. Semáforo CHICO (un punto con su texto), sin bordes laterales gruesos. Móvil primero (REGLA #3): botones de 44 px, inputs de
+   16 px, tarjetas en el celular, sin scroll horizontal. */
+.vz,.vzl{--vz-rojo:#dc2626;--vz-negro:#0a0a0a;--vz-verde:#16a34a;--vz-verde-f:#dcfce7;--vz-ambar:#f59e0b;--vz-ambar-f:#fff8e1;
+  --vz-azul:#3b82f6;--vz-azul-f:#dbeafe;--vz-gris:#6b7280;--vz-gris-f:#f3f4f6;--vz-borde:#e5e7eb}
+.vz *,.vzl *{box-sizing:border-box}
+
+/* ── Semáforo chico de la confianza ── */
+.vz-sem{display:inline-flex;align-items:center;gap:5px;font-size:.76rem;font-weight:800;border-radius:999px;padding:2px 9px;
+  background:var(--vz-gris-f);color:#374151;white-space:nowrap}
+.vz-sem::before{content:"";width:8px;height:8px;border-radius:50%;background:#9ca3af;flex:none}
+.vz-sem.alta{background:var(--vz-verde-f);color:#14532d}.vz-sem.alta::before{background:var(--vz-verde)}
+.vz-sem.media{background:var(--vz-ambar-f);color:#78350f}.vz-sem.media::before{background:var(--vz-ambar)}
+.vz-sem.baja{background:var(--vz-gris-f);color:#374151}.vz-sem.baja::before{background:#9ca3af}
+.vz-fte{font-size:.78rem;font-weight:700;color:var(--vz-gris)}
+
+/* ═══ La línea de la ficha ═══ */
+.vz{margin:10px 0 0;font-size:.82rem;line-height:1.4;color:var(--vz-negro);min-width:0}
+.vz-linea{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 12px;border:1px solid var(--vz-borde);border-radius:10px;background:#fff}
+.vz-linea.amb{background:var(--vz-ambar-f);border-color:#fde68a}
+.vz-linea.mudo{background:#f9fafb;color:#4b5563}
+.vz-linea.ok{background:#f7fef9;border-color:#bbf7d0}
+.vz-ico{color:var(--vz-rojo);font-size:1rem;flex:none}
+.vz-txt{flex:1 1 280px;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;overflow-wrap:anywhere}
+.vz-txt b{font-weight:900}
+.vz-cmp{font-weight:700}
+.vz-linea.amb .vz-cmp{color:#78350f}
+.vz-acc{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.vz-btn{min-height:34px;padding:0 11px;border-radius:8px;border:1px solid #d1d5db;background:#fff;color:var(--vz-negro);font-weight:800;
+  font-size:.78rem;display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;line-height:1.2;text-align:left}
+.vz-btn:hover{border-color:var(--vz-negro)}
+.vz-btn:focus-visible{outline:3px solid var(--vz-rojo);outline-offset:2px}
+.vz-btn:disabled{opacity:.5;cursor:not-allowed}
+.vz-btn.pri{background:var(--vz-rojo);border-color:var(--vz-rojo);color:#fff}
+.vz-btn.pri:hover{background:#b91c1c;border-color:#b91c1c}
+.vz-det{margin-top:6px;padding:10px 12px;border:1px solid var(--vz-borde);border-radius:10px;background:#f8fafc}
+.vz-det[hidden]{display:none}
+.vz-det p{margin:0 0 8px}
+.vz-det h4{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:900;color:var(--vz-gris);margin:10px 0 6px}
+.vz-cl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:8px 0;border-top:1px solid var(--vz-borde)}
+.vz-cl:first-of-type{border-top:0}
+.vz-cl-n{font-weight:800;overflow-wrap:anywhere}
+.vz-cl-m{font-weight:900;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.vz-cl-s{grid-column:1/-1;font-size:.8rem;color:#4b5563;overflow-wrap:anywhere}
+.vz-lista{margin:0;padding-left:18px}
+.vz-lista li{margin:2px 0;overflow-wrap:anywhere}
+.vz-nota{font-size:.78rem;color:var(--vz-gris);margin-top:8px}
+@media (max-width:640px){
+  .vz-btn{min-height:44px;flex:1 1 auto}
+  .vz-acc{width:100%}
+}
+
+/* ═══ Pantalla «Valorizar en lote» ═══ */
+.vzl{font-size:.86rem;color:var(--vz-negro)}
+.vzl-nota{background:#f8fafc;border:1px solid var(--vz-borde);border-radius:12px;padding:12px 14px;font-size:.84rem;color:#374151;margin:0 0 14px;line-height:1.5;max-width:68ch}
+.vzl-nota b{color:var(--vz-negro)}
+.vzl-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr));gap:10px;margin:0 0 14px}
+.vzl-kpi{background:#fff;border:1px solid var(--vz-borde);border-radius:12px;padding:12px 14px;min-width:0}
+.vzl-kpi .t{font-size:.76rem;text-transform:uppercase;letter-spacing:.04em;font-weight:900;color:var(--vz-gris)}
+.vzl-kpi .v{font-size:1.35rem;font-weight:900;font-variant-numeric:tabular-nums;margin-top:2px;overflow-wrap:anywhere}
+.vzl-kpi .s{font-size:.8rem;color:#4b5563;margin-top:2px}
+/* Lo que dejamos de cobrar NO es una pérdida (el rojo es solo para pérdidas reales): negro, como toda cifra. */
+.vzl-kpi.dejamos .v{color:var(--vz-negro)}
+.vzl-filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px}
+.vzl-filtros label{display:flex;flex-direction:column;gap:3px;font-size:.76rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:var(--vz-gris)}
+.vzl-filtros select,.vzl-filtros input{font-size:16px;min-height:44px;border:1px solid #d1d5db;border-radius:9px;padding:0 12px;background:#fff;color:var(--vz-negro);
+  text-transform:none;letter-spacing:0;font-weight:600;max-width:100%}
+.vzl-filtros .q{flex:1 1 260px;min-width:0}
+.vzl-filtros .q input{width:100%}
+.vzl-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+.vzl-btn{min-height:44px;padding:0 16px;border-radius:9px;border:1px solid #d1d5db;background:#fff;color:var(--vz-negro);font-weight:800;font-size:.84rem;
+  display:inline-flex;align-items:center;gap:7px;cursor:pointer;text-decoration:none}
+.vzl-btn:hover{border-color:var(--vz-negro)}
+.vzl-btn:focus-visible{outline:3px solid var(--vz-rojo);outline-offset:2px}
+.vzl-btn:disabled{opacity:.45;cursor:not-allowed}
+.vzl-btn.dark{background:var(--vz-negro);border-color:var(--vz-negro);color:#fff}
+.vzl-btn.red{background:var(--vz-rojo);border-color:var(--vz-rojo);color:#fff}
+.vzl-sel{font-size:.8rem;font-weight:800;color:#374151}
+.vzl-prog{height:6px;border-radius:99px;background:var(--vz-borde);overflow:hidden;margin:0 0 12px;display:none}
+.vzl-prog i{display:block;height:100%;width:0;background:var(--vz-verde);transition:width .2s}
+.vzl-aviso{background:var(--vz-ambar-f);border:1px solid #fde68a;color:#78350f;border-radius:10px;padding:8px 12px;font-size:.8rem;font-weight:700;margin:0 0 10px}
+.vzl-aviso.ok{background:var(--vz-verde-f);border-color:#bbf7d0;color:#166534}
+.vzl-aviso[hidden]{display:none}
+.vzl-wrap{background:#fff;border:1px solid var(--vz-borde);border-radius:12px;overflow:hidden}
+.vzl-t{width:100%;border-collapse:collapse;font-size:.84rem}
+.vzl-t th{background:var(--vz-negro);color:#fff;padding:10px 12px;text-align:left;font-size:.76rem;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+.vzl-t td{padding:10px 12px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+.vzl-t .n{text-align:right;font-variant-numeric:tabular-nums}
+.vzl-t td.ck,.vzl-t th.ck{width:44px;text-align:center}
+.vzl-t input[type=checkbox]{width:20px;height:20px;accent-color:var(--vz-rojo)}
+.vzl-ot{font-weight:900;color:var(--vz-negro);text-decoration:none;white-space:nowrap}
+.vzl-ot:hover{color:var(--vz-rojo)}
+.vzl-sub{font-size:.78rem;color:var(--vz-gris);margin-top:2px;overflow-wrap:anywhere}
+.vzl-cli{font-weight:700;overflow-wrap:anywhere}
+.vzl-eq{margin:0;padding:0;list-style:none}
+.vzl-eq li{overflow-wrap:anywhere}
+.vzl-monto{font-weight:900;font-size:.95rem;white-space:nowrap}
+.vzl-rango{font-size:.78rem;color:var(--vz-gris);white-space:nowrap}
+.vzl-sin{font-size:.78rem;color:#4b5563;overflow-wrap:anywhere}
+.vzl-est{display:inline-flex;align-items:flex-start;gap:6px;border-radius:8px;padding:6px 10px;font-size:.76rem;font-weight:700;line-height:1.35}
+.vzl-est.revisada{background:var(--vz-azul-f);color:#1e3a8a}
+.vzl-est.hecha{background:var(--vz-verde-f);color:#166534}
+.vzl-est.error{background:#fee2e2;color:#991b1b}
+.vzl-est.aviso{background:var(--vz-ambar-f);color:#92400e}
+.vzl-texto{font-size:.78rem;color:#374151;margin-top:6px;line-height:1.45;overflow-wrap:anywhere}
+.vzl-pie{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px 4px}
+.vzl-pie-pg{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.vzl-pie button{min-height:44px;padding:0 14px;border:1px solid #d1d5db;border-radius:9px;background:#fff;color:var(--vz-negro);font-weight:800;font-size:.84rem;cursor:pointer}
+.vzl-pie button:disabled{opacity:.4;cursor:not-allowed}
+.vzl-vacio{padding:34px 16px;text-align:center;color:var(--vz-gris)}
+.vzl-vacio i{font-size:1.6rem;color:var(--vz-verde);display:block;margin-bottom:6px}
+@media (max-width:768px){
+  .vzl-t thead{display:none}
+  .vzl-t,.vzl-t tbody,.vzl-t tr,.vzl-t td{display:block;width:100%}
+  .vzl-t tr{border-bottom:8px solid var(--vz-gris-f);padding:8px 4px}
+  .vzl-t td{border:0;padding:4px 10px}
+  .vzl-t .n{text-align:left}
+  .vzl-t td.ck{width:auto;text-align:left}
+  .vzl-t td[data-k]::before{content:attr(data-k) ": ";font-size:.76rem;font-weight:800;text-transform:uppercase;color:var(--vz-gris)}
+  .vzl-btn{width:100%;justify-content:center}
+  .vzl-filtros label{flex:1 1 100%}
+  .vzl-filtros select,.vzl-filtros input{width:100%}
+}
