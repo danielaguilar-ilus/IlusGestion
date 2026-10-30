@@ -67957,6 +67957,305 @@ def clientes_hub_tipo_relacion(cid):
 
 
 # ════════════════════════════════════════════════════════════════════
+#  🧹 COSTEO DE OT · CALIDAD DE DATOS — lo que hay que depurar para que los costos sean confiables  (FASE 2, Daniel 2026-10-29)
+#  «Estamos en el paso de la depuración de datos: necesito que los costos sean estructurados… SIEMPRE darle la prioridad al
+#  DOCUMENTO que lleva el cobro… dos facturas con servicio se pueden sumar… identificar si hay cobros en otras OT para revisar el
+#  saldo». Tercera pestaña de /ot/gerencial (static/ot_costeo_calidad.js): tarjetas por código y la lista paginada de cada uno, con
+#  su «Arreglar» que solo LLEVA al camino que ya existe (Finanzas por reparar, Regularizar, Saldo de facturas o la OT).
+#
+#  SOLO LECTURA y SOLO SUPERADMIN (REGLAS #19, #26 y #59). Ningún DDL (REGLA #18), ni Random ni Check (REGLAS #4.1 y #4.4): parte de la
+#  MISMA lectura del tablero Explorar (_costeo_datos: OT, su cuenta _ot_finanzas y sus autorizaciones) y le suma, por lotes de 800,
+#  los documentos con lo que aportó cada uno, el anexo vivo, la foto del libro de saldo (ot_fac_doc / ot_fac_alerta) y, solo para la
+#  página que se mira, quién más usa cada documento (ot_fac_libro). Las reglas viven en ot_calidad.py (puro, con pruebas). Va ANTES
+#  del bloque de Explorar y fuera de él: ese bloque tiene sus propias pruebas (dos rutas).
+# ════════════════════════════════════════════════════════════════════
+import ot_calidad as _calidad   # 2026-10-29: costeo de OT · calidad de datos (módulo puro con pruebas)
+
+_CALIDAD_CACHE = {}            # (desde, hasta, fecha, alcance) -> (momento, datos). Solo superadmin: no mezcla personas.
+_CALIDAD_CACHE_SEG = 90
+
+
+def _calidad_solo_superadmin(view):
+    """La puerta de superadmin del costeo (_ot_solo_superadmin: página → aviso, API → JSON 403), resuelta al llamar: ese
+    decorador vive más abajo en el archivo y todavía no existe cuando Python lee esta línea."""
+    @wraps(view)
+    def wrapped(*a, **kw):
+        return _ot_solo_superadmin(view)(*a, **kw)
+    return wrapped
+
+
+def _calidad_docs_lote(ids, fallos):
+    """{vid: [documentos]} con lo que aportó cada uno (zz_serv_monto / zz_envio_monto), si fue dado de baja por su factura, si es
+    el espejo de la madre y si su RUT calza (y si alguien lo justificó). De a 800 OT; si la columna del espejo aún no existe se
+    repite sin ella. Solo SELECT."""
+    out = {}
+    for lote in _ger_chunks(ids):
+        ph = ",".join(["%s"] * len(lote))
+        filas = None
+        for espejo in ("heredado_de_visita_id", "NULL AS heredado_de_visita_id"):
+            try:
+                filas = mysql_fetchall(
+                    "SELECT id, visita_id, origen, erp_tido, erp_nudo, cotizacion_id, es_cobro, es_principal, reemplazado_por_id, "
+                    "       " + espejo + ", zz_serv_monto, zz_envio_monto, rut_ok, (COALESCE(rut_justif,'')<>'') AS justificado "
+                    "  FROM mant_visita_documentos WHERE visita_id IN (" + ph + ") ORDER BY es_principal DESC, id",
+                    tuple(lote)) or []
+                break
+            except Exception as e:
+                print(f"[ot-calidad] documentos: {type(e).__name__}", flush=True)
+        if filas is None:
+            fallos.append("documentos")
+            break
+        for r in filas:
+            out.setdefault(int(r["visita_id"]), []).append(dict(r))
+    return out
+
+
+def _calidad_cero_aut_lote(ids, fallos):
+    """{vid: cobro_cero_autorizacion_id} de las OT en $0 (para _ot_aut_cubre_cero, la MISMA regla de la puerta de cierre)."""
+    out = {}
+    for lote in _ger_chunks(ids):
+        try:
+            for r in (mysql_fetchall("SELECT id, cobro_cero_autorizacion_id FROM mant_visitas WHERE id IN ("
+                                     + ",".join(["%s"] * len(lote)) + ")", tuple(lote)) or []):
+                out[int(r["id"])] = r.get("cobro_cero_autorizacion_id")
+        except Exception as e:
+            print(f"[ot-calidad] autorización del $0: {type(e).__name__}", flush=True)
+            fallos.append("autorización del $0")
+            break
+    return out
+
+
+def _calidad_anexos_lote(ids, rows, fallos):
+    """{vid: {numero, estado, items, rol}}: el anexo VIVO (no rechazado ni anulado; el más reciente) de cada OT, igual que
+    «Finanzas por reparar». Una desinstalación sin anexo propio se compara con SU parte del anexo de su instalación (REGLA #46)."""
+    madres = {}
+    for vid in ids:
+        r = rows.get(vid) or {}
+        if str(r.get("ot_relacion") or "").strip().lower() == "desinstalacion" and r.get("ot_madre_id"):
+            try:
+                madres[vid] = int(r["ot_madre_id"])
+            except (TypeError, ValueError):
+                pass
+    por_ot = {}
+    for lote in _ger_chunks(set(ids) | set(madres.values())):
+        try:
+            for a in (mysql_fetchall(
+                    "SELECT a.id, a.ot_id, a.numero, a.estado, a.precio_items_json FROM mant_anexos a "
+                    " WHERE a.ot_id IN (" + ",".join(["%s"] * len(lote)) + ") "
+                    "   AND COALESCE(a.estado,'') NOT IN ('rechazado','anulado')", tuple(lote)) or []):
+                k = int(a["ot_id"])
+                if k not in por_ot or int(a["id"]) > int(por_ot[k]["id"]):
+                    por_ot[k] = a
+        except Exception as e:
+            print(f"[ot-calidad] anexos: {type(e).__name__}", flush=True)
+            fallos.append("anexos")
+            break
+    out = {}
+    for vid in ids:
+        a, rol = por_ot.get(vid), None
+        if a:
+            items = _oac.items_de(a.get("precio_items_json"))
+            rol = _oac.ROL_ENTRADA if _oac.tiene_salida(items) else None
+        elif vid in madres and madres[vid] in por_ot:
+            a = por_ot[madres[vid]]
+            items = _oac.items_de(a.get("precio_items_json"))
+            if not _oac.tiene_salida(items):
+                continue
+            rol = _oac.ROL_SALIDA
+        else:
+            continue
+        out[vid] = {"numero": a.get("numero"), "estado": a.get("estado") or "", "items": items, "rol": rol}
+    return out
+
+
+def _calidad_familias(claves, fallos):
+    """{clave de la nota de venta: «FCV 11348»}: la factura que ya la da de baja en Random, según la FOTO del libro de saldo
+    (ot_fac_doc.familia_de). Sin salir a Random."""
+    out = {}
+    nudos = sorted({k[1] for k in claves if k and k[1]})
+    for i in range(0, len(nudos), 500):
+        trozo = nudos[i:i + 500]
+        try:
+            for r in (mysql_fetchall("SELECT doc_tido, doc_nudo, familia_de FROM ot_fac_doc WHERE familia_de IS NOT NULL "
+                                     " AND doc_nudo IN (" + ",".join(["%s"] * len(trozo)) + ")", tuple(trozo)) or []):
+                k = _saldo.clave_doc(r.get("doc_tido"), r.get("doc_nudo"))
+                if k in claves:
+                    out[k] = (r.get("familia_de") or "").strip()
+        except Exception as e:
+            print(f"[ot-calidad] familias: {type(e).__name__}", flush=True)
+            fallos.append("libro de saldo")
+            break
+    return out
+
+
+def _calidad_alertas_lote(ids, fallos):
+    """{vid: [alertas vigentes]} del libro de saldo (ot_fac_alerta: factura sin saldo o con saldo insuficiente)."""
+    out = {}
+    for lote in _ger_chunks(ids):
+        try:
+            for r in (mysql_fetchall("SELECT visita_id, doc_tido, doc_nudo, titulo, tipo, detalle, otras_ots, estado "
+                                     "  FROM ot_fac_alerta WHERE estado='vigente' AND visita_id IN ("
+                                     + ",".join(["%s"] * len(lote)) + ")", tuple(lote)) or []):
+                out.setdefault(int(r["visita_id"]), []).append(dict(r))
+        except Exception as e:
+            print(f"[ot-calidad] alertas de saldo: {type(e).__name__}", flush=True)
+            fallos.append("alertas de saldo")
+            break
+    return out
+
+
+def _calidad_variantes(claves):
+    """Los N° de documento con que la base puede guardar esas claves (con y sin ceros, las formas de la nota de venta)."""
+    nudos = set()
+    for k in claves:
+        for _t, n in _saldo.variantes_sql(tuple(k)):
+            nudos.add(n)
+    return sorted(nudos)
+
+
+def _calidad_otras_ot(claves, fallos):
+    """{clave: [{vid, numero, cliente, categoria, monto}]}: qué OT toman HOY cada documento según el libro de saldo
+    (ot_fac_libro, solo lectura). Solo para la página que se mira (a lo más 200 OT)."""
+    if not claves:
+        return {}
+    nudos = _calidad_variantes(claves)
+    movs = []
+    for i in range(0, len(nudos), 500):
+        trozo = nudos[i:i + 500]
+        try:
+            movs += [m for m in (mysql_fetchall(
+                "SELECT id, doc_tido, doc_nudo, categoria, visita_id, numero_ot, cliente, acumulado_ot FROM ot_fac_libro "
+                " WHERE doc_nudo IN (" + ",".join(["%s"] * len(trozo)) + ") ORDER BY id", tuple(trozo)) or [])
+                     if _saldo.clave_doc(m.get("doc_tido"), m.get("doc_nudo")) in claves]
+        except Exception as e:
+            print(f"[ot-calidad] libro: {type(e).__name__}", flush=True)
+            fallos.append("libro de saldo")
+            break
+    return _calidad.ultimos_usos(movs)
+
+
+def _calidad_fotos_docs(claves, fallos):
+    """{clave: foto de ot_fac_doc} (capacidad, usado, N° de OT): el saldo de cada documento sin salir a Random."""
+    if not claves:
+        return {}
+    nudos = _calidad_variantes(claves)
+    out = {}
+    for i in range(0, len(nudos), 500):
+        trozo = nudos[i:i + 500]
+        try:
+            for r in (mysql_fetchall(
+                    "SELECT doc_tido, doc_nudo, cap_servicio, cap_despacho, usado_servicio, usado_despacho, n_ot, erp_leido "
+                    "  FROM ot_fac_doc WHERE doc_nudo IN (" + ",".join(["%s"] * len(trozo)) + ")", tuple(trozo)) or []):
+                k = _saldo.clave_doc(r.get("doc_tido"), r.get("doc_nudo"))
+                if k in claves:
+                    out[k] = dict(r)
+        except Exception as e:
+            print(f"[ot-calidad] foto de documentos: {type(e).__name__}", flush=True)
+            fallos.append("libro de saldo")
+            break
+    return out
+
+
+def _calidad_cargar(p, forzar=False):
+    """Las OT del rango (las mismas de Explorar, sin el período anterior) con sus hallazgos. Solo SELECT y por lotes."""
+    d = _costeo_datos(p, forzar=forzar)
+    filas = _costeo.actuales(d["filas"])
+    base = d.get("base") or {}
+    rows, fins, auts = base.get("rows") or {}, base.get("fins") or {}, base.get("auts") or {}
+    fallos = list(((d.get("payload") or {}).get("meta") or {}).get("fallos") or [])
+    ids = [int(f["id"]) for f in filas]
+    docs = _calidad_docs_lote(ids, fallos) if ids else {}
+    ceros = [int(f["id"]) for f in filas if f.get("cob") in _calidad.CEROS]
+    cero_aut = _calidad_cero_aut_lote(ceros, fallos) if ceros else {}
+    anexos = _calidad_anexos_lote(ids, rows, fallos) if ids else {}
+    claves_nv = {k for ds in docs.values() for k in _calidad.claves_nota_venta(ds)}
+    familias = _calidad_familias(claves_nv, fallos) if claves_nv else {}
+    alertas = _calidad_alertas_lote(ids, fallos) if ids else {}
+    items = []
+    for f in filas:
+        vid = int(f["id"])
+        v = rows.get(vid) or {}
+        fin = fins.get(vid) or (_ot_finanzas(v) if v else {})
+        a_v = auts.get(vid, [])
+        try:
+            dud = _ot_fin_dudosas_motivos(v, fin=fin) if (v and fin) else []
+        except Exception as e:
+            print(f"[ot-calidad] finanzas dudosas vid={vid}: {type(e).__name__}", flush=True)
+            dud = []
+        ctx = {"v": v, "fin": fin, "docs": docs.get(vid, []), "auts": a_v,
+               "cubre_cero": any(_ot_aut_cubre_cero(a, vid, cero_aut.get(vid)) for a in a_v),
+               "anexo": anexos.get(vid), "dudosas": dud, "alertas": alertas.get(vid, []), "familias": familias}
+        items.append(_calidad.item(f, ctx))
+    pm = (d.get("payload") or {}).get("meta") or {}
+    meta = {"desde": _costeo.iso(p["desde"]), "hasta": _costeo.iso(p["hasta"]), "fecha": p["fecha"], "alcance": p["alcance"],
+            "fecha_txt": _costeo.FECHA_TXT[p["fecha"]], "fechas_txt": dict(_costeo.FECHA_TXT),
+            "alcances_txt": dict(_costeo.ALCANCE_TXT), "hoy": _costeo.iso(p.get("hoy")),
+            "truncado": bool(pm.get("truncado")), "limite": pm.get("limite"), "fallos": sorted(set(fallos)),
+            "generado": _now_chile().strftime("%d/%m/%Y %H:%M"), "clasificacion": _costeo.CLASIFICACION,
+            "por_pagina": list(_calidad.POR_PAGINA)}
+    return {"items": items, "meta": meta}
+
+
+def _calidad_datos(p, forzar=False):
+    """Los hallazgos del rango `p` con caché de 90 s (la misma del tablero): cambiar de código o de página no relee nada."""
+    clave = (p["desde"], p["hasta"], p["fecha"], p["alcance"])
+    ahora = time.time()
+    c = _CALIDAD_CACHE.get(clave)
+    if c and not forzar and ahora - c[0] < _CALIDAD_CACHE_SEG:
+        return c[1]
+    datos = _calidad_cargar(p, forzar=forzar)
+    if len(_CALIDAD_CACHE) > 8:
+        _CALIDAD_CACHE.clear()
+    _CALIDAD_CACHE[clave] = (ahora, datos)
+    return datos
+
+
+@app.route("/ot/api/costeo/calidad", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_calidad_solo_superadmin
+def ot_costeo_calidad():
+    """«Calidad de datos» del costeo: ?desde=&hasta=&fecha=&alcance= (los mismos del tablero Explorar) &actualizar=1.
+    Sin `codigo`: las tarjetas (cuántas OT y cuánta plata toca cada código, y dónde se concentra). Con ?codigo=…&page=&por=&q=: la
+    lista paginada de ese código, con quién más usa cada documento (libro de saldo). Solo lectura y solo el superadministrador
+    (los técnicos nunca ven plata: REGLAS #19 y #26)."""
+    p = _costeo.leer_parametros(request.args, _now_chile().date())
+    try:
+        d = _calidad_datos(p, forzar=request.args.get("actualizar") == "1")
+    except Exception as e:
+        print(f"[ot-calidad] {type(e).__name__}: {str(e)[:200]}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos revisar la calidad de los datos. Vuelve a intentarlo en un momento."}), 500
+    meta = dict(d["meta"])
+    codigo = (request.args.get("codigo") or "").strip().upper()
+    if not codigo:
+        resp = jsonify(dict(_calidad.resumen(d["items"]), ok=True, meta=meta))
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    if codigo not in _calidad.POR_CODIGO:
+        return jsonify({"ok": False, "error": "Ese código de calidad no existe."}), 400
+    page, por = _calidad.leer_pagina(request.args)
+    pag = _calidad.paginar(_calidad.filtrar(d["items"], codigo, (request.args.get("q") or "")[:120]), page, por)
+    vista = pag.pop("filas")
+    fallos_pag = []
+    try:
+        claves = _calidad.claves_de(vista)
+        usos = _calidad_otras_ot(claves, fallos_pag)
+        fotos = _calidad_fotos_docs(claves, fallos_pag)
+        rutas = {"ot": url_for("ot2_detalle", vid=0), "reparar": url_for("ot2_finanzas_reparar_pagina"),
+                 "regularizar": url_for("ot_regularizar_pagina"), "saldo": url_for("ot_saldo_facturas_pagina")}
+        filas = [_calidad.fila_lista(it, codigo, rutas, usos, fotos) for it in vista]
+    except Exception as e:
+        print(f"[ot-calidad] lista {codigo}: {type(e).__name__}: {str(e)[:200]}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos armar la lista. Vuelve a intentarlo en un momento."}), 500
+    meta["fallos"] = sorted(set(meta.get("fallos") or []) | set(fallos_pag))
+    con = _calidad.con_codigo(d["items"], codigo)
+    resp = jsonify(dict(pag, ok=True, codigo=_calidad.ficha_codigo(codigo), filas=filas, meta=meta,
+                        concentracion={k: _calidad.concentracion(con, k) for k in ("tec", "cc", "cli")}))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ════════════════════════════════════════════════════════════════════
 #  🔎 COSTEO DE OT · EXPLORAR — el tablero para disertar ante la gerencia  (FASE 1, Daniel 2026-10-29)
 #  «En el mes tuvimos 10 millones de pesos: lo pueda desglosar en centro de costo, técnico, rango de tiempo, si es trabajo
 #  interno, si es trabajo externo, quiénes son los proveedores… multifiltro, estilo Power BI: presionas un objeto y se filtra
@@ -68086,7 +68385,10 @@ def _costeo_cargar(p):
         filas.append(_costeo.fila(r, f, docs.get(vid, []), auts.get(vid, []), p))
     meta = {"truncado": truncado, "limite": _costeo.LIMITE_FILAS, "fallos": sorted(set(fallos)), "n_leidas": len(filas_sql),
             "generado": _now_chile().strftime("%d/%m/%Y %H:%M"), "col_intencion": _ger_columna_intencion()}
-    return {"filas": filas, "payload": _costeo.armar_dataset(filas, p, meta)}
+    # 2026-10-29 (Calidad de datos, FASE 2): la MISMA lectura queda a mano (filas crudas, su cuenta y sus autorizaciones) para que
+    # la pestaña «Calidad de datos» no vuelva a leer las OT ni a calcular la plata. No cambia lo que viaja al navegador.
+    base = {"rows": {int(r["id"]): r for r in filas_sql}, "fins": fins, "auts": auts}
+    return {"filas": filas, "payload": _costeo.armar_dataset(filas, p, meta), "base": base}
 
 
 def _costeo_datos(p, forzar=False):
@@ -97228,6 +97530,8 @@ _OT_FIN_CORR_ROT = {
     # Estos tres no se escriben a mano: cambian solos cuando se corrige un monto y quedan en el registro.
     "valorizado_fuente": "Origen del valorizado", "valor_origen": "Origen del cobro",
     "zz_codigo": "Línea del cobro",
+    # 2026-10-29 (REGLA #59, «Cobro sin respaldo»): confirmar un cobro escrito a mano copia el motivo aquí (queda en el registro).
+    "zz_motivo_manual": "Motivo del cobro escrito a mano",
 }
 _OT_FIN_CORR_MOTIVO_MIN = 15
 
@@ -97455,6 +97759,47 @@ def ot2_api_finanzas_corregir(vid):
             return _ot2_err("Ese centro de costo no existe.", "CENTRO_INVALIDO")
         nuevos["centro_costo"] = cc
     cambios = {}
+    # 🧾 2026-10-29 (REGLA #59 — «Cobro sin respaldo», 3.ª pestaña de «Finanzas por reparar»): CONFIRMAR EL ORIGEN de un cobro SIN
+    # tocar sus montos. 'documento' = el cobro ya es EXACTAMENTE lo que aportan los documentos declarados (el SERVIDOR lo recalcula con
+    # _ot_fin_docs_cobro + _ot_fin_corr_desde_docs) → «línea del documento» con su línea ZZ; 'manual' = queda «escrito a mano» con el
+    # motivo de quien lo confirma (se copia a zz_motivo_manual). Si algún monto cambiaría, se rechaza: para eso está la corrección normal.
+    # Es este MISMO camino (mismo registro inmutable y misma bitácora) y no toca el costo, así que el candado del anexo no se mueve.
+    _conf_origen = str(d.get("confirmar_origen") or "").strip().lower()
+    if _conf_origen:
+        if _conf_origen not in ("documento", "manual"):
+            return _ot2_err("Ese origen no existe: puede ser «documento» o «manual».", "ORIGEN_INVALIDO")
+        for k, nv in nuevos.items():
+            av = v.get(k)
+            if (int(round(float(av))) if av is not None and k != "centro_costo" else av) != nv:
+                return _ot2_err("Confirmar el origen del cobro no cambia montos. Si un monto está mal, corrígelo con «Corregir finanzas».",
+                                "ORIGEN_CON_CAMBIOS", 409)
+        _zz_conf = _ot_fin_num(v.get("zz_monto"))
+        if not _zz_conf or _zz_conf <= 0:
+            return _ot2_err("La OT no tiene un cobro de servicio que respaldar.", "SIN_COBRO", 409)
+        if not _ot_finanzas(v, None)["cobra"]:
+            return _ot2_err("Esta OT no se cobra: no hay un cobro que respaldar.", "NO_SE_COBRA", 409)
+        if _conf_origen == "documento":
+            try:
+                _dc_conf = _ot_fin_docs_cobro(vid, v.get("cliente_id"))
+            except Exception as _e_conf:
+                print(f"[ot-fin-corregir] origen vid={vid}: {type(_e_conf).__name__}", flush=True)
+                return _ot2_err("No pudimos leer los documentos en Random. Vuelve a intentarlo en un momento.", "DOCUMENTOS_NO_LEIDOS", 503)
+            _env_conf = _ot_fin_num(v.get("zz_envio_monto"))
+            _actual_conf = {"zz_monto": int(round(_zz_conf)), "zz_envio_monto": (None if _env_conf is None else int(round(_env_conf)))}
+            if not _ot_fin_corr_desde_docs(True, _actual_conf, _dc_conf):
+                return _ot2_err("El cobro de la OT no es exactamente lo que aportan sus documentos: usa «Usar los documentos» o déjalo "
+                                "a mano con tu motivo.", "DOCUMENTOS_NO_COINCIDEN", 409)
+            if (v.get("valor_origen") or None) != "zz":
+                cambios["valor_origen"] = {"antes": v.get("valor_origen"), "despues": "zz"}
+            _sku_conf = (_dc_conf or {}).get("sku_servicio")
+            if _sku_conf and (v.get("zz_codigo") or "").strip().upper() != _sku_conf:
+                cambios["zz_codigo"] = {"antes": v.get("zz_codigo"), "despues": _sku_conf}
+        else:
+            if (v.get("valor_origen") or None) != "manual":
+                cambios["valor_origen"] = {"antes": v.get("valor_origen"), "despues": "manual"}
+            if (v.get("zz_motivo_manual") or "").strip() != motivo:
+                cambios["zz_motivo_manual"] = {"antes": v.get("zz_motivo_manual"), "despues": motivo}
+        nuevos = {}
     for k, nv in nuevos.items():
         av = v.get(k)
         av_cmp = (int(av) if av is not None and k != "centro_costo" else av)
@@ -97818,11 +98163,77 @@ def _ot_fin_cobro_sin_declarar_cargar():
     return out
 
 
+def _ot_fin_cobro_sin_origen_cargar():
+    """🧾 2026-10-29 (REGLA #59, Daniel: «debe existir control» del cobro escrito a mano): las OT (no canceladas ni anuladas) que SE
+    COBRAN con un cobro de servicio SIN RESPALDO — «declarado» (sin origen) o «escrito a mano» sin su motivo. La regla es UNA sola,
+    ot_calidad.cobro_sin_origen (la misma de la Calidad de datos). Solo lectura: no consulta a Random (lo que dicen los documentos se
+    lee al «Revisar», uno por uno). [{id, numero, cliente, estado, tipo, cobro, servicio, despacho, fuente, documentos, ultimo_cambio,
+    creada}]."""
+    rows = mysql_fetchall(
+        "SELECT v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.zz_monto, v.zz_envio_monto, v.zz_codigo, v.costo, v.valor_origen, "
+        "       v.costo_proveedor, v.costo_despacho, v.centro_costo, v.modalidad_cobro, v.cubierto_por, v.cobro_cero_motivo, "
+        "       v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, v.factura_tido, v.factura_nudo, "
+        "       v.created_by, v.created_at, "
+        "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, " + _OT_FIN_SQL_MADRE_COLS + ", c.razon_social AS cliente "
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+        " WHERE LOWER(COALESCE(v.estado,'')) NOT IN ('cancelada','anulada') "
+        "   AND COALESCE(v.zz_monto,0) > 0 "
+        "   AND (COALESCE(v.valor_origen,'')='' OR (LOWER(v.valor_origen) IN ('manual','supuesto') "
+        "        AND COALESCE(TRIM(v.zz_motivo_manual),'')='')) "
+        " ORDER BY v.id DESC LIMIT %s", (_OT_FIN_REPARAR_LIMITE,)) or []
+    out = []
+    for r in rows:
+        if not _calidad.cobro_sin_origen(r):
+            continue
+        try:
+            fin = _ot_finanzas(r, None)
+        except Exception:
+            continue
+        if not fin.get("cobra"):
+            continue
+        cob = fin.get("cobre") or {}
+        out.append({"id": int(r["id"]), "numero": r.get("numero_ot") or f"VS-{int(r['id']):05d}", "cliente": r.get("cliente") or "—",
+                    "estado": (r.get("estado") or "").lower(), "tipo": r.get("tipo") or "",
+                    "cobro": cob.get("total"), "servicio": cob.get("servicio"), "despacho": cob.get("despacho"),
+                    "fuente": _calidad.fuente_cobro_txt(r),
+                    "creada": {"por": r.get("created_by") or "", "cuando": chile_fmt_filter(r.get("created_at"), "%d/%m/%Y %H:%M")
+                               if r.get("created_at") else ""},
+                    "factura": _calidad.titulo_doc(r.get("factura_tido"), r.get("factura_nudo")) if (r.get("factura_nudo") or "").strip() else ""})
+    ids = [x["id"] for x in out]
+    docs, ult = {}, {}
+    for ini in range(0, len(ids), 500):
+        lote = ids[ini:ini + 500]
+        ph = ",".join(["%s"] * len(lote))
+        try:
+            for d in (mysql_fetchall(
+                    "SELECT visita_id, erp_tido, erp_nudo FROM mant_visita_documentos WHERE origen='erp' AND es_cobro=1 "
+                    "   AND reemplazado_por_id IS NULL AND heredado_de_visita_id IS NULL AND COALESCE(erp_nudo,'')<>'' "
+                    "   AND visita_id IN (" + ph + ") ORDER BY es_principal DESC, id", tuple(lote)) or []):
+                docs.setdefault(int(d["visita_id"]), []).append(_calidad.titulo_doc(d.get("erp_tido"), d.get("erp_nudo")))
+        except Exception as e:
+            print(f"[fin-reparar] documentos (sin origen): {type(e).__name__}", flush=True)
+        try:
+            for c in (mysql_fetchall(
+                    "SELECT visita_id, usuario, created_at FROM mant_ot_finanzas_correcciones WHERE visita_id IN (" + ph + ") "
+                    " ORDER BY id DESC", tuple(lote)) or []):
+                ult.setdefault(int(c["visita_id"]), {"por": c.get("usuario") or "",
+                                                     "cuando": chile_fmt_filter(c.get("created_at"), "%d/%m/%Y %H:%M")
+                                                     if c.get("created_at") else ""})
+        except Exception as e:
+            print(f"[fin-reparar] correcciones (sin origen): {type(e).__name__}", flush=True)
+    for x in out:
+        x["documentos"] = docs.get(x["id"]) or ([x["factura"]] if x["factura"] else [])
+        x["ultimo_cambio"] = ult.get(x["id"])
+        x.pop("factura", None)
+    return out
+
+
 @app.route("/ot/api/finanzas/por-reparar", methods=["GET"])
 @_mant_required
 @_no_tecnico
 def ot_api_finanzas_por_reparar():
-    """Lista de OT con el cobro sin declarar teniendo documento. Solo superadmin y solo lectura."""
+    """Lista de OT con el cobro sin declarar teniendo documento. Solo superadmin y solo lectura.
+    2026-10-29 (REGLA #59): trae además «cobro_sin_origen» (3.ª pestaña: cobro sin respaldo). Si esa lista falla, la primera sale igual."""
     if not _ot_fin_es_superadmin():
         return _ot2_err("Solo el superadministrador.", "SOLO_SUPERADMIN", 403)
     try:
@@ -97830,7 +98241,13 @@ def ot_api_finanzas_por_reparar():
     except Exception as e:
         print(f"[fin-reparar] {type(e).__name__}", flush=True)
         return _ot2_err("No se pudo armar la lista. Inténtalo de nuevo.", "ERROR_LISTA", 500)
-    return jsonify({"ok": True, "cobro_sin_declarar": filas, "tope": _OT_FIN_REPARAR_LIMITE})
+    try:
+        sin_origen, error_sin_origen = _ot_fin_cobro_sin_origen_cargar(), False
+    except Exception as e:
+        print(f"[fin-reparar] sin origen: {type(e).__name__}", flush=True)
+        sin_origen, error_sin_origen = [], True
+    return jsonify({"ok": True, "cobro_sin_declarar": filas, "cobro_sin_origen": sin_origen,
+                    "error_sin_origen": error_sin_origen, "tope": _OT_FIN_REPARAR_LIMITE})
 
 
 @app.route("/ot/finanzas-reparar", methods=["GET"])

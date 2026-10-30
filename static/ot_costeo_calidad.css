@@ -1,0 +1,95 @@
+/* 🧹 Costeo de OT · Calidad de datos (Daniel 2026-10-29, FASE 2 — REGLA #59). Usa las variables y piezas de ot_costeo_explorar.css
+   (la sección es `.cx.cq`). Lenguaje Retiros (REGLA #15): tarjetas con semáforo chico, nombres completos sin cortar. Celular primero
+   (REGLA #3): tarjetas de a una o dos, lista en tarjetas, botones de 44 px. Rojo SOLO para plata realmente perdida (REGLA #57);
+   ámbar para revisar, azul informativo; lo elegido se marca en NEGRO, como en Explorar. */
+.cq{--sev-rojo:#dc2626;--sev-ambar:#f59e0b;--sev-azul:#3b82f6}
+
+/* ── Totales ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+.cq-totales{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;background:#fff;
+  border:1px solid var(--borde);border-radius:16px;padding:12px 14px}
+.cq-totales p{margin:0;font-size:.95rem}
+.cq-chips{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+.cq-sev{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:8px 12px;font-size:.75rem;font-weight:800;line-height:1.1;
+  background:var(--gris-f);color:#374151;width:fit-content}
+.cq-sev::before{content:"";flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:currentColor}
+.cq-sev.sev-rojo{background:var(--rojo-f);color:#b91c1c}
+.cq-sev.sev-ambar{background:var(--ambar-f);color:var(--ambar-o)}
+.cq-sev.sev-azul{background:var(--azul-f);color:#1d4ed8}
+
+/* ── Tarjetas por regla ──────────────────────────────────────────────────────────────────────────────────────── */
+.cq-resumen{display:flex;flex-direction:column;gap:10px}
+.cq-cards{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.cq-cards>li{min-width:0;display:flex}
+.cq-card{width:100%;min-height:44px;display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;cursor:pointer;
+  background:#fff;border:2px solid var(--borde);border-radius:16px;padding:10px 12px;color:var(--tinta);font:inherit}
+.cq-card:hover{border-color:var(--tinta)}
+.cq-card.on{border-color:var(--negro);background:var(--gris-f)}
+.cq-card-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.68rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--gris)}
+.cq-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#9ca3af}
+.cq-card.sev-rojo .cq-dot{background:var(--sev-rojo)}
+.cq-card.sev-ambar .cq-dot{background:var(--sev-ambar)}
+.cq-card.sev-azul .cq-dot{background:var(--sev-azul)}
+.cq-solo{text-transform:none;letter-spacing:0;font-weight:700;color:var(--gris)}
+.cq-card-t{font-size:.9rem;font-weight:900;line-height:1.25;overflow-wrap:anywhere}
+.cq-card-n{font-size:1.45rem;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.1}
+.cq-card-n small{font-size:.75rem;font-weight:800;color:var(--gris)}
+.cq-card.sev-rojo .cq-card-n{color:var(--sev-rojo)}
+.cq-card-m{font-size:.78rem;font-weight:800;color:#374151;overflow-wrap:anywhere}
+.cq-card-s{font-size:.72rem;color:var(--gris)}
+.cq-limpio{display:flex;gap:10px;align-items:center;background:var(--verde-f);color:#14532d;border-radius:14px;padding:12px 14px;font-weight:800}
+.cq-ok{background:#fff;border:1px solid var(--borde);border-radius:14px;padding:8px 14px;font-size:.85rem}
+.cq-ok summary{min-height:44px;display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:800;color:var(--tinta)}
+.cq-ok summary i{color:var(--verde)}
+.cq-ok ul{margin:0 0 10px;padding-left:18px;color:#374151}
+.cq-ok li{margin:4px 0}
+.cq-invita{margin:0;display:flex;gap:8px;align-items:center;color:var(--gris);font-size:.9rem;border:2px dashed var(--borde);
+  border-radius:14px;padding:14px}
+
+/* ── Lista de un código ──────────────────────────────────────────────────────────────────────────────────────── */
+.cq-lista{gap:12px}
+.cq-lista-t{display:flex;flex-direction:column;gap:6px;min-width:0}
+.cq-lista-t h3 small{font-size:.85rem;color:var(--gris);font-weight:800}
+.cq-regla{margin:0;font-size:.85rem;color:#4b5563;max-width:80ch}
+.cq-como{margin:0;display:flex;gap:10px;align-items:flex-start;background:var(--gris-f);border-radius:12px;padding:10px 12px;font-size:.88rem}
+.cq-como i{margin-top:2px}
+.cq-conc h4{margin:0 0 6px;font-size:.78rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:var(--gris)}
+.cq-conc-g{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+.cq-conc-b{border:1px solid var(--borde);border-radius:12px;padding:8px 10px;min-width:0}
+.cq-conc-t{font-size:.72rem;font-weight:900;color:var(--gris);text-transform:uppercase;letter-spacing:.05em}
+.cq-conc-b ul{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+.cq-conc-b li{display:flex;justify-content:space-between;gap:10px;font-size:.82rem}
+.cq-conc-b li b{overflow-wrap:anywhere;min-width:0}
+.cq-conc-b li span{white-space:nowrap;color:#374151;font-variant-numeric:tabular-nums}
+.cq-conc-b li.otros{color:var(--gris)}
+.cq-buscar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.cq-buscar label{flex:1 1 260px;min-width:0}
+.cq-buscar input{width:100%;font-size:16px;min-height:44px;border:2px solid var(--borde);border-radius:12px;padding:0 12px;color:var(--tinta)}
+.cq-acc{display:flex;flex-wrap:wrap;gap:8px}
+.cq-acc .cx-btn:disabled{opacity:.45;cursor:not-allowed}
+.cq-tabla td .cx-td{display:flex;flex-direction:column;gap:2px;align-items:flex-end}
+.cq-docs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;text-align:left}
+.cq-docs li{font-size:.8rem;overflow-wrap:anywhere}
+.cq-docs li small{display:block;color:var(--gris)}
+.cq-docs li .cq-otras{color:var(--ambar-o);font-weight:700}
+/* Las marcas de un documento son texto (sin caja): una caja con relleno chico quedaría apretada (aviso «cramped-padding»). */
+.cq-tag{display:inline;margin-left:4px;font-size:.72rem;font-weight:800;color:#4b5563}
+.cq-tag::before{content:"· "}
+.cq-tag.t-ambar{color:var(--ambar-o)}
+.cq-otros{color:var(--gris)}
+.cq-nada{color:var(--gris);font-size:.8rem}
+.cq-rojo{color:var(--rojo)}
+/* «Arreglar» solo NAVEGA: va en negro (en esta pestaña el rojo dice «plata perdida» y no puede repetirse en cada fila). */
+/* `.cx a{color:inherit}` (Explorar) le ganaba al blanco del botón: el texto quedaba oscuro sobre el fondo. */
+.cq .cq-arreglar{white-space:normal;text-align:center;background:var(--negro);color:#fff}
+.cq .cq-arreglar:hover{background:#1f2937;color:#fff}
+
+/* ── Escritorio ──────────────────────────────────────────────────────────────────────────────────────────────── */
+@media (min-width:768px){
+  .cq-cards{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+  .cq-conc-g{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .cq-tabla td .cx-td{align-items:flex-start}
+  .cq-tabla td.num .cx-td{align-items:flex-end}
+  .cq-tabla td[data-et="Arreglar"]{width:1%}
+  .cq .cq-arreglar{white-space:nowrap}
+}

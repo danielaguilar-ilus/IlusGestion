@@ -449,21 +449,27 @@
   }
   function bandaTxt(b) { var t = (pol().txt || {}); return b ? (t[b] || b) : 'Sin medir'; }
 
+  /* 2026-10-29 (FASE 2): tres pestañas — Resumen | Explorar | Calidad de datos. La de Calidad la dibuja ot_costeo_calidad.js
+     (window.OtCosteoCalidad); aquí solo se muestra su panel y se le avisa. */
   function irA(pestana, escribir) {
-    var exp = pestana === 'explorar';
+    var exp = pestana === 'explorar', cal = pestana === 'calidad';
     var res = document.getElementById('gcApp');
-    if (res) res.hidden = exp;
+    if (res) res.hidden = exp || cal;
     if (UI.raiz) UI.raiz.hidden = !exp;
+    var cq = document.getElementById('cqApp');
+    if (cq) cq.hidden = !cal;
     Array.prototype.forEach.call(document.querySelectorAll('[data-gc-pestana]'), function (t) {
       var on = t.getAttribute('data-gc-pestana') === pestana;
       t.classList.toggle('on', on);
       t.setAttribute('aria-selected', on ? 'true' : 'false');
       t.tabIndex = on ? 0 : -1;
     });
-    Array.prototype.forEach.call(document.querySelectorAll('[data-gc-solo="resumen"]'), function (el) { el.hidden = exp; });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-gc-solo="resumen"]'), function (el) { el.hidden = exp || cal; });
     if (exp) {
       if (escribir) guardarHash();
       asegurarDatos();
+    } else if (cal) {
+      if (window.OtCosteoCalidad && window.OtCosteoCalidad.mostrar) window.OtCosteoCalidad.mostrar(escribir);
     } else if (escribir && window.history && history.replaceState) {
       history.replaceState(null, '', location.pathname + location.search);
     }
@@ -1026,8 +1032,10 @@
     window.addEventListener('hashchange', function () {
       var e = hashAEstado(location.hash);
       if (e) { UI.estado = e; irA('explorar', false); }
+      else if (/^#calidad/.test(location.hash)) irA('calidad', false);
     });
     if (/^#explorar/.test(location.hash)) irA('explorar', false);
+    else if (/^#calidad/.test(location.hash)) irA('calidad', false);
   }
 
   return {

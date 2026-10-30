@@ -11,6 +11,14 @@
   con quién, cuándo y antes/después): aquí no se escribe nada por un camino nuevo.
   Tabla como Etiquetas (REGLA #4.3): Mostrando A–B de N, N por página, Anterior / Página X de Y / Siguiente. «Seleccionar/deseleccionar todo»
   es un interruptor (REGLA #14). Nombres completos, sin truncar (REGLA #15). Celular: tarjetas con botones de 44 px (REGLA #3).
+
+  🧾 2026-10-29 (REGLA #59 — Daniel: «debe existir control» del cobro escrito a mano): 3.ª lista «Cobro sin respaldo» (cobro «declarado» sin
+  origen o «escrito a mano» sin motivo; la regla es ot_calidad.cobro_sin_origen) ← la misma GET /ot/api/finanzas/por-reparar (cobro_sin_origen).
+  «Revisar» solo lee (GET /correcciones) y dice cuál de tres casos es: (a) los documentos dicen EXACTAMENTE lo mismo → «Fijar el origen»
+  (entra a «Aplicar las listas»); (b) los documentos dicen otro monto → «Usar los documentos» (de a una, con ilusConfirm antes → después);
+  (c) sin documento o sin poder leerlo → «Dejar a mano con mi motivo» (ilusPrompt, ≥ 15 caracteres). Las tres van por el MISMO
+  POST /corregir (confirmar_origen 'documento' | 'manual', o desde_documentos): mismo registro inmutable, mismo candado del anexo.
+  Se puede abrir con ?tab=cobro|anexo|origen&q=… (lo usa el botón «Arreglar» de la Calidad de datos).
 #}
 
 {% block content %}
@@ -49,6 +57,9 @@
 .fr-est.bloqueada{background:#fff8e1;color:#92400e}
 .fr-est.hecha{background:#dcfce7;color:#166534}
 .fr-est.error{background:#fee2e2;color:#991b1b}
+.fr-est.difiere{background:#fff8e1;color:#92400e}
+.fr-est.amano{background:#fff8e1;color:#92400e}
+.fr-acc{display:flex;flex-wrap:wrap;gap:6px}
 .fr-cifra{display:block;font-weight:800;color:#0a0a0a}
 .fr-cifra.dim{color:#6b7280;font-weight:600}
 .fr-pie{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px 4px}
@@ -70,7 +81,7 @@
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
     <h4><i class="bi bi-wrench-adjustable me-2"></i>Finanzas por reparar</h4>
-    <div class="sub">Las OT con el documento ya declarado pero el cobro en blanco, y las que tienen el costo distinto al de su anexo.</div>
+    <div class="sub">Las OT con el documento ya declarado pero el cobro en blanco, las que tienen el costo distinto al de su anexo y las que cobran sin respaldo.</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <a href="/ot/finanzas-dudosas" class="btn btn-sm btn-outline-secondary"><i class="bi bi-cash-coin me-1"></i>OT con finanzas dudosas</a>
@@ -83,11 +94,14 @@
   Solo después, «Tomar el cobro» o «Alinear con el anexo» lo aplica por el mismo camino de siempre: queda en el registro de correcciones con tu nombre,
   la hora y el motivo. Si un documento no se puede leer, no trae línea de servicio o su saldo ya lo usan otras OT, la OT queda en ámbar con el motivo y no se toca.
   Un documento emitido a otra empresa (otro RUT) no se cuenta como cobro, pero no impide tomar el de los demás.
+  En «Cobro sin respaldo» manda el documento: si dice lo mismo se fija su origen, si dice otro monto se usa el del documento (de a una OT,
+  viendo el antes y el después), y si no hay documento el cobro queda escrito a mano <b>con tu motivo</b>.
 </div>
 
 <div class="fr-tabs" role="tablist">
   <button type="button" class="fr-tab on" data-tab="cobro" role="tab"><i class="bi bi-receipt"></i>Documento declarado, cobro sin declarar <b id="frN-cobro">…</b></button>
   <button type="button" class="fr-tab" data-tab="anexo" role="tab"><i class="bi bi-file-earmark-text"></i>Costo de la OT distinto al anexo <b id="frN-anexo">…</b></button>
+  <button type="button" class="fr-tab" data-tab="origen" role="tab"><i class="bi bi-pencil-square"></i>Cobro sin respaldo <b id="frN-origen">…</b></button>
 </div>
 
 <div class="fr-bar">
@@ -119,15 +133,21 @@
     cobro: { url: '/ot/api/finanzas/por-reparar', clave: 'cobro_sin_declarar', verbo: 'Tomar el cobro', titulo: 'Tomar el cobro de los documentos',
              vacio: 'Ninguna OT tiene un documento de cobro declarado con el cobro en blanco.' },
     anexo: { url: '/ot/api/anexos/vinculo-costos', clave: 'por_corregir', verbo: 'Alinear con el anexo', titulo: 'Alinear el costo con el anexo',
-             vacio: 'El costo de todas las OT con anexo es igual al de su anexo.' }
+             vacio: 'El costo de todas las OT con anexo es igual al de su anexo.' },
+    // 🧾 2026-10-29 (REGLA #59): cobro «declarado» sin origen o «escrito a mano» sin motivo. Viene en la MISMA respuesta que la pestaña 1.
+    origen: { url: '/ot/api/finanzas/por-reparar', clave: 'cobro_sin_origen', verbo: 'Fijar el origen', titulo: 'Fijar el origen: línea del documento',
+              vacio: 'Todas las OT que se cobran tienen su cobro respaldado: por un documento o escrito a mano con su motivo.' }
   };
-  var S = { tab: 'cobro', q: '', page: 1, por: 50, datos: { cobro: null, anexo: null }, sel: {}, res: {}, ocupado: false };
+  var S = { tab: 'cobro', q: '', page: 1, por: 50, datos: { cobro: null, anexo: null, origen: null }, sel: {}, res: {}, ocupado: false };
+  var MOTIVO_MIN = 15;   // el mismo mínimo de «Corregir finanzas» (_OT_FIN_CORR_MOTIVO_MIN)
 
   function $(id) { return document.getElementById(id); }
   function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function clp(n) { return (n == null || isNaN(n)) ? 'sin declarar' : '$' + Math.round(n).toLocaleString('es-CL'); }
+  function num(x) { var n = (x === null || x === undefined || x === '') ? null : Number(x); return (n === null || isNaN(n)) ? null : Math.round(n); }
   function toast(m, t) { try { if (window.ilusToast) return window.ilusToast(m, { type: t || 'info' }); } catch (e) {} }
-  function llave(f) { return S.tab + ':' + (S.tab === 'cobro' ? f.id : f.ot_id); }
+  function idDe(f) { return S.tab === 'anexo' ? f.ot_id : f.id; }
+  function llave(f) { return S.tab + ':' + idDe(f); }
   function estadoDe(f) { return S.res[llave(f)] || { fase: 'nueva' }; }
   function setRes(f, r) { S.res[llave(f)] = r; }
 
@@ -135,7 +155,7 @@
     var lista = (S.datos[S.tab] || []), q = S.q.trim().toLowerCase();
     if (!q) return lista;
     return lista.filter(function (f) {
-      var h = S.tab === 'cobro' ? [f.numero, f.cliente, (f.documentos || []).join(' ')] : [f.ot, f.cliente, f.anexo];
+      var h = S.tab === 'anexo' ? [f.ot, f.cliente, f.anexo] : [f.numero, f.cliente, (f.documentos || []).join(' ')];
       return h.join(' ').toLowerCase().indexOf(q) >= 0;
     });
   }
@@ -149,14 +169,18 @@
 
   async function cargar() {
     $('frBody').innerHTML = '<tr><td colspan="6" class="fr-vacio">Cargando…</td></tr>';
-    var pares = [['cobro', CFG.cobro], ['anexo', CFG.anexo]];
-    await Promise.all(pares.map(async function (p) {
+    // Cada dirección se pide UNA vez (la de la pestaña 1 trae también la 3.ª lista).
+    var porUrl = {};
+    Object.keys(CFG).forEach(function (t) { (porUrl[CFG[t].url] = porUrl[CFG[t].url] || []).push(t); });
+    await Promise.all(Object.keys(porUrl).map(async function (url) {
+      var tabs = porUrl[url];
       try {
-        var r = await pedir(p[1].url);
-        S.datos[p[0]] = r.ok ? (r.j[p[1].clave] || []) : [];
+        var r = await pedir(url);
+        tabs.forEach(function (t) { S.datos[t] = r.ok ? (r.j[CFG[t].clave] || []) : []; });
         if (!r.ok) toast((r.j && r.j.error) || 'No se pudo cargar una de las listas.', 'error');
-      } catch (e) { S.datos[p[0]] = []; toast('No se pudo cargar una de las listas.', 'error'); }
-      $('frN-' + p[0]).textContent = (S.datos[p[0]] || []).length;
+        else if (r.j.error_sin_origen) toast('No se pudo armar la lista «Cobro sin respaldo». Recarga en un momento.', 'warning');
+      } catch (e) { tabs.forEach(function (t) { S.datos[t] = []; }); toast('No se pudo cargar una de las listas.', 'error'); }
+      tabs.forEach(function (t) { $('frN-' + t).textContent = (S.datos[t] || []).length; });
     }));
     pintar();
   }
@@ -164,12 +188,14 @@
   function cabecera() {
     if (S.tab === 'cobro')
       return '<tr><th class="ck"></th><th>OT</th><th>Cliente</th><th>Documentos declarados</th><th>Estado</th><th></th></tr>';
+    if (S.tab === 'origen')
+      return '<tr><th class="ck"></th><th>OT</th><th>Cliente</th><th>Cobro sin respaldo · documentos</th><th>Estado</th><th></th></tr>';
     return '<tr><th class="ck"></th><th>OT</th><th>Cliente</th><th>Costo de la OT · Anexo</th><th>Estado</th><th></th></tr>';
   }
 
   function celdaEstado(f) {
     var e = estadoDe(f), ic = { nueva: 'bi-dash-circle', revisando: 'bi-hourglass-split', lista: 'bi-check-circle', bloqueada: 'bi-exclamation-triangle',
-                                hecha: 'bi-check-circle-fill', error: 'bi-x-circle' }[e.fase] || 'bi-dash-circle';
+                                hecha: 'bi-check-circle-fill', error: 'bi-x-circle', difiere: 'bi-arrow-left-right', amano: 'bi-pencil' }[e.fase] || 'bi-dash-circle';
     var txt = e.msg || ({ nueva: 'Sin revisar', revisando: 'Revisando…' }[e.fase] || '');
     return '<span class="fr-est ' + e.fase + '"><i class="bi ' + ic + '"></i><span>' + esc(txt) + '</span></span>';
   }
@@ -177,8 +203,12 @@
   function celdaAccion(f) {
     var e = estadoDe(f), k = esc(llave(f));
     if (e.fase === 'revisando') return '<button class="fr-btn" disabled><i class="bi bi-hourglass-split"></i>Revisando…</button>';
-    if (e.fase === 'hecha') return '<a class="fr-btn" href="/ot/' + (S.tab === 'cobro' ? f.id : f.ot_id) + '"><i class="bi bi-box-arrow-up-right"></i>Abrir la OT</a>';
+    if (e.fase === 'hecha') return '<a class="fr-btn" href="/ot/' + idDe(f) + '"><i class="bi bi-box-arrow-up-right"></i>Abrir la OT</a>';
     if (e.fase === 'lista') return '<button class="fr-btn red" data-act="aplicar" data-k="' + k + '"><i class="bi bi-wrench-adjustable"></i>' + CFG[S.tab].verbo + '</button>';
+    if (e.fase === 'difiere') return '<div class="fr-acc"><button class="fr-btn dark" data-act="usar" data-k="' + k + '"><i class="bi bi-receipt"></i>Usar los documentos</button>' +
+      '<button class="fr-btn" data-act="mano" data-k="' + k + '"><i class="bi bi-pencil"></i>Dejar a mano con mi motivo</button></div>';
+    if (e.fase === 'amano') return '<div class="fr-acc"><button class="fr-btn dark" data-act="mano" data-k="' + k + '"><i class="bi bi-pencil"></i>Dejar a mano con mi motivo</button>' +
+      '<button class="fr-btn" data-act="revisar" data-k="' + k + '"><i class="bi bi-search"></i>Revisar de nuevo</button></div>';
     return '<button class="fr-btn" data-act="revisar" data-k="' + k + '"><i class="bi bi-search"></i>' + (e.fase === 'nueva' ? 'Revisar' : 'Revisar de nuevo') + '</button>';
   }
 
@@ -196,6 +226,15 @@
            '<span class="fr-sub">Anexo ' + esc(f.anexo_estado || '') + parte + '</span></td>';
   }
 
+  function filaOrigen(f) {
+    var docs = (f.documentos || []).map(function (d) { return '<span class="fr-doc">' + esc(d) + '</span>'; }).join('') || '<span class="fr-sub">Sin documento declarado</span>';
+    var quien = f.ultimo_cambio ? 'Último cambio de finanzas: ' + esc(f.ultimo_cambio.por) + (f.ultimo_cambio.cuando ? ' · ' + esc(f.ultimo_cambio.cuando) : '')
+      : ((f.creada && f.creada.por) ? 'OT creada por ' + esc(f.creada.por) + (f.creada.cuando ? ' · ' + esc(f.creada.cuando) : '') : '');
+    return '<td data-k="Cobro sin respaldo"><span class="fr-cifra">Cobro ' + clp(f.cobro) + ' · ' + esc(f.fuente || 'declarado') + '</span>' +
+      '<span class="fr-cifra dim">Servicio ' + clp(f.servicio) + (f.despacho ? ' + despacho ' + clp(f.despacho) : '') + '</span>' +
+      (quien ? '<div class="fr-sub">' + quien + '</div>' : '') + '<div>' + docs + '</div></td>';
+  }
+
   function pintar() {
     $('frHead').innerHTML = cabecera();
     var todas = filtradas(), total = todas.length;
@@ -204,11 +243,11 @@
     var ini = (S.page - 1) * S.por, vis = todas.slice(ini, ini + S.por);
     var h = '';
     vis.forEach(function (f) {
-      var k = llave(f), id = S.tab === 'cobro' ? f.id : f.ot_id, num = S.tab === 'cobro' ? f.numero : f.ot, est = S.tab === 'cobro' ? f.estado : f.ot_estado;
+      var k = llave(f), id = idDe(f), num = S.tab === 'anexo' ? f.ot : f.numero, est = S.tab === 'anexo' ? f.ot_estado : f.estado;
       h += '<tr><td class="ck"><input type="checkbox" data-sel="' + esc(k) + '"' + (S.sel[k] ? ' checked' : '') + ' aria-label="Seleccionar ' + esc(num) + '"></td>' +
            '<td data-k="OT"><a class="fr-ot" href="/ot/' + id + '">' + esc(num) + '</a><div class="fr-sub">' + esc(String(est || '').replace(/_/g, ' ')) + '</div></td>' +
            '<td data-k="Cliente">' + esc(f.cliente || '—') + '</td>' +
-           (S.tab === 'cobro' ? filaCobro(f) : filaAnexo(f)) +
+           (S.tab === 'cobro' ? filaCobro(f) : S.tab === 'origen' ? filaOrigen(f) : filaAnexo(f)) +
            '<td data-k="Estado">' + celdaEstado(f) + '</td><td>' + celdaAccion(f) + '</td></tr>';
     });
     if (!vis.length) {
@@ -264,12 +303,78 @@
     return { fase: 'lista', msg: 'Costo ' + clp(costo) + ' → ' + clp(f.total_anexo) + ' · la ganancia pasaría de ' + clp(r.j.ganancia_antes) + ' a ' + clp(r.j.ganancia_despues) + '.' };
   }
 
+  /* «Cobro sin respaldo»: revisar SOLO LEE (GET /correcciones, que trae lo que aportan los documentos ya declarados con su saldo) y dice
+     cuál de los tres casos es. El servidor vuelve a calcular todo al guardar: aquí nada fija un rótulo. */
+  async function revisarOrigen(f) {
+    var r = await pedir('/ot/api/finanzas/' + f.id + '/correcciones');
+    if (!r.ok) return { fase: 'error', msg: (r.j && r.j.error) || 'No se pudo leer la OT.' };
+    var j = r.j, d = j.docs, b = j.base || {};
+    if (!j.cobra) return { fase: 'bloqueada', msg: 'Esta OT no se cobra (' + (j.cobertura || 'cobertura') + '): no hay un cobro que respaldar.' };
+    var zz = num(b.zz_monto), env = num(b.zz_envio_monto) || 0;
+    var origen = String(b.valor_origen || '').toLowerCase(), mot = String(b.zz_motivo_manual || '').trim();
+    if (!(zz > 0)) return { fase: 'hecha', msg: 'Ya no tiene un cobro de servicio declarado.' };
+    if (origen && !((origen === 'manual' || origen === 'supuesto') && !mot)) return { fase: 'hecha', msg: 'Ya tiene su respaldo (' + origen + (mot ? ', con su motivo' : '') + ').' };
+    var antes = { zz: zz, env: env };
+    var dice = 'La OT dice ' + clp(zz) + (env ? ' + despacho ' + clp(env) : '');
+    if (j.docs_error) return { fase: 'bloqueada', msg: 'Random no respondió al leer los documentos: vuelve a revisar en un momento.' };
+    if (!d) return { fase: 'amano', antes: antes, msg: dice + '. No tiene documento de cobro: solo puede quedar escrito a mano, con tu motivo.' };
+    if (d.incompleto) return { fase: 'amano', antes: antes, msg: dice + '. Un documento no se pudo leer en Random: queda escrito a mano con tu motivo, o revisa la OT.' };
+    var hs = !!(d.servicio && d.servicio.hay_lineas), hd = !!(d.despacho && d.despacho.hay_lineas);
+    var sv = hs ? (num(d.servicio.saldo) || 0) : 0, dp = hd ? (num(d.despacho.saldo) || 0) : 0;
+    var otra = (d.otra_empresa && d.otra_empresa.length) ? ' No cuenta (otra empresa): ' + d.otra_empresa.join(', ') + '.' : '';
+    if (!hs) return { fase: 'amano', antes: antes, msg: dice + '. Sus documentos no traen línea de servicio (solo productos o solo despacho): queda escrito a mano con tu motivo.' + otra };
+    if (sv <= 0) return { fase: 'amano', antes: antes, msg: dice + '. El saldo de servicio de sus documentos ya lo usan otras OT (' + clp(d.servicio.usado) + ' de ' + clp(d.servicio.total) + '): revisa el saldo o déjalo a mano con tu motivo.' + otra };
+    if (zz === sv && env === dp) return { fase: 'lista', antes: antes, msg: dice + ': es exactamente lo que aportan sus documentos. Se fija el origen «línea del documento» sin cambiar el monto.' + otra };
+    if (!hd && env > 0) return { fase: 'amano', antes: antes, msg: dice + '. Sus documentos no traen despacho y la OT cobra ' + clp(env) + ' de despacho: corrígelo en la OT («Corregir finanzas») o déjalo a mano con tu motivo.' + otra };
+    return { fase: 'difiere', antes: antes, servicio: sv, despacho: dp, hayDespacho: hd,
+             msg: dice + '; sus documentos dicen ' + clp(sv) + (hd ? ' + despacho ' + clp(dp) : '') + '.' + otra };
+  }
+
   async function revisar(f) {
     setRes(f, { fase: 'revisando' }); pintar();
     var r;
-    try { r = S.tab === 'cobro' ? await revisarCobro(f) : await revisarAnexo(f); }
+    try { r = S.tab === 'cobro' ? await revisarCobro(f) : S.tab === 'origen' ? await revisarOrigen(f) : await revisarAnexo(f); }
     catch (e) { r = { fase: 'error', msg: 'No se pudo revisar. Inténtalo de nuevo.' }; }
     setRes(f, r);
+  }
+
+  /* (b) «Usar los documentos»: de a una OT, con el antes → después a la vista; nunca entra a «Aplicar las listas». */
+  async function usarDocumentos(f) {
+    var e = estadoDe(f);
+    if (e.fase !== 'difiere') return;
+    var despues = clp(e.servicio) + (e.hayDespacho && e.despacho ? ' + despacho ' + clp(e.despacho) : '');
+    var ok = await window.ilusConfirm({ title: 'Usar los documentos', message: f.numero + ' · ' + (f.cliente || ''),
+      sub: 'Antes: ' + clp(e.antes.zz) + (e.antes.env ? ' + despacho ' + clp(e.antes.env) : '') + ' (' + (f.fuente || 'declarado') + ', sin respaldo). ' +
+           'Después: ' + despues + ' (línea del documento). Queda registrado con tu nombre, la hora y el motivo.',
+      okLabel: 'Usar los documentos', cancelLabel: 'Cancelar', danger: false });
+    if (!ok) return;
+    setRes(f, Object.assign({}, e, { fase: 'revisando', msg: 'Aplicando…' })); pintar();
+    var cuerpo = { zz_monto: e.servicio, desde_documentos: true,
+      motivo: 'El cobro pasa a ser lo que aportan los documentos declarados (' + despues + '); antes estaba ' + (f.fuente || 'declarado') +
+              ' sin respaldo (' + clp(e.antes.zz) + '). Desde «Finanzas por reparar», cobro sin respaldo (REGLAS #56 y #59).' };
+    if (e.hayDespacho) cuerpo.zz_envio_monto = e.despacho;
+    try {
+      var r = await pedir('/ot/api/finanzas/' + f.id + '/corregir', { method: 'POST', body: JSON.stringify(cuerpo) });
+      setRes(f, r.ok ? { fase: 'hecha', msg: 'Cobro tomado de los documentos: ' + despues + '. Queda ' + clp(r.j.ganancia_despues) + '.' + (r.j.aviso_saldo ? ' Aviso: ' + r.j.aviso_saldo : '') }
+                     : { fase: 'error', msg: (r.j && r.j.error) || 'No se pudo aplicar.' });
+    } catch (x) { setRes(f, { fase: 'error', msg: 'No se pudo aplicar. Inténtalo de nuevo.' }); }
+  }
+
+  /* (c) «Dejar a mano con mi motivo»: el monto NO cambia; el motivo (≥ 15 caracteres) queda en la OT y en el registro de correcciones. */
+  async function dejarAMano(f) {
+    var e = estadoDe(f);
+    var m = await window.ilusPrompt({ title: 'Dejar el cobro escrito a mano', message: f.numero + ' · ' + (f.cliente || '') + ' · cobro ' + clp(f.cobro),
+      sub: '¿Por qué este cobro no sale de un documento? Queda en la OT y en el registro de correcciones con tu nombre y la hora.',
+      placeholder: 'Ej.: acuerdo comercial del 12-10; el cliente pagó el servicio en otra venta…', required: true, multiline: true,
+      minLength: MOTIVO_MIN, okLabel: 'Guardar el motivo', cancelLabel: 'Cancelar' });
+    if (m === null || m === undefined) return;
+    m = String(m).trim();
+    if (m.length < MOTIVO_MIN) { toast('El motivo debe tener al menos ' + MOTIVO_MIN + ' caracteres.', 'warning'); return; }
+    setRes(f, Object.assign({}, e, { fase: 'revisando', msg: 'Guardando…' })); pintar();
+    try {
+      var r = await pedir('/ot/api/finanzas/' + f.id + '/corregir', { method: 'POST', body: JSON.stringify({ confirmar_origen: 'manual', motivo: m }) });
+      setRes(f, r.ok ? { fase: 'hecha', msg: 'Queda escrito a mano con tu motivo. El monto no cambió.' } : { fase: 'error', msg: (r.j && r.j.error) || 'No se pudo guardar.' });
+    } catch (x) { setRes(f, { fase: 'error', msg: 'No se pudo guardar. Inténtalo de nuevo.' }); }
   }
 
   /* ── Aplicar: los MISMOS caminos de siempre (validan, piden motivo y dejan el registro) ── */
@@ -278,7 +383,13 @@
     setRes(f, Object.assign({}, e, { fase: 'revisando', msg: 'Aplicando…' })); pintar();
     var r;
     try {
-      if (S.tab === 'cobro') {
+      if (S.tab === 'origen') {
+        // (a) Los documentos dicen EXACTAMENTE lo mismo: solo se fija el origen (el servidor lo vuelve a verificar; el monto no cambia).
+        r = await pedir('/ot/api/finanzas/' + f.id + '/corregir', { method: 'POST', body: JSON.stringify({ confirmar_origen: 'documento',
+          motivo: 'El cobro declarado (' + clp(e.antes && e.antes.zz) + ') es exactamente lo que aportan los documentos de la OT: se fija su origen ' +
+                  '«línea del documento» sin cambiar el monto. Desde «Finanzas por reparar», cobro sin respaldo (REGLA #59).' }) });
+        if (r.ok) setRes(f, { fase: 'hecha', msg: 'Origen fijado: línea del documento. El monto no cambió.' });
+      } else if (S.tab === 'cobro') {
         var cuerpo = { zz_monto: e.servicio, desde_documentos: true,
           motivo: 'Se toma el cobro de los documentos ya declarados en la OT (servicio ' + clp(e.servicio) + (e.despacho ? ' + despacho ' + clp(e.despacho) : '') +
                   '), según el saldo de cada línea en Random. Reparación desde «Finanzas por reparar» (REGLA #56).' };
@@ -342,7 +453,9 @@
     var k = b.getAttribute('data-k'), f = filtradas().find(function (x) { return llave(x) === k; });
     if (!f) return;
     if (b.getAttribute('data-act') === 'revisar') { await revisar(f); pintar(); return; }
-    var ok = await window.ilusConfirm({ title: CFG[S.tab].titulo, message: (S.tab === 'cobro' ? f.numero : f.ot) + ' · ' + (f.cliente || ''),
+    if (b.getAttribute('data-act') === 'usar') { await usarDocumentos(f); pintar(); return; }
+    if (b.getAttribute('data-act') === 'mano') { await dejarAMano(f); pintar(); return; }
+    var ok = await window.ilusConfirm({ title: CFG[S.tab].titulo, message: (S.tab === 'anexo' ? f.ot : f.numero) + ' · ' + (f.cliente || ''),
       sub: estadoDe(f).msg + ' Queda registrado con tu nombre, la hora y el motivo.', okLabel: CFG[S.tab].verbo, cancelLabel: 'Cancelar', danger: false });
     if (!ok) return;
     await aplicar(f); pintar();
@@ -367,13 +480,26 @@
     if (S.tab === 'cobro') listas.forEach(function (f) { total += Number(estadoDe(f).total) || 0; });
     var ok = await window.ilusConfirm({ title: CFG[S.tab].titulo + ' (' + listas.length + ' OT)',
       message: S.tab === 'cobro' ? 'Se tomará el cobro de ' + listas.length + ' OT por un total de ' + clp(total) + '.'
-                                 : 'Se alineará el costo de ' + listas.length + ' OT con el de su anexo.',
+             : S.tab === 'origen' ? 'Se fijará el origen «línea del documento» de ' + listas.length + ' OT, sin cambiar ningún monto.'
+                                  : 'Se alineará el costo de ' + listas.length + ' OT con el de su anexo.',
       sub: 'Cada cambio pasa por la corrección de siempre y queda registrado con tu nombre, la hora y el motivo. Las que estén en ámbar o con error no se tocan.',
       okLabel: 'Aplicar', cancelLabel: 'Cancelar', danger: false });
     if (!ok) return;
     await correr(listas, aplicar, 'Reparación');
   });
 
+  /* 2026-10-29 (REGLA #59): ?tab=cobro|anexo|origen&q=… abre la pestaña ya filtrada (el botón «Arreglar» de la Calidad de datos). */
+  (function () {
+    try {
+      if (typeof location === 'undefined' || !location.search) return;
+      var u = new URLSearchParams(location.search), t = u.get('tab'), q = (u.get('q') || '').slice(0, 120);
+      if (t && CFG[t]) {
+        S.tab = t;
+        document.querySelectorAll('.fr-tab').forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-tab') === t); });
+      }
+      if (q) { S.q = q; $('frQ').value = q; }
+    } catch (e) { /* un enlace raro no rompe la pantalla */ }
+  })();
   cargar();
 })();
 </script>
