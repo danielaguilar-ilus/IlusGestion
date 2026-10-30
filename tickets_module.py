@@ -4079,6 +4079,8 @@ def register_tickets_routes(app, ctx):
                           "cantidad": cant, "precio_unitario": pu, "total": tot,
                           "precio_uf": _precio_uf_str(pu),
                           "clase_producto": it.get("clase_producto") or None,
+                          # 30-oct (Daniel, COT-000195: «que diga metros en el cable»): «5 m» en la columna Unidades (None = como siempre).
+                          "unidad": _cotcomp.unidad_de(it.get("descripcion"), it.get("erp_kopr")) or None,
                           "es_cobrable": es_cobrable,
                           "documento": _nudo or "—",
                           # Tipo de documento ERP (FCV/NVV/GDV/...) — Daniel:

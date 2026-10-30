@@ -640,7 +640,7 @@
           {%- else -%}—{%- endif -%}
         </td>{% endif %}
         <td>{{ it.descripcion }}</td>
-        <td class="cant">{{ it.cantidad or 0 }}</td>
+        <td class="cant">{{ it.cantidad or 0 }}{% if it.unidad %} {{ it.unidad }}{% endif %}</td>
         <td class="puf">{{ it.precio_uf or '—' }}</td>
         <td class="tot">$ {{ clp(it.total) }}</td>
       </tr>

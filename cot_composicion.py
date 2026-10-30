@@ -40,6 +40,23 @@ def clasificar_linea(sku, descripcion, clase=None):
     return EQUIPO
 
 
+_RE_METROS = re.compile(r"\b(cable|piola|cuerda|cordel|manguera)s?\b")
+_RE_NO_METROS = re.compile(r"\b(usb|hdmi|ethernet|cargador|adaptador|conector|poder|alimentacion|bluetooth|sensor|pulsometro)\b")
+
+
+def unidad_de(descripcion, sku=""):
+    """'m' si la línea se vende por metro (cable, piola, cuerda…), si no ''. Daniel (30-oct, COT-000195): «que diga metros en el cable».
+    El sistema no guarda la unidad de medida de cada línea; se deduce de la descripción (y nunca de un servicio ZZ…)."""
+    d = _sin_acentos(descripcion)
+    if str(sku or "").strip().upper().startswith("ZZ") or _RE_SERVICIO.match(d):
+        return ""
+    return "m" if _RE_METROS.search(d) and not _RE_NO_METROS.search(d) else ""
+
+
+def _cant_txt(n, unidad):
+    return f"{n} {unidad}" if unidad else f"{n}"
+
+
 def _plural(n, uno, varios):
     return f"{n} {uno if n == 1 else varios}"
 
@@ -68,7 +85,8 @@ def componer(items, dias_habiles=None):
             continue
         tipo = clasificar_linea(it.get("sku"), it.get("descripcion"), it.get("clase_producto"))
         fila = {"nombre": str(it.get("descripcion") or it.get("sku") or "").strip(), "cant": cant,
-                "clase": (str(it.get("clase_producto") or "").strip() or None)}
+                "clase": (str(it.get("clase_producto") or "").strip() or None),
+                "unidad": unidad_de(it.get("descripcion"), it.get("sku"))}
         {SERVICIO: srv, MATERIAL: mat, EQUIPO: eq}[tipo].append(fila)
     n_eq = sum(f["cant"] for f in eq)
     n_mat = sum(f["cant"] for f in mat)
@@ -81,8 +99,12 @@ def componer(items, dias_habiles=None):
         cards.append({"num": categorias, "lbl": "Categorías de equipos"})
     if n_srv:
         cards.append({"num": n_srv, "lbl": "Servicio considerado" if n_srv == 1 else "Servicios considerados"})
+    solo_metros = bool(mat) and all(f["unidad"] == "m" for f in mat)     # todo el material se vende por metro
     if n_mat:
-        cards.append({"num": n_mat, "lbl": "Unidad de material" if n_mat == 1 else "Unidades de material"})
+        if solo_metros:
+            cards.append({"num": f"{n_mat} m", "lbl": "de material"})
+        else:
+            cards.append({"num": n_mat, "lbl": "Unidad de material" if n_mat == 1 else "Unidades de material"})
     if dias_habiles:
         cards.append({"num": dias_habiles, "lbl": "Días hábiles estimados"})
     partes = []
@@ -91,10 +113,10 @@ def componer(items, dias_habiles=None):
     if n_srv:
         partes.append(_plural(n_srv, "servicio", "servicios"))
     if n_mat:
-        partes.append(_plural(n_mat, "unidad de material", "unidades de material"))
+        partes.append(f"{n_mat} m de material" if solo_metros else _plural(n_mat, "unidad de material", "unidades de material"))
     return {
         "equipos": n_eq, "materiales": n_mat, "servicios": n_srv, "categorias": categorias,
-        "nombres_equipos": [f["nombre"] for f in eq], "nombres_materiales": [f"{f['nombre']} ({f['cant']} u)" for f in mat],
+        "nombres_equipos": [f["nombre"] for f in eq], "nombres_materiales": [f"{f['nombre']} ({_cant_txt(f['cant'], f['unidad'] or 'u')})" for f in mat],
         "nombres_servicios": [f["nombre"] for f in srv],
         "solo_servicio": n_eq == 0, "cards": cards,
         "detalle_sub": (" · ".join(partes) + " · precios unitarios en UF") if partes else None,

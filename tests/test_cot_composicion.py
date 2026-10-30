@@ -41,11 +41,11 @@ class TestCaso195(unittest.TestCase):
 
     def test_las_tarjetas_dicen_lo_que_hay(self):
         lbls = {k["lbl"]: k["num"] for k in self.c["cards"]}
-        self.assertEqual(lbls, {"Servicio considerado": 1, "Unidades de material": 5})
+        self.assertEqual(lbls, {"Servicio considerado": 1, "de material": "5 m"}, "el cable se cuenta en metros")
         self.assertNotIn("Equipos considerados", lbls)
 
     def test_el_subtitulo_del_detalle(self):
-        self.assertEqual(self.c["detalle_sub"], "1 servicio · 5 unidades de material · precios unitarios en UF")
+        self.assertEqual(self.c["detalle_sub"], "1 servicio · 5 m de material · precios unitarios en UF")
 
     def test_los_textos_no_hablan_de_equipos_instalados(self):
         parrafo, alcance, reco, servicio = C.textos_instalacion(self.c, uf_info=True)
@@ -54,7 +54,7 @@ class TestCaso195(unittest.TestCase):
         self.assertNotIn("equipo(s)", todo)
         self.assertNotIn("cada equipo", todo)
         self.assertIn("instalación cable de fuerza", todo)
-        self.assertIn("cable de fuerza 5mm black (5 u)", todo)
+        self.assertIn("cable de fuerza 5mm black (5 m)", todo)
         self.assertIn("uf vigente", todo)
         self.assertEqual(len(reco), 4)
 
@@ -67,9 +67,9 @@ class TestConEquipos(unittest.TestCase):
         c = C.componer(self.ITEMS, dias_habiles=2)
         self.assertEqual((c["equipos"], c["categorias"], c["servicios"], c["materiales"]), (3, 2, 1, 3))
         self.assertEqual([k["lbl"] for k in c["cards"]],
-                         ["Equipos considerados", "Categorías de equipos", "Servicio considerado", "Unidades de material",
+                         ["Equipos considerados", "Categorías de equipos", "Servicio considerado", "de material",
                           "Días hábiles estimados"])
-        self.assertEqual(c["detalle_sub"], "3 equipos · 1 servicio · 3 unidades de material · precios unitarios en UF")
+        self.assertEqual(c["detalle_sub"], "3 equipos · 1 servicio · 3 m de material · precios unitarios en UF")
 
     def test_con_equipos_conserva_la_redaccion_de_siempre(self):
         c = C.componer(self.ITEMS)
@@ -91,6 +91,41 @@ class TestConEquipos(unittest.TestCase):
         self.assertEqual((c["equipos"], c["servicios"], c["materiales"]), (0, 0, 0))
         self.assertIsNone(c["detalle_sub"])
 
+
+class TestMetros(unittest.TestCase):
+    """Daniel (30-oct, COT-000195): «que diga metros en el cable»."""
+
+    def test_unidad_de(self):
+        self.assertEqual(C.unidad_de("Cable de Fuerza 5mm Black"), "m")
+        self.assertEqual(C.unidad_de("Piola de acero 6mm"), "m")
+        self.assertEqual(C.unidad_de("Cuerda de batalla"), "m")
+        self.assertEqual(C.unidad_de("Cable USB para consola"), "", "un cable USB se cuenta en unidades")
+        self.assertEqual(C.unidad_de("Cable de poder"), "")
+        self.assertEqual(C.unidad_de("Instalación cable de fuerza"), "", "un servicio nunca lleva metros")
+        self.assertEqual(C.unidad_de("Cable", "ZZINSTALACION"), "")
+        self.assertEqual(C.unidad_de("Trotadora ILUS"), "")
+
+    def test_material_mixto_cuenta_unidades(self):
+        c = C.componer([_it("", "Cable de fuerza", 5), _it("", "Perno anclaje", 4), _it("ZZINSTALACION", "Instalación", 1)])
+        self.assertEqual(c["detalle_sub"], "1 servicio · 9 unidades de material · precios unitarios en UF")
+
+    def test_el_pdf_muestra_5_m_en_la_columna_unidades(self):
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(RAIZ, "templates", "tickets")), autoescape=True)
+        env.globals["clp"] = lambda v: str(v)
+        env.filters["rut_fmt"] = lambda v: v
+        items = [{"sku": "", "descripcion": "Cable de Fuerza 5mm Black", "cantidad": 5, "unidad": "m", "precio_uf": "0,3", "total": 59950,
+                  "documento": "—", "documento_tido": "", "clase_producto": None, "es_cobrable": True, "precio_unitario": 11990},
+                 {"sku": "", "descripcion": "Instalación cable de fuerza", "cantidad": 1, "unidad": None, "precio_uf": "1,8", "total": 73020,
+                  "documento": "—", "documento_tido": "", "clase_producto": None, "es_cobrable": True, "precio_unitario": 73020}]
+        cot = {"id": 1, "numero": "COT-1", "fecha_emision": "", "empresa": "", "rut": "", "direccion": "", "comuna": "", "region": "", "email": "",
+               "telefono": "", "ejecutivo": "", "contacto_nombre": "", "tipo_servicio_label": "Instalación", "subtotal": 0, "descuento_pct": 0,
+               "descuento_monto": 0, "costo_ruta": 0, "iva_pct": 19, "iva_monto": 0, "total": 0}
+        html = env.get_template("cotizacion_pdf.html").render(cot=cot, items=items, modo_rico=False, mostrar_col_documento=False,
+                                                              terminos_pares=[], uf_info=None, kpis=None, rico_textos=None)
+        import re
+        celdas = re.findall(r'<td class="cant">([^<]*)</td>', html)
+        self.assertEqual([c.strip() for c in celdas], ["5 m", "1"])
 
 class TestCableado(unittest.TestCase):
     def test_tickets_module_usa_la_composicion(self):
