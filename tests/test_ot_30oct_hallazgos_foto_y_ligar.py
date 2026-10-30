@@ -111,6 +111,28 @@ class TestFotoObligatoriaEnLaBarraDeAcciones(unittest.TestCase):
         self.assertEqual(r["fotos_validas"], 0)
 
 
+class TestTarjetaDeFotosAAnchoCompleto(unittest.TestCase):
+    """30-oct (Daniel, OT con 53 fotos: «la tarjeta de las fotos igual deja espacio»): REGLA #16, una tarjeta alta va a ancho completo."""
+
+    def setUp(self):
+        with open(os.path.join(RAIZ, "templates", "ot2", "detalle.html"), encoding="utf-8") as fh:
+            self.t = fh.read()
+
+    def test_la_tarjeta_es_hija_directa_de_la_grilla_y_a_ancho_completo(self):
+        i = self.t.index('class="otd-card otd-span2" id="otdCardFotos"')
+        g = self.t.index('<div class="otd-grid">')
+        cierre = self.t.index("{# 🔽 2026-09-02 (Daniel: \"la actividad de la OT")
+        self.assertTrue(g < self.t.index('id="otdCardMotor"') < i < cierre, "queda al final de la grilla, después de las dos columnas")
+        self.assertNotIn('class="otd-card" data-bal="1">\n        <h3><i class="bi bi-camera-fill"></i> Fotos de la OT', self.t)
+
+    def test_se_conservan_los_ids_del_js(self):
+        for ident in ("otdEvGrid", "otdEvEmpty", "otdEvBtn", "otdEvCount", "otdEvCountWrap", "otdEnzOpenBtn"):
+            self.assertIn(f'id="{ident}"', self.t)
+
+    def test_la_galeria_usa_el_ancho_en_escritorio(self):
+        self.assertIn("@media (min-width:981px){#otdCardFotos .otd-ev-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))", self.t)
+
+
 class TestSinOrdenImpuesto(unittest.TestCase):
     """30-oct (Daniel): «no le impongamos un orden de ejecución a los técnicos; el técnico dijo que no le dejaba presionar siguiente»."""
 

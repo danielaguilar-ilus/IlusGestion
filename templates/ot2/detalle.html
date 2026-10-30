@@ -1710,6 +1710,8 @@
    deja de estirar la columna (REGLA #16). */
 .otd-ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;
   padding:14px 16px;max-height:min(460px,55vh);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+/* 2026-10-30: la tarjeta de fotos va a ANCHO COMPLETO (REGLA #16): la galería usa el ancho para repartirse en más columnas. */
+@media (min-width:981px){#otdCardFotos .otd-ev-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr));max-height:min(520px,60vh)}}
 .otd-ev-item{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#fafbfc;position:relative}
 {# ⭐ 2026-09-26: estrella de "foto principal" sobre la miniatura de la
    galería general -- mismo criterio visual que el checklist. #}
@@ -4428,98 +4430,6 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         {% endif %}
       </div>
       {% endif %}
-      {# 📸 2026-09-02 (Daniel: "¿sabes que me gustaría que sacaras la
-         parte de evidencia de fotos? Sácala de ahí... así se queda un
-         poco más compacta, la idea es que no sea tan necesario darle
-         tanto scroll"). Las fotos salen de Información y se MUEVEN acá,
-         a Trabajo, que es donde el técnico las toma. No se elimina nada
-         (REGLA #4.2): mismos ids (otdEvGrid/otdEvEmpty/otdEvBtn/
-         otdEvCount), mismo JS y mismos endpoints de siempre -- solo
-         cambia de pestaña. #}
-      <div class="otd-card" data-bal="1">
-        <h3><i class="bi bi-camera-fill"></i> Fotos de la OT
-          <span class="n" id="otdEvCountWrap"></span>
-          {# 🔄 2026-09-25 (Daniel: "las fotos de todas las OT están torcidas;
-             quisiera que las endereces y que dejes la opción de poder editar
-             y que se puedan guardar si es que están mal"). Abre el modal
-             #otdModalEnderezar. Gate: _foto_puede_girar (gestión que ve la
-             OT, en cualquier estado; técnico solo si puede ejecutarla) -- el
-             backend lo re-valida en cada giro. #}
-          {% if puede_girar_fotos %}
-          <button type="button" class="otd-enz-open{{ ' d-none' if not fotos }}" id="otdEnzOpenBtn"
-                  onclick="otdEnderezarAbrir()" title="Girar las fotos que quedaron de lado">
-            <i class="bi bi-arrow-repeat"></i> Enderezar fotos
-          </button>
-          {% endif %}
-        </h3>
-          <div style="margin:14px 16px 0;padding-top:14px;border-top:1px solid #f1f3f5">
-            <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.82rem;
-                 text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:10px">
-              <i class="bi bi-camera-fill"></i> Fotos
-              <span class="n" id="otdEvCount" style="margin-left:2px">{{ fotos|length }}</span>
-            </div>
-            {# Mismo gate de siempre: /fotos/subir solo lo puede llamar el
-               técnico dueño de la visita o superadmin (@_tecnico_owns_visita).
-               🔇 2026-09-02 (Daniel: "ojalá este mensaje de falta de evidencia
-               sea solamente para superadministrador"): el reclamo "¿Falta
-               evidencia?" le sonaba a reproche al técnico, que muchas veces
-               ya subió sus fotos por equipo en el checklist -- estas son las
-               GENERALES de la OT. El botón para subir sigue estando para
-               todos los que pueden ejecutar; lo que se acota al superadmin es
-               el texto que pregunta. #}
-            {% if puede_ejecutar %}
-            <div class="otd-ev-add">
-              <div class="tx">
-                {% if is_superadmin %}
-                <b>¿Falta evidencia?</b>
-                <small>Sube una foto general de la OT — queda asociada de inmediato.</small>
-                {% else %}
-                <b>Fotos generales de la OT</b>
-                <small>Las del checklist por equipo van en cada máquina, en Trabajo.</small>
-                {% endif %}
-              </div>
-              <button type="button" class="otd-ev-btn" id="otdEvBtn" onclick="otdAbrirSheetFoto()">
-                <i class="bi bi-camera-fill"></i> Agregar foto
-              </button>
-              <input type="file" id="otdFotoCam" accept="image/*,image/heic,image/heif" capture="environment"
-                     style="display:none" onchange="otdSubirFoto(this)">
-              <input type="file" id="otdFotoGal" accept="image/*,image/heic,image/heif"
-                     style="display:none" onchange="otdSubirFoto(this)">
-            </div>
-            {% endif %}
-            <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
-              {% for f in fotos %}
-              {# ⭐ 2026-09-26 (Daniel, en vivo: "todo debe estar conectado" --
-                 la galería general es donde más se ven las fotos). data-mid
-                 agrupa las fotos del MISMO equipo (para desmarcar las demás
-                 al elegir una nueva principal) y data-principal + la
-                 estrella reflejan cuál ya está elegida. #}
-              <div class="otd-ev-item" data-mid="{{ f.maquina_id or '' }}">
-                {% if f.url %}
-                  <img src="{{ f.url }}" alt="" loading="lazy" data-fid="{{ f.id }}"
-                       data-principal="{{ '1' if f.principal else '0' }}"
-                       onclick="otdVerFoto(this)">
-                  {# ⭐ BAJA 9 (revisión): título según el caso -- una foto sin
-                     equipo asociado es la principal GENERAL de la OT. #}
-                  {% if f.principal %}<i class="bi bi-star-fill otd-ev-star" title="{{ 'Foto principal de este equipo' if f.maquina_id else 'Foto principal de la OT' }}"></i>{% endif %}
-                {% else %}
-                  <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
-                    <i class="bi bi-image" style="font-size:1.6rem"></i></div>
-                {% endif %}
-                <div class="meta">
-                  <div class="tipo">{{ (f.tipo_foto or 'general') | title }}{% if f.maquina_nombre %} · {{ f.maquina_nombre }}{% endif %}</div>
-                  {% if f.descripcion %}<div class="desc">{{ f.descripcion }}</div>{% endif %}
-                  <div class="who">{{ f.tomada_por or 'Técnico' }} · {{ f.cuando or '—' }}</div>
-                </div>
-              </div>
-              {% endfor %}
-            </div>
-            <div class="otd-vacio{{ ' d-none' if fotos }}" id="otdEvEmpty">
-              <i class="bi bi-camera" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
-              Todavía no hay fotos subidas a esta OT.
-            </div>
-          </div>
-      </div>
     </div>
 
     {# ── Columna derecha ── #}
@@ -5088,6 +4998,101 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         {% if not puede_metadata %}
         {{ facprov_bloque(factura_prov if factura_prov is defined else none, factura_prov_aplica if factura_prov_aplica is defined else false) }}
         {% endif %}
+      {# 🖼️ 2026-10-30 (Daniel, viendo la OT con 53 fotos: «la tarjeta de las fotos igual deja espacio»): la tarjeta de fotos medía unos 650 px
+         dentro de la columna izquierda y dejaba un hueco al lado (REGLA #16: una tarjeta que sola supera ~600 px va a ANCHO COMPLETO). Pasa al final
+         de la grilla, debajo de las dos columnas, con la galería repartida en más columnas. Mismos ids, mismo JS y mismos endpoints. #}
+      {# 📸 2026-09-02 (Daniel: "¿sabes que me gustaría que sacaras la
+         parte de evidencia de fotos? Sácala de ahí... así se queda un
+         poco más compacta, la idea es que no sea tan necesario darle
+         tanto scroll"). Las fotos salen de Información y se MUEVEN acá,
+         a Trabajo, que es donde el técnico las toma. No se elimina nada
+         (REGLA #4.2): mismos ids (otdEvGrid/otdEvEmpty/otdEvBtn/
+         otdEvCount), mismo JS y mismos endpoints de siempre -- solo
+         cambia de pestaña. #}
+      <div class="otd-card otd-span2" id="otdCardFotos">
+        <h3><i class="bi bi-camera-fill"></i> Fotos de la OT
+          <span class="n" id="otdEvCountWrap"></span>
+          {# 🔄 2026-09-25 (Daniel: "las fotos de todas las OT están torcidas;
+             quisiera que las endereces y que dejes la opción de poder editar
+             y que se puedan guardar si es que están mal"). Abre el modal
+             #otdModalEnderezar. Gate: _foto_puede_girar (gestión que ve la
+             OT, en cualquier estado; técnico solo si puede ejecutarla) -- el
+             backend lo re-valida en cada giro. #}
+          {% if puede_girar_fotos %}
+          <button type="button" class="otd-enz-open{{ ' d-none' if not fotos }}" id="otdEnzOpenBtn"
+                  onclick="otdEnderezarAbrir()" title="Girar las fotos que quedaron de lado">
+            <i class="bi bi-arrow-repeat"></i> Enderezar fotos
+          </button>
+          {% endif %}
+        </h3>
+          <div style="margin:14px 16px 0;padding-top:14px;border-top:1px solid #f1f3f5">
+            <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.82rem;
+                 text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:10px">
+              <i class="bi bi-camera-fill"></i> Fotos
+              <span class="n" id="otdEvCount" style="margin-left:2px">{{ fotos|length }}</span>
+            </div>
+            {# Mismo gate de siempre: /fotos/subir solo lo puede llamar el
+               técnico dueño de la visita o superadmin (@_tecnico_owns_visita).
+               🔇 2026-09-02 (Daniel: "ojalá este mensaje de falta de evidencia
+               sea solamente para superadministrador"): el reclamo "¿Falta
+               evidencia?" le sonaba a reproche al técnico, que muchas veces
+               ya subió sus fotos por equipo en el checklist -- estas son las
+               GENERALES de la OT. El botón para subir sigue estando para
+               todos los que pueden ejecutar; lo que se acota al superadmin es
+               el texto que pregunta. #}
+            {% if puede_ejecutar %}
+            <div class="otd-ev-add">
+              <div class="tx">
+                {% if is_superadmin %}
+                <b>¿Falta evidencia?</b>
+                <small>Sube una foto general de la OT — queda asociada de inmediato.</small>
+                {% else %}
+                <b>Fotos generales de la OT</b>
+                <small>Las del checklist por equipo van en cada máquina, en Trabajo.</small>
+                {% endif %}
+              </div>
+              <button type="button" class="otd-ev-btn" id="otdEvBtn" onclick="otdAbrirSheetFoto()">
+                <i class="bi bi-camera-fill"></i> Agregar foto
+              </button>
+              <input type="file" id="otdFotoCam" accept="image/*,image/heic,image/heif" capture="environment"
+                     style="display:none" onchange="otdSubirFoto(this)">
+              <input type="file" id="otdFotoGal" accept="image/*,image/heic,image/heif"
+                     style="display:none" onchange="otdSubirFoto(this)">
+            </div>
+            {% endif %}
+            <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
+              {% for f in fotos %}
+              {# ⭐ 2026-09-26 (Daniel, en vivo: "todo debe estar conectado" --
+                 la galería general es donde más se ven las fotos). data-mid
+                 agrupa las fotos del MISMO equipo (para desmarcar las demás
+                 al elegir una nueva principal) y data-principal + la
+                 estrella reflejan cuál ya está elegida. #}
+              <div class="otd-ev-item" data-mid="{{ f.maquina_id or '' }}">
+                {% if f.url %}
+                  <img src="{{ f.url }}" alt="" loading="lazy" data-fid="{{ f.id }}"
+                       data-principal="{{ '1' if f.principal else '0' }}"
+                       onclick="otdVerFoto(this)">
+                  {# ⭐ BAJA 9 (revisión): título según el caso -- una foto sin
+                     equipo asociado es la principal GENERAL de la OT. #}
+                  {% if f.principal %}<i class="bi bi-star-fill otd-ev-star" title="{{ 'Foto principal de este equipo' if f.maquina_id else 'Foto principal de la OT' }}"></i>{% endif %}
+                {% else %}
+                  <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
+                    <i class="bi bi-image" style="font-size:1.6rem"></i></div>
+                {% endif %}
+                <div class="meta">
+                  <div class="tipo">{{ (f.tipo_foto or 'general') | title }}{% if f.maquina_nombre %} · {{ f.maquina_nombre }}{% endif %}</div>
+                  {% if f.descripcion %}<div class="desc">{{ f.descripcion }}</div>{% endif %}
+                  <div class="who">{{ f.tomada_por or 'Técnico' }} · {{ f.cuando or '—' }}</div>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            <div class="otd-vacio{{ ' d-none' if fotos }}" id="otdEvEmpty">
+              <i class="bi bi-camera" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+              Todavía no hay fotos subidas a esta OT.
+            </div>
+          </div>
+      </div>
       </div>
       {#- 2026-10-08 (Daniel, con la captura de la OT-2026-00245): «hay un botón que dice Editar finanzas que no lo veo muy necesario…
           es casi la misma información que está arriba». La tarjeta de edición (#otdCardFinanzas, con TODOS sus ids y funciones: REGLA #4.2)
