@@ -433,13 +433,16 @@ class TestContadoresYCuenta(_Base):
     def test_la_cuenta_va_en_una_linea_y_el_desglose_en_una_mini_tabla_de_dos_filas(self):
         html = self._pintar("cobro_2docs")
         cta = html.split('<section class="fm-cta ')[1].split("</section>")[0]
-        # 2026-10-29 (v4): las cifras grandes (cuánto nos cobraron, cuánto cobramos y el margen) subieron a «¿Quién se adjudica el dinero?», arriba de
-        # La cuenta; acá ya no se repiten (tests/test_ot_motor_quien_y_botones.py prueba el encabezado).
-        quien = html.split('<section class="fm-adj"')[1].split("</section>")[0]
-        i1, i2, i3 = quien.index("Nos cobró"), quien.index("Cobramos a"), quien.index("Ganamos $52.101")
+        # 2026-10-08: con las palabras de Daniel: «Cobramos $X», «Nos cobraron $Y» y el resultado en grande, «Ganamos $Z (n %)». 2026-10-29 (v6): las tres
+        # cifras volvieron a La cuenta (la v4 las había subido); con la REGLA #57, 17,2 % es margen bajo (menos de 20 %).
+        i1, i2, i3 = cta.index("Cobramos</small><b>$302.101"), cta.index("Nos cobraron</small><b>$250.000"), cta.index("Ganamos</small><b>$52.101")
         self.assertTrue(i1 < i2 < i3)
-        self.assertIn('<em class="fm-q-mp">17,2 %</em>', quien)      # 2026-10-29 (v5): el % junto a la cifra, sin paréntesis
-        self.assertNotIn('class="fm-res"', cta)
+        self.assertIn("<em>(17,2 %)</em>", cta)
+        self.assertIn("Margen bajo (menos de 20 %)", cta)
+        # arriba, la franja fina dice quién (Nos cobró · Cobramos a) y no repite el margen (tests/test_ot_motor_quien_y_botones.py la prueba entera)
+        quien = html.split('<section class="fm-adj"')[1].split("</section>")[0]
+        self.assertLess(quien.index("Nos cobró"), quien.index("Cobramos a"))
+        self.assertNotIn("Ganamos", quien)
         self.assertLess(html.index('<section class="fm-adj"'), html.index('<section class="fm-cta '))
         mini = cta.split('<table class="fm-neg">')[1].split("</table>")[0]
         self.assertEqual(mini.count("<tr>"), 3, "encabezado + 2 filas (servicio y despacho)")
@@ -454,12 +457,14 @@ class TestContadoresYCuenta(_Base):
     def test_en_una_ot_que_no_se_cobra_dice_nos_costo_y_la_constancia_vive_en_el_paso_1(self):
         html = self._pintar("garantia_nv")
         cta = html.split('<section class="fm-cta ')[1].split("</section>")[0]
-        # 2026-10-08: «No se cobra · nos costó $Y» (la cuenta ya no repite «Cobré $0 − …»); el motivo va aparte.
-        # 2026-10-29 (v4): lo dice el bloque «Cobramos a» del encabezado «¿Quién se adjudica el dinero?».
+        # 2026-10-08: «No se cobra · nos costó $Y» (la cuenta ya no repite «Cobré $0 − …»); el motivo va aparte. 2026-10-29 (v6): de nuevo en La cuenta.
+        self.assertIn("No se cobra</small><b>nos costó $200.000", cta)
+        self.assertIn('<span class="fm-motivo">Garantía</span>', cta)
+        # …y la franja de arriba dice a quién no se le cobra y que lo asume ILUS (un rótulo, nunca una persona)
         quien = html.split('<section class="fm-adj"')[1].split("</section>")[0]
         self.assertIn('<b class="fm-q-v">No se cobra</b>', quien)
-        self.assertIn('<span class="fm-q-cost">nos costó $200.000</span>', quien)
         self.assertIn('<span class="fm-motivo">Garantía</span>', quien)
+        self.assertIn('<b class="fm-q-n">Lo asume ILUS</b><b class="fm-q-v">$200.000</b>', quien)
         # 2026-10-25: sin cobro no hay desglose Cobramos/Queda por negocio, pero SÍ lo que nos costó (la tarjeta «Lo que nos costó» se fundió acá)
         self.assertNotIn('<table class="fm-neg">', cta)
         self.assertIn('<table class="fm-neg fm-neg-c">', cta)

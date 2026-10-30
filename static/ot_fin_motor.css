@@ -144,7 +144,7 @@
 .fm-det b{color:#111827}
 .fm-meta-c{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:.72rem;color:var(--fm-gris)}
 .fm-sem{font-weight:900;font-size:.72rem;border-radius:999px;padding:2px 10px;background:var(--fm-gris-f);color:#374151;margin-left:4px}
-.fm-cta.c-ok .fm-sem{background:var(--fm-verde-f);color:#14532d}
+.fm-cta.c-ok .fm-sem,.fm-cta.c-tol .fm-sem{background:var(--fm-verde-f);color:#14532d}
 .fm-cta.c-bajo .fm-sem,.fm-cta.c-ambar .fm-sem{background:var(--fm-ambar-f);color:#78350f}
 .fm-cta.c-rojo .fm-sem{background:var(--fm-rojo-f);color:#991b1b}
 .fm-cta.c-info .fm-sem{background:var(--fm-azul-f);color:#1e40af}
@@ -343,30 +343,44 @@
 #otdCardMotor .otd-fin-faltan{margin:8px 0 0}
 #otdCardMotor .otd-facprov{margin-top:8px}
 
-/* ═══ v4 · 2026-10-29 (Daniel: «evita la duplicidad de botones… indica quién se está adjudicando ese dinero… las tarjetas deben ser pequeñas») ═══ */
-/* ¿Quién se adjudica el dinero? Bloques chicos (Nos cobró · Cobramos a · ILUS · interno) y el margen con la política de la REGLA #57.
-   2026-10-29 (v5, Daniel: «que se reconozca a simple vista cuánto cobré, en qué factura, el margen», y luego «no tan colorido… no tarjetas tan grandes;
-   todo bien resumido»): cada bloque en DOS líneas (rótulo · nombre / la cifra · sus chips) sobre fondo gris suave, sin bordes de acento; el color vive
-   SOLO en chips chicos (el documento junto a lo cobrado, el anexo, el semáforo del margen). El desglose se abre con «Ver el desglose». */
-.fm-adj{background:#fff;border:1px solid var(--fm-borde);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}
-.fm-adj-h{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 10px}
-.fm-adj-h .fm-col-t{margin:0}
-.fm-adj-ver{display:inline-flex;align-items:center;gap:4px;min-height:32px;padding:0 10px;border:1px dashed #cbd5e1;border-radius:8px;background:#fff;
-  font:inherit;font-size:.72rem;font-weight:800;color:#1d4ed8;cursor:pointer;white-space:nowrap}
-.fm-adj-ver:hover,.fm-adj-ver:focus-visible{border-color:#1d4ed8;outline:none}
-.fm-q-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:8px;min-width:0;align-items:start}
-/* Cada bloque en dos líneas con flex (el ::before parte la fila): [rótulo · nombre · su detalle] / [la cifra · los chips]; el desglose, debajo */
-.fm-q,.fm-q-m{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;min-width:0;background:#fafafa;border:1px solid var(--fm-borde);border-radius:10px;padding:8px 12px}
-.fm-q::before,.fm-q-m::before{content:"";order:4;flex-basis:100%;height:0}
-.fm-q-t,.fm-q-mt{order:1;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:var(--fm-gris)}
-.fm-q-n{order:2;font-size:.84rem;font-weight:900;line-height:1.25;overflow-wrap:anywhere}
-.fm-q-e{order:3;font-size:.74rem;color:#374151;font-weight:700;overflow-wrap:anywhere}
-.fm-q-v{order:5;font-size:1.08rem;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.25;overflow-wrap:anywhere}
+/* ═══ v6 · 2026-10-29 · «¿Quién se adjudica el dinero?» en UNA FRANJA FINA ══════════════════════════════════════════════════════════════
+   Historia: v4 (Daniel: «evita la duplicidad de botones… indica quién se está adjudicando ese dinero… las tarjetas deben ser pequeñas»), v5 (bloques de dos
+   líneas con semáforo) y v6 (Daniel, viendo la v5: «me gustaba cómo salía antes… lo nuevo ocupa mucho espacio y le falta calidad de información… La cuenta
+   está perfecta»): ahora es UNA o DOS líneas, al mismo ancho del bloque:
+     [¿Quién se adjudica el dinero?]  Nos cobró: persona · empresa $X [Anexo]  │  Cobramos a: cliente $Y [Factura N°]  │  ILUS · interno: …   [Ver el desglose]
+   Sin cifras grandes ni tarjetas (las cifras grandes y el margen viven en «La cuenta»); el color va en las cifras (verde lo cobrado, azul lo que asume ILUS
+   o no se cobra) y en chips chicos (el documento, el anexo). Los ítems se separan con una barra interior de 1 px (sin esquinas redondeadas); en un bloque
+   angosto (celular, modal chico) va uno por línea. El desglose (servicio y despacho de cada lado con su documento) se abre debajo, al clic. */
+.fm-adj{background:#fff;border:1px solid var(--fm-borde);border-radius:10px;padding:6px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
+/* La barra que separa cada ítem va en el hueco de la izquierda (left:-8px, dentro del gap de 15 px). El gap solo existe ENTRE ítems de una misma línea:
+   el ítem que empieza una línea tiene su barra fuera de la franja, y `overflow:hidden` la recorta (nunca queda una barra suelta al inicio de la línea). */
+.fm-adj-l{display:flex;flex-wrap:wrap;align-items:center;gap:4px 15px;min-width:0;overflow:hidden}
+.fm-adj-t{margin:0;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:#374151;display:inline-flex;align-items:center;gap:5px;line-height:1.3}
+.fm-adj-t i{color:var(--fm-rojo)}
+.fm-q{position:relative;display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 6px;min-width:0;max-width:100%}
+.fm-q::before{content:"";position:absolute;left:-8px;top:3px;bottom:3px;width:1px;background:#d1d5db}
+.fm-q-t{font-size:.72rem;font-weight:800;color:var(--fm-gris)}
+.fm-q-n{font-size:.82rem;font-weight:900;line-height:1.3;overflow-wrap:anywhere}
+.fm-q-e{font-size:.76rem;color:#374151;font-weight:700;overflow-wrap:anywhere}
+.fm-q-v{font-size:.88rem;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.3;white-space:nowrap}
 .fm-q.cli .fm-q-v{color:#15803d}
-.fm-q.cli.nocobra .fm-q-v{color:#1e40af}
-.fm-q-ds{order:6;display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:0}
-.fm-q-det{order:9;flex:1 1 100%;display:flex;flex-direction:column;gap:6px;min-width:0;margin-top:4px;padding-top:6px;border-top:1px dashed var(--fm-borde)}
-.fm-q-det[hidden]{display:none !important}
+.fm-q.cli.nocobra .fm-q-v,.fm-q.ilus .fm-q-v{color:#1e40af}
+.fm-q-ds{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:0}
+.fm-q .fm-lock{margin-top:0;font-size:.7rem}      /* (auditoría: el chip del anexo de la franja a 11 px) */
+.fm-adj-ver{margin-left:auto;display:inline-flex;align-items:center;gap:4px;min-height:30px;padding:0 10px;border:1px dashed #cbd5e1;border-radius:8px;background:#fff;
+  font:inherit;font-size:.72rem;font-weight:800;color:#1d4ed8;cursor:pointer;white-space:nowrap}
+.fm-adj-ver:hover{border-color:#1d4ed8}
+/* el foco se dibuja HACIA ADENTRO (la franja recorta lo que sale de ella con overflow:hidden): borde sólido azul + anillo interior */
+.fm-adj-ver:focus-visible{border-color:#1d4ed8;border-style:solid;box-shadow:inset 0 0 0 2px #1d4ed8;outline:none}
+/* El desglose: una columna por lado (Nos cobró · Cobramos a · ILUS · interno), con cada línea y el documento que la lleva */
+.fm-adj-det{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:8px 18px;padding-top:6px;border-top:1px dashed var(--fm-borde);min-width:0}
+.fm-adj-det[hidden]{display:none !important}
+.fm-q-det{display:flex;flex-direction:column;gap:5px;min-width:0}
+.fm-q-det>*{align-self:flex-start}
+.fm-q-det>.fm-q-l{align-self:stretch}
+.fm-q-dt{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;font-weight:900;color:#374151;overflow-wrap:anywhere}
+.fm-q-dt small{text-transform:none;letter-spacing:0;font-size:.72rem;font-weight:700;color:var(--fm-gris)}
+.fm-q-cu{font-size:.76rem;color:#374151;overflow-wrap:anywhere}
 .fm-q-l{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:.76rem}
 .fm-q-l li{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;min-width:0}
 .fm-q-r{color:#374151;flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
@@ -380,23 +394,23 @@
 .fm-q-av,.fm-q-cost,.fm-q-ok{font-size:.7rem;font-weight:700;border-radius:999px;padding:2px 8px;overflow-wrap:anywhere}
 .fm-q-av{background:var(--fm-ambar-f);color:#78350f}
 .fm-q-cost,.fm-q-ok{background:var(--fm-gris-f);color:#374151}
-.fm-q-det>*{align-self:flex-start}
-.fm-q-det>.fm-q-l{align-self:stretch}
-.fm-q .fm-lock{margin-top:0}
-/* El margen (REGLA #57): la cifra y el % en la segunda línea; el SEMÁFORO es el chip chico de la primera (punto + la banda en una palabra):
-   verde = 20 % o más (objetivo o tolerancia) · ámbar = bajo · rojo = pérdida · gris = sin medir. La frase completa, en su tooltip y en el desglose. */
-.fm-q-mn{order:5;display:inline-flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0}
-.fm-q-mv{font-size:1.08rem;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.25;overflow-wrap:anywhere}
-.fm-q-mp{font-style:normal;font-size:1.08rem;font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--sem-t,#374151)}
-.fm-q-pol{order:2;display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:800;border-radius:999px;padding:2px 8px;
-  background:var(--sem-f,var(--fm-gris-f));color:var(--sem-t,#374151);overflow-wrap:anywhere}
-.fm-q-pol::before{content:"";flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:var(--sem,#9ca3af)}
-.fm-q-cu,.fm-q-frase{font-size:.74rem;color:#374151;overflow-wrap:anywhere}
-.fm-q-frase{font-weight:800}
-.fm-q-m.m-ok,.fm-q-m.m-tol{--sem:#16a34a;--sem-f:var(--fm-verde-f);--sem-t:#14532d}
-.fm-q-m.m-bajo{--sem:#f59e0b;--sem-f:var(--fm-ambar-f);--sem-t:#78350f}
-.fm-q-m.m-rojo{--sem:#dc2626;--sem-f:var(--fm-rojo-f);--sem-t:#991b1b}
-.fm-q-m.m-falta .fm-q-mv{font-size:.86rem;color:#374151}
+/* (en un bloque angosto, un ítem por línea: ver «Bloque angosto» más abajo) */
+
+/* ═══ v6 · 2026-10-29 · «La cuenta» vuelve a abrir con las TRES cifras grandes de antes (Cobramos · Nos cobraron · GANAMOS con su %) ═══════════════════
+   El GANAMOS es el protagonista: lleno con el color de su banda de la REGLA #57 (verde desde la tolerancia, 20 %; objetivo 30 % · ámbar bajo la
+   tolerancia · rojo en pérdida). El verde lleno es #15803d (no #16a34a) para que el texto blanco cumpla el contraste AA; lo cobrado lleva el mismo verde
+   de «Cobramos a» y de la columna «Cobramos». Sin margen que medir, el rectángulo es gris claro con texto oscuro (nunca blanco sobre gris). */
+.fm-res-i.co b{color:#15803d}
+.fm-cta.c-ok .fm-res-i.q,.fm-cta.c-tol .fm-res-i.q{background:#15803d}
+.fm-cta.c-info .fm-res-i.q{background:#2563eb}
+.fm-cta.c-gris .fm-res-i.q{background:var(--fm-gris-f);color:#374151;box-shadow:inset 0 0 0 1px #d1d5db}
+/* Auditoría Impeccable (2026-10-29): los rótulos de las tres cifras a 11 px y con contraste AA: gris #4b5563 sobre el gris claro (el #6b7280 daba 4,4:1) y
+   blanco pleno sobre el color lleno (el blanco al 92 % sobre el rojo de «Perdimos» daba 4,3:1) y, sobre el ámbar, el mismo café oscuro de la cifra (el
+   #78350f daba 4,2:1). */
+.fm-res-i small{font-size:.7rem;color:#4b5563}
+.fm-res-i.q small{color:#fff}
+.fm-cta.c-bajo .fm-res-i.q small,.fm-cta.c-ambar .fm-res-i.q small{color:#422006}
+.fm-cta.c-gris .fm-res-i.q small{color:#4b5563}
 .fm-cta.c-tol{--c:#16a34a}
 /* Un botón por acción: el recorrido y el rechazo enlazan al botón único (no lo repiten) y este se resalta un momento al llegar */
 .fm-ir{display:inline-flex;align-items:center;gap:5px;min-height:28px;font-size:.74rem;font-weight:800;color:#1d4ed8;text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
@@ -446,6 +460,11 @@
   .fm-st td.fm-d{grid-column:1 / -1}
   .fm-st td.fm-n{text-align:left;padding-left:0}
   .fm-st td.fm-n::before{content:attr(data-l);display:block;white-space:normal;line-height:1.15;font-size:.58rem;text-transform:uppercase;letter-spacing:.04em;color:var(--fm-gris);font-weight:800}
+  /* 2026-10-29 (v6): la franja «¿Quién se adjudica el dinero?», un ítem por línea (separados por una línea punteada, no por la barra) */
+  .fm-q,.fm-adj-t{flex:1 1 100%}
+  .fm-q+.fm-q{padding-top:5px;border-top:1px dashed var(--fm-borde)}
+  .fm-q::before{display:none}
+  .fm-adj-ver{margin-left:0}
 }
 
 /* Celular (390 px): botones táctiles de 44 px, sin scroll horizontal */
