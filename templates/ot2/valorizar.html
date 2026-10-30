@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Valorizar en lote · ILUS Fitness{% endblock %}
+
+{#
+  🧮 2026-10-29 (REGLA #60 — Daniel: «Necesito que TODO sea VALORIZADO. Si no está valorizado por el usuario, TÚ lo SUGIERES: busca en las
+  COTIZACIONES cuál es el precio más acorde… Trabajos internos también valorizados para saber cuánto se nos escapa»).
+  Solo superadmin. Las OT que NO se cobran (garantía, regalía, arriendo/leasing, cortesía, contrato, trabajo interno) y todavía no tienen
+  valorizado, cada una con el valor que sugieren las cotizaciones (escalera A–E de ot_valorizar.py), su rango, su confianza y su fuente.
+    · Nada viene marcado. «Revisar» solo lee (vuelve a pedir la sugerencia); «Aplicar las seleccionadas» pide confirmación con cuántas y el
+      total, y guarda de a 3 a la vez por POST /ot/api/<vid>/valorizacion-aplicar, que RECALCULA cada una en el servidor antes de escribir:
+      si la sugerencia cambió, esa OT no se toca y queda en ámbar.
+    · Tabla como Etiquetas (REGLA #4.3), «Seleccionar/deseleccionar todo» como interruptor (REGLA #14), nombres completos (REGLA #15),
+      tarjetas en el celular (REGLA #3), sin alert/confirm/prompt nativos (REGLA #1).
+    · «Dejamos de cobrar» y «Se nos escapa en internos» son el valorizado de lo que NO se cobró: nunca se mezclan con «Nos costó» (la caja).
+#}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_valorizar.css') }}">
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-calculator me-2"></i>Valorizar en lote</h4>
+    <div class="sub">Las OT que no se cobran y aún no tienen valor de referencia, con lo que sugieren las cotizaciones.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('ot_gerencial_pagina') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-bullseye me-1"></i>Costeo de OT</a>
+    <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+  </div>
+</div>
+
+<div class="vzl" id="vzl">
+  <div class="vzl-nota" role="note">
+    <b>Cómo funciona.</b> Para cada OT el sistema busca el precio más parecido: primero la cotización de esa misma OT, después cotizaciones
+    del mismo cliente, luego de la misma región o del país, luego OT cobradas parecidas y, al final, la tarifa del cotizador. Montos netos;
+    el traslado va aparte. <b>Nada viene marcado y nada se guarda solo:</b> eliges las OT, revisas y confirmas. Antes de guardar, el servidor
+    vuelve a calcular cada una; si su sugerencia cambió, no se toca. El valorizado es solo referencia: nunca se suma a lo cobrado.
+  </div>
+
+  <div class="vzl-kpis" id="vzlKpis" aria-live="polite">
+    <div class="vzl-kpi dejamos"><div class="t">Dejamos de cobrar</div><div class="v" id="vzlKpiDejamos">…</div>
+      <div class="s" id="vzlKpiDejamosS">Valorizado de lo que no se cobró, en el período.</div></div>
+    <div class="vzl-kpi"><div class="t">Se nos escapa en internos</div><div class="v" id="vzlKpiInternos">…</div>
+      <div class="s" id="vzlKpiInternosS">Valor de los trabajos internos del período.</div></div>
+    <div class="vzl-kpi"><div class="t">Por valorizar</div><div class="v" id="vzlKpiPor">…</div>
+      <div class="s" id="vzlKpiPorS">OT sin valor de referencia y lo que sugieren las cotizaciones.</div></div>
+  </div>
+
+  <div class="vzl-filtros">
+    <label>Período
+      <select id="vzlPeriodo" aria-label="Período">
+        <option value="todo" selected>Todo el historial</option>
+        <option value="semana">Esta semana</option>
+        <option value="mes">Este mes</option>
+        <option value="mes_anterior">Mes anterior</option>
+        <option value="trimestre">Este trimestre</option>
+        <option value="rango">Rango de fechas</option>
+      </select></label>
+    <label id="vzlDesdeL" hidden>Desde <input type="date" id="vzlDesde" aria-label="Desde"></label>
+    <label id="vzlHastaL" hidden>Hasta <input type="date" id="vzlHasta" aria-label="Hasta"></label>
+    <label>Estado
+      <select id="vzlEstado" aria-label="Estado de la OT">
+        <option value="cerradas" selected>Cerradas</option>
+        <option value="abiertas">Abiertas</option>
+        <option value="todas">Todas</option>
+      </select></label>
+    <label>Cobertura
+      <select id="vzlCobertura" aria-label="Cobertura">
+        <option value="" selected>Todas</option>
+        <option value="garantia">Garantía</option>
+        <option value="regalia">Regalía</option>
+        <option value="arriendo_leasing">Arriendo o leasing</option>
+        <option value="sin_costo">Cortesía</option>
+        <option value="contrato">Mantención de contrato</option>
+        <option value="interno">Trabajo interno</option>
+        <option value="cubierta">Desinstalación cubierta</option>
+      </select></label>
+    <label>Confianza
+      <select id="vzlConfianza" aria-label="Confianza">
+        <option value="" selected>Todas</option>
+        <option value="alta">Alta</option>
+        <option value="media">Media</option>
+        <option value="baja">Baja</option>
+      </select></label>
+    <label class="q">Buscar
+      <input type="search" id="vzlQ" placeholder="N° de OT, cliente o tipo" aria-label="Buscar"></label>
+    <label>Por página
+      <select id="vzlPor" aria-label="OT por página">
+        <option value="25">25 por página</option><option value="50" selected>50 por página</option>
+        <option value="100">100 por página</option><option value="200">200 por página</option>
+      </select></label>
+    <label>Descartadas
+      <select id="vzlDesc" aria-label="Sugerencias descartadas">
+        <option value="" selected>Ocultarlas</option><option value="1">Mostrarlas</option>
+      </select></label>
+  </div>
+
+  <div class="vzl-bar">
+    <button type="button" class="vzl-btn" id="vzlTodo"><i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo</button>
+    <button type="button" class="vzl-btn" id="vzlAlta"><i class="bi bi-patch-check"></i><span>Marcar las de confianza alta</span></button>
+    <span class="vzl-sel" id="vzlSel"></span>
+    <button type="button" class="vzl-btn dark" id="vzlRevisar" disabled><i class="bi bi-search"></i>Revisar las seleccionadas</button>
+    <button type="button" class="vzl-btn red" id="vzlAplicar" disabled><i class="bi bi-check2-circle"></i><span>Aplicar las seleccionadas</span></button>
+    <button type="button" class="vzl-btn" id="vzlRecargar"><i class="bi bi-arrow-clockwise"></i>Actualizar</button>
+  </div>
+  <div class="vzl-prog" id="vzlProg"><i></i></div>
+  <div class="vzl-aviso" id="vzlAviso" role="status" aria-live="polite" hidden></div>
+
+  <div class="vzl-wrap">
+    <table class="vzl-t">
+      <thead><tr><th class="ck"><span class="visually-hidden">Seleccionar</span></th><th>OT</th><th>Cliente</th><th>Equipos</th>
+        <th class="n">Sugerido</th><th>Confianza y fuente</th><th>Estado</th></tr></thead>
+      <tbody id="vzlBody"><tr><td colspan="7" class="vzl-vacio">Cargando…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="vzl-pie" id="vzlPie"></div>
+</div>
+
+<script src="{{ url_for('static', filename='ot_valorizar_lote.js') }}"></script>
+{% endblock %}

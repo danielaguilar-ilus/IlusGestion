@@ -5056,6 +5056,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             vista en el bloque único. La franja del Paso 2 solo existe en la tarjeta de edición, que una OT CERRADA no dibuja; y es justo ahí
             donde el superadmin la corrige con el anexo firmado («Corregir con el anexo»). Un técnico no llega acá (`not es_tecnico`). -#}
         {% if anexo_vinculo %}{{ anexo_franja(anexo_vinculo, 'otdAnexoVinculoFicha', v.id, permissions and permissions.superadmin, '10px 0 0') }}{% endif %}
+        {#- 🧮 2026-10-29 (REGLA #60, Daniel: «si no está valorizado por el usuario, TÚ lo SUGIERES: busca en las COTIZACIONES»): el valor
+            sugerido en UNA línea (confianza con semáforo chico y su fuente); el detalle se abre con un clic. Junto a «Lo justo según el
+            cotizador» (en «Editar cobro y costos»), que se conserva. Si la OT se cobra solo informa («cobramos X; el mercado sugiere Y»).
+            «Usar este valor / Editar / Descartar» solo para el superadministrador: el servidor lo exige, recalcula y decide el rótulo.
+            Vive fuera de .fm (el motor la repinta entera) y también en una OT CERRADA. Lee /ot/api/<vid>/valorizacion-sugerida. -#}
+        <link rel="stylesheet" href="{{ url_for('static', filename='ot_valorizar.css') }}">
+        <script src="{{ url_for('static', filename='ot_valorizar.js') }}" defer></script>
+        <div class="vz" id="otdValSug" data-val-sug data-vid="{{ v.id }}" data-numero="{{ v.numero_ot or '' }}"
+             data-sa="{{ '1' if (permissions and permissions.superadmin) else '0' }}" aria-live="polite"></div>
         {# Antes vivía al pie de la tarjeta «Finanzas de la OT». 2026-10-08: sube al bloque único (mismo id, mismo texto,
            lo sigue actualizando otdGuardarFinanzas). #}
         <div class="otd-warn otd-fin-faltan" id="otdFinFaltan" {% if not (finanzas and finanzas.faltan) %}hidden{% endif %}>
@@ -9986,7 +9995,10 @@ window.otdFinToggleDesglose = function(forzar){
   const _VAL_FUENTE_TXT = {dato_antiguo: 'del «Precio al cliente» anotado antes', documento: 'del documento',
     zz: 'del documento', doc_total: 'del total del documento', estimado: 'del estimado por clasificación',
     interno: 'del valor interno', cotizador: 'del cotizador', cotizacion: 'de la cotización',
-    contrato: 'del contrato', a_mano: 'escrito a mano', supuesto: 'escrito a mano', manual: 'escrito a mano'};
+    contrato: 'del contrato', a_mano: 'escrito a mano', supuesto: 'escrito a mano', manual: 'escrito a mano',
+    /* 🧮 2026-10-29 (REGLA #60): la valorización sugerida desde las cotizaciones (solo la escribe el servidor). */
+    cotiz_propia: 'de la cotización de esta OT', cotiz_cliente: 'de cotizaciones del cliente',
+    cotiz_comparable: 'de cotizaciones comparables', ot_comparable: 'de OT cobradas comparables'};
   function _pintarValRef(r){
     const ref = document.getElementById('otdFinValRef');
     if (!ref || !elValorizado) return;

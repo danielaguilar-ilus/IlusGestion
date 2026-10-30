@@ -40,6 +40,10 @@ CASOS = [
     dict(tipo="preventiva", contrato_real=1, zz_monto=50000, valor_origen="zz", costo_proveedor=20000),
     dict(modalidad_cobro="sin_costo", costo_proveedor=10000),
     dict(cubierto_por="garantia", valorizado_clp=180000, valorizado_fuente="cotizador", costo_proveedor=100000),
+    # 2026-10-29 (REGLA #60): las fuentes de la valorización sugerida viajan igual en las dos cuentas (y nunca suman a lo cobrado).
+    dict(cubierto_por="garantia", valorizado_clp=600000, valorizado_fuente="cotiz_cliente", costo_proveedor=100000),
+    dict(modalidad_cobro="interno", cliente_id=None, valorizado_clp=250000, valorizado_fuente="ot_comparable", costo_proveedor=0),
+    dict(zz_monto=100000, valor_origen="zz", costo_proveedor=40000, valorizado_clp=150000, valorizado_fuente="cotiz_comparable"),
     dict(modalidad_cobro="garantia"),
     dict(zz_monto=100000, valor_origen="zz", costo_proveedor=40000, costo_despacho=0, _rep=True),
     dict(zz_monto=99999, valor_origen="cotizacion", zz_envio_monto=12345, costo_proveedor=33333, costo_despacho=4444),
