@@ -36,6 +36,7 @@
 {% block head_extra %}
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_gerencial.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_costeo_explorar.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_costeo_calidad.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -65,6 +66,8 @@
 <nav class="cx-pestanas" role="tablist" aria-label="Vistas del costeo">
   <button type="button" role="tab" class="cx-pest on" id="gcPestResumen" aria-selected="true" aria-controls="gcApp" data-gc-pestana="resumen"><i class="bi bi-clipboard-data"></i>Resumen</button>
   <button type="button" role="tab" class="cx-pest" id="gcPestExplorar" aria-selected="false" aria-controls="cxApp" data-gc-pestana="explorar"><i class="bi bi-funnel"></i>Explorar</button>
+  {# 🧹 2026-10-29 (Daniel, FASE 2): «Calidad de datos» — lo que hay que depurar, con el camino que ya existe para arreglarlo. #}
+  <button type="button" role="tab" class="cx-pest" id="gcPestCalidad" aria-selected="false" aria-controls="cqApp" data-gc-pestana="calidad"><i class="bi bi-clipboard-check"></i>Calidad de datos</button>
 </nav>
 
 <div class="gc" id="gcApp" role="tabpanel" aria-labelledby="gcPestResumen">
@@ -484,9 +487,18 @@
   <div class="cx-cargando" role="status"><i class="bi bi-hourglass-split"></i><span>Cargando las OT del período…</span></div>
   <noscript><div class="cx-vacio">Esta vista necesita JavaScript para cruzar los filtros. El «Resumen» funciona sin él.</div></noscript>
 </section>
+
+{# 🧹 Calidad de datos (2026-10-29, REGLA #59): el contenido lo dibuja ot_costeo_calidad.js con /ot/api/costeo/calidad. Solo lectura:
+   «Arreglar» es un enlace al camino que ya existe (Finanzas por reparar, Regularizar, Saldo de facturas o la OT). #}
+<section class="cx cq" id="cqApp" role="tabpanel" aria-labelledby="gcPestCalidad" hidden
+         data-url="{{ url_for('ot_costeo_calidad') }}" data-ot="{{ url_for('ot2_detalle', vid=0) }}">
+  <div class="cx-cargando" role="status"><i class="bi bi-hourglass-split"></i><span>Revisando la calidad de los datos…</span></div>
+  <noscript><div class="cx-vacio">Esta vista necesita JavaScript. El «Resumen» funciona sin él.</div></noscript>
+</section>
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='ot_gerencial.js') }}"></script>
+<script src="{{ url_for('static', filename='ot_costeo_calidad.js') }}"></script>
 <script src="{{ url_for('static', filename='ot_costeo_explorar.js') }}"></script>
 {% endblock %}

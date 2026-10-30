@@ -125,5 +125,11 @@
   raiz.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && e.target.closest('.pp-bar')) { leerFiltros(); page = 1; cargar(); }
   });
+  /* 2026-10-29 (REGLA #59, Calidad de datos): el botón «Arreglar» llega con ?falta=factura&cliente_q=… y la bandeja abre ya filtrada.
+     Solo filtra (el servidor valida cada filtro); un enlace raro no rompe nada. */
+  try {
+    var u = new URLSearchParams(window.location.search || '');
+    ['falta', 'cliente_q', 'estado', 'creador', 'mes'].forEach(function (k) { if (u.get(k)) f[k] = String(u.get(k)).slice(0, 120); });
+  } catch (e) { /* sin filtros del enlace */ }
   cargar();
 })();
