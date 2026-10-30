@@ -698,12 +698,16 @@ class TestTelefono(unittest.TestCase):
         self.assertIn("¿Qué le pasa a ", barra)
         self.assertIn("Te ayudo a decidir qué hacer", barra)
         self.assertIn("(inter ? 'este producto' : 'este equipo')", barra)
-        self.assertLess(barra.index("oa-diag"), barra.index('class="oa-grid"'))                      # primero, antes de los demás
-        self.assertLess(barra.index("Fuera de lo normal"), barra.index("oa-diag"))                    # dentro de «Fuera de lo normal»
+        # las tres marcas son HTML que de verdad se dibuja (no los comentarios que lo nombran); la grilla lleva el sufijo `plg` del celular
+        i_etiqueta = barra.index("Fuera de lo normal</div>")
+        i_diag = barra.index('class="oa-btn oa-diag"')
+        i_grilla = barra.index("(g.length ? '<div class=\"oa-grid' + plg")
+        self.assertLess(i_diag, i_grilla)                                                             # primero, antes de los demás
+        self.assertLess(i_etiqueta, i_diag)                                                           # dentro de «Fuera de lo normal»
         for accion in ("'fs'", "'baja'", "'nollego'", "'noesta'", "'incidencia'", 'data-f="pedir"'):  # los otros cinco siguen
             self.assertIn(accion, barra, accion)
         self.assertIn("oa-primary", barra)                                                           # el pulso se queda en «Pedir repuesto»
-        self.assertNotIn("oa-primary", barra[barra.index("oa-diag"):barra.index('class="oa-grid"')])
+        self.assertNotIn("oa-primary", barra[i_diag:i_grilla])
         self.assertIn("var puedeDiag = !bj && !nlTotal && !np && (p.ped || g.length > 0);", barra)
 
     def test_boton_compacto_en_el_computador_y_grande_en_el_celular(self):
