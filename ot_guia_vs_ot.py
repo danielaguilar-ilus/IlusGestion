@@ -23,13 +23,35 @@ Reglas (decididas aquí, ajustables):
   · Los equipos de una OT solo se esperan en una guía si la OT ENTREGA productos (instalación, cambio de equipo); en una
     mantención los equipos son del cliente y solo cuentan sus repuestos. Ver TIPOS_EQUIPOS_SALEN.
 Nada de montos (ni el «valor» que trae Check): esto lo ve la gestión, pero no es plata (REGLAS #19/#26).
-"""
-import math
 
+2026-10-29 (tarde) — CHECK TIENE LA ÚLTIMA PALABRA. Daniel: «es Check quien nos tiene que dar la ÚLTIMA PALABRA y avisar de
+posibles descuadres en caso de que se haya hecho guía y en el WMS no haya salido, pero algo POCO: no quiero ser un analista de
+inventario, solamente ver si hay diferencias con la orden de trabajo. Ejemplo: hice una OT por 10 productos, pero en realidad
+salieron 8: tiene que haber una alerta.» Y «si hay diferencia, dame una ALERTA, así sea POR CORREO».
+Comparación a TRES BANDAS (tres_bandas): la OT ↔ la guía (Random) ↔ Check (lo que bodega expidió). Tres reglas, pocas y sin ruido:
+  A  la guía no cuadra con la OT (lo de siempre: códigos de ESTADOS);
+  B  Check expidió MENOS de lo que la OT gestiona y la guía dice que salió («la OT gestiona 10; Check informa que salieron 8»);
+  C  hay guía y Check no registra que haya salido, pasado el plazo de gracia (GRACIA_DIAS_HABILES desde la fecha de la guía).
+Sin información de Check (no respondió, no tiene el documento, no informa ese producto) NO se alerta: no se puede saber. Mientras
+bodega prepara (dentro del plazo, con Check todavía esperando expedir) se ve en ámbar pero no se guarda ni suena.
+"""
+import datetime as _dt
+import hashlib
+import math
+import re
+
+import cl_feriados as _clf            # REGLA #31: la ÚNICA fuente de feriados de Chile (días hábiles del plazo de gracia)
 import retiros_check as _rck          # MISMA lectura de las cantidades de Check que Retiros (cubetas / acumulado)
 import retiros_check_ot as _rco       # movimientos (OT de Check): quién, cuándo, en qué estado
 
 TIPO_AVISO = "ot_guia_diferencia"     # tipo de la campana (va AL FINAL del ENUM de mant_notificaciones)
+CORREO_CLAVE = "ot_guia_diferencia"   # clave del correo interno en comm_correos_registro.py (REGLA #33)
+COD_A = ("salio_y_no_esta_en_la_OT", "esta_en_la_OT_y_no_salio", "cantidad_distinta")   # regla A: guía vs OT
+COD_B = "check_expidio_menos"         # regla B: Check expidió menos de lo que la OT gestiona (y la guía dice que salió)
+COD_C = "guia_sin_salida_check"       # regla C: hay guía y Check no registra la salida, pasado el plazo de gracia
+GRACIA_DIAS_HABILES = 3               # días hábiles (L-V sin feriados) desde la fecha de la guía antes de acusar algo a Check
+DETALLE_TOTAL = "TOTAL"               # regla B cuando Check no informa por producto: se comparan los totales
+TODOS = "*"                           # en `evaluados`: todo lo de ese código quedó revisado en esta lectura
 TIPOS_EQUIPOS_SALEN = ("instalacion", "cambio_equipo")
 ESTADOS = ("coincide", "salio_y_no_esta_en_la_OT", "esta_en_la_OT_y_no_salio", "cantidad_distinta")
 ESTADO_TXT = {
@@ -247,6 +269,7 @@ def comparar(guias, gestionados, otras_ot=None, es_servicio=None, no_comparados=
         es_dif = estado != "coincide" and ((falta - falta_expl) > _EPS or (sobra - sobra_expl) > _EPS)
         guias_k = list((salio.get(k) or {}).get("guias") or [])
         p = {"sku": sku, "sku_norm": k, "nombre": nombre or sku, "salio": _red(s), "gestiona": _red(gq),
+             "declarada": _red(decl),     # 2026-10-29: lo que la OT ya dijo que no llegó (no se le pide a Check)
              "falta": _red(falta), "sobra": _red(sobra), "estado": estado, "estado_txt": ESTADO_TXT[estado],
              "es_diferencia": bool(es_dif), "guias": guias_k,
              "por_guia": {n: _red(q) for n, q in ((salio.get(k) or {}).get("por_guia") or {}).items()},
@@ -383,8 +406,9 @@ def _veredicto(out, salio, gest):
 
 
 # ───────────────────────────── hallazgos persistentes y campana ─────────────────────────────
-def hallazgos(comp):
-    """Las diferencias que quedan registradas: una por producto (clave OT + código + SKU). Sin diferencias → []."""
+def hallazgos(comp, tb=None):
+    """Las diferencias que quedan registradas: una por producto (clave OT + código + SKU) y, con la lectura de Check
+    (`tb` = tres_bandas), las de las reglas B (por SKU o «TOTAL») y C (por guía). Sin diferencias → []."""
     out = []
     for p in (comp or {}).get("productos") or []:
         if not p.get("es_diferencia"):
@@ -395,14 +419,33 @@ def hallazgos(comp):
                     "texto": (f"{p['nombre']} ({p['sku']}): {t}" if p.get("sku") and p["sku"] != p["nombre"]
                               else f"{p['nombre']}: {t}")[:500],
                     "guias": ", ".join(f"GDV {n}" for n in p.get("guias") or [])[:200]})
+    out.extend(dict(h) for h in ((tb or {}).get("hallazgos") or []))
     return out
 
 
-def plan_hallazgos(actuales, previas):
+def alcance(comp, tb=None):
+    """Qué hallazgos guardados se pueden dar por RESUELTOS con esta lectura → (evaluados, todo).
+    Los de la regla A (guía vs OT) se revisan siempre que Random respondió. Los de B y C solo si Check se leyó para eso
+    (`tb["evaluados"]`): una lectura rápida sin Check, o con Check caído, NUNCA resuelve un descuadre a ciegas.
+    `todo` = la OT ya no tiene nada que comparar (sin guía viva o sin productos gestionados): no puede quedar ningún hallazgo."""
+    comp = comp or {}
+    if comp.get("estado") == "sin_datos":
+        return [], True
+    return [tuple(e) for e in ((tb or {}).get("evaluados") or [])], False
+
+
+def plan_hallazgos(actuales, previas, evaluados=None, todo=False):
     """Qué hacer con la tabla de hallazgos (que NUNCA se borra). `actuales`: {(codigo, detalle): hallazgo} de esta lectura;
     `previas`: filas guardadas [{id, codigo, detalle, estado, texto, notificada_el}].
+    `evaluados` (salida de alcance): los hallazgos de Check (B y C) que esta lectura SÍ revisó; un (código, "*") = todos los
+    de ese código. Lo que no se revisó no se resuelve (Check pudo no responder). Los de la regla A se revisan siempre.
     → {insertar, reabrir, actualizar, resolver, avisar}. Se avisa UNA sola vez por hallazgo (si el aviso anterior no
     alcanzó a salir —notificada_el vacío— se reintenta)."""
+    ev = {tuple(e) for e in (evaluados or [])}
+
+    def revisado(k):
+        return todo or k[0] in COD_A or k in ev or (k[0], TODOS) in ev
+
     por_clave = {(r.get("codigo"), r.get("detalle")): r for r in (previas or [])}
     plan = {"insertar": [], "reabrir": [], "actualizar": [], "resolver": [], "avisar": []}
     for k, h in (actuales or {}).items():
@@ -418,22 +461,53 @@ def plan_hallazgos(actuales, previas):
         if not r.get("notificada_el"):
             plan["avisar"].append(h)
     for k, r in por_clave.items():
-        if k not in (actuales or {}) and r.get("estado") == "vigente":
+        if k not in (actuales or {}) and r.get("estado") == "vigente" and revisado(k):
             plan["resolver"].append(r)
     return plan
+
+
+def _hay_check(lista):
+    return any((h.get("codigo") in (COD_B, COD_C)) for h in (lista or []))
 
 
 def texto_campana(numero_ot, cliente, lista):
     """(título, cuerpo) de la campana a la gestión: tono amable, sin montos y sin culpar a nadie."""
     n = len(lista or [])
-    titulo = f"{numero_ot}: {n} {_plural(n, 'diferencia', 'diferencias')} entre la guía de despacho y la OT"
+    con_check = _hay_check(lista)
+    titulo = (f"{numero_ot}: {n} {_plural(n, 'diferencia', 'diferencias')} entre la OT y lo que salió (guía y Check)" if con_check
+              else f"{numero_ot}: {n} {_plural(n, 'diferencia', 'diferencias')} entre la guía de despacho y la OT")
     textos = [(h.get("texto") or "").rstrip(" .") for h in (lista or [])][:MAX_EN_TEXTO]
-    cuerpo = (f"{cliente + ' · ' if cliente else ''}Al revisar la trazabilidad, lo que salió en la guía no calza del todo con "
-              f"lo que gestiona la OT: " + " · ".join(textos))
+    cuerpo = (f"{cliente + ' · ' if cliente else ''}Al revisar la trazabilidad, lo que salió "
+              + ("(según la guía y lo que informa Check) " if con_check else "en la guía ")
+              + "no calza del todo con lo que gestiona la OT: " + " · ".join(textos))
     if n > MAX_EN_TEXTO:
         cuerpo += f" · y {n - MAX_EN_TEXTO} más"
-    cuerpo += ". Puedes verlo en «Trazabilidad en Random» de la OT (botón «Ver logística» de la guía)."
+    cuerpo += ". Puedes verlo en «Trazabilidad en Random» de la OT: toca la guía de despacho para ver todos los movimientos."
     return titulo[:200], cuerpo[:1500]
+
+
+def huella(texto):
+    """Huella corta de un texto de hallazgo: el correo sale UNA vez por hallazgo y otra vez solo si la diferencia cambia."""
+    return hashlib.sha1(" ".join(str(texto or "").split()).encode("utf-8")).hexdigest()[:40]
+
+
+def texto_correo(numero_ot, cliente, lista):
+    """(título, cuerpo) del CORREO INTERNO a la gestión de la OT (Daniel: «si hay diferencia, dame una ALERTA, así sea por
+    correo»). Corto y con números («la OT gestiona 10; Check informa que salieron 8»), sin montos ni proveedores, y nunca al
+    cliente ni a un técnico (eso lo asegura app.py: solo _hall_destinos, sin técnicos). El cuerpo es texto: la puerta lo escapa."""
+    lista = [h for h in (lista or []) if (h.get("texto") or "").strip()]
+    n = len(lista)
+    titulo = (f"{numero_ot}: {n} {_plural(n, 'diferencia', 'diferencias')} entre la OT y lo que salió de bodega" if _hay_check(lista)
+              else f"{numero_ot}: {n} {_plural(n, 'diferencia', 'diferencias')} entre la guía de despacho y la OT")
+    lineas = ["• " + (h.get("texto") or "").strip() for h in lista[:12]]
+    if n > 12:
+        lineas.append(f"• y {n - 12} más (están en la OT)")
+    cuerpo = (f"{numero_ot}{' · ' + cliente if cliente else ''}\n\n"
+              "Al revisar lo que salió de bodega (la guía de despacho en Random y lo que informa Check), esto no cuadra con lo "
+              "que gestiona la orden de trabajo:\n" + "\n".join(lineas) + "\n\n"
+              "Míralo en la OT, tarjeta «Trazabilidad en Random»: toca la guía de despacho para ver qué salió y qué no. "
+              "Si la diferencia se corrige, el aviso se cierra solo.")
+    return titulo[:200], cuerpo[:3000]
 
 
 # ───────────────────────────── CheckWMS (bodega): qué se fue físicamente ─────────────────────────────
@@ -536,21 +610,38 @@ def cruzar_bodega(lineas_guia, bod):
     return out
 
 
-def semaforo_guia(comp, num, bod=None, pendiente=False):
+def semaforo_guia(comp, num, bod=None, pendiente=False, tb=None):
     """La LÍNEA RESUMEN de una guía dentro de «Trazabilidad en Random» (Daniel, 29-oct: «quiero a Check en este reporte…
     todo bien resumido»): un semáforo chico y una frase que junta la guía frente a la OT y lo que bodega (Check) expidió.
       verde = salió todo lo gestionado (la guía cuadra con la OT y bodega lo expidió todo);
       ámbar = falta o sobra algo (en la guía frente a la OT, o bodega no ha expedido todo lo de la guía);
       gris  = sin información de bodega (Check) o sin datos para comparar.
     `bod`: salida de bodega() (None = todavía no se le preguntó a Check; `pendiente` = se está preguntando).
+    `tb` (2026-10-29, Check tiene la última palabra): salida de tres_bandas(); si trae esta guía, su parte de bodega manda
+    (plazo de gracia, «Check no registra la salida», «Check informa que salieron 8»).
     → {color, texto, comparacion, bodega, pendiente}."""
+    tbg = ((tb or {}).get("por_guia") or {}).get(str(num))
+    if tbg and bod is not None and bod.get("estado") == "ok":
+        base = semaforo_guia(comp, num, None)
+        ccol, ctxt = base["comparacion"], base["texto"]
+        bcol, btxt = tbg.get("color") or "gris", tbg.get("texto") or ""
+        if ccol == "ambar" or bcol == "ambar":
+            color = "ambar"
+        elif ccol == "verde" and bcol == "verde":
+            color, ctxt = "verde", "Salió todo lo gestionado"
+        else:
+            color = "gris"
+        return {"color": color, "texto": ctxt + (" · " + btxt if btxt else ""), "comparacion": ccol, "bodega": bcol,
+                "pendiente": False, "check": tbg.get("estado") or ""}
     comp = comp or {}
     pg = (comp.get("por_guia") or {}).get(str(num)) or {}
     ccol = pg.get("color") or ("gris" if comp.get("estado") != "diferencias" else "ambar")
     if comp.get("estado") == "sin_lectura":
         ccol, ctxt = "gris", "Random no respondió"
     elif ccol == "verde":
-        ctxt = "Salió lo que gestiona la OT"
+        # 2026-10-29 (auditoría): «Salió lo que gestiona la OT» contradecía a Check cuando bodega expidió menos; lo que esta
+        # mitad afirma es solo el PAPEL (la guía de Random). Lo que salió de verdad lo dice la mitad de Check.
+        ctxt = "La guía cuadra con la OT"
     elif ccol == "ambar":
         n = int(pg.get("n_dif") or 0)
         if n:
@@ -621,3 +712,320 @@ def movimientos(filas_todas, docs, edad_min=None, max_ot=8):
         vistos.add(k)
         unicas.append(o)
     return {"estado": "ok", "ots": unicas[:max_ot], "mas": max(len(unicas) - max_ot, 0), "edad_min": edad_min, "texto": ""}
+
+
+# ═════════════════ 2026-10-29 (tarde): TRES BANDAS — la OT ↔ la guía (Random) ↔ Check (lo que bodega expidió) ═════════════════
+# Daniel: «es Check quien nos tiene que dar la ÚLTIMA PALABRA… algo POCO: no quiero ser un analista de inventario, solamente ver
+# si hay diferencias con la orden de trabajo. Ejemplo: hice una OT por 10 productos, pero en realidad salieron 8».
+def fecha_de(x):
+    """'08/10/2026', '2026-10-08', date o datetime → date. None si no se entiende (nunca se adivina)."""
+    if isinstance(x, _dt.datetime):
+        return x.date()
+    if isinstance(x, _dt.date):
+        return x
+    s = str(x or "").strip()
+    try:
+        m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})", s)
+        if m:
+            return _dt.date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})", s)
+        if m:
+            return _dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+    return None
+
+
+def fecha_txt(d):
+    return d.strftime("%d/%m/%Y") if d else ""
+
+
+def vence_el(fecha, dias=GRACIA_DIAS_HABILES):
+    """El día hábil número `dias` DESPUÉS de la fecha de la guía (lunes a viernes sin feriados de Chile: cl_feriados, REGLA
+    #31). Desde ese día, si Check sigue sin expedir, se alerta. Guía del jueves 08/10/2026 → miércoles 14/10/2026 (el lunes 12
+    es feriado). None si la fecha no se entiende."""
+    f = fecha_de(fecha)
+    if not f:
+        return None
+    d, n = f, 0
+    for _ in range(60):
+        d += _dt.timedelta(days=1)
+        if _clf.es_dia_habil(d):
+            n += 1
+            if n >= dias:
+                return d
+    return d
+
+
+def en_plazo(fecha, hoy, dias=GRACIA_DIAS_HABILES):
+    """¿La guía sigue dentro del plazo de gracia (bodega puede estar preparando)? Sin fecha o sin «hoy» → True: no se acusa
+    a ciegas."""
+    v, h = vence_el(fecha, dias), fecha_de(hoy)
+    if not v or not h:
+        return True
+    return h < v
+
+
+def check_por_sku(bodegas):
+    """Lo que Check dice que salió, por SKU, juntando las guías SIN contar dos veces un mismo documento de Check (dos guías
+    que salieron de la misma factura y Check solo tiene la factura: se cuenta una vez). Si Check informa por la guía Y por la
+    factura, por SKU se toma el MAYOR de los dos (nunca la suma: sería el mismo producto contado dos veces).
+    → {por_sku: {sku_norm: {pedidas, despachadas}}, sin_sku: bool (alguna línea de Check sin código → se compara el total),
+       pedidas, despachadas (totales), fuentes} o None si Check no informó nada usable."""
+    fuentes = {}
+    for num, b in (bodegas or {}).items():
+        if not b or b.get("estado") != "ok" or b.get("malo"):
+            continue
+        fuentes.setdefault(b.get("fuente") or f"GDV {num}", b)
+    if not fuentes:
+        return None
+    grupos, tot, sin_sku = {"guia": {}, "otro": {}}, {"guia": [0.0, 0.0], "otro": [0.0, 0.0]}, False
+    for f, b in fuentes.items():
+        g = "guia" if str(f).upper().startswith("GDV ") else "otro"
+        for l in b.get("lineas") or []:
+            p, d = cantidad(l.get("pedidas")), cantidad(l.get("despachadas"))
+            tot[g][0] += p
+            tot[g][1] += d
+            k = norm_sku(l.get("sku"))
+            if not k:
+                sin_sku = True
+                continue
+            x = grupos[g].setdefault(k, {"pedidas": 0.0, "despachadas": 0.0})
+            x["pedidas"] += p
+            x["despachadas"] += d
+    por = {}
+    for k in set(grupos["guia"]) | set(grupos["otro"]):
+        a, b = grupos["guia"].get(k), grupos["otro"].get(k)
+        por[k] = dict(a if (a and (not b or a["despachadas"] >= b["despachadas"])) else b)
+    tp = tot["guia"] if tot["guia"][1] >= tot["otro"][1] else tot["otro"]
+    return {"por_sku": por, "sin_sku": sin_sku, "pedidas": tp[0], "despachadas": tp[1], "fuentes": sorted(fuentes)}
+
+
+def _txt_bodega_no_ok(b):
+    est = (b or {}).get("estado")
+    if est == "sin_conexion":
+        return "Check no respondió ahora"
+    if est == "sin_credenciales":
+        return "sin conexión con Check"
+    return "sin información de bodega (Check)"
+
+
+def _quien(p):
+    return f"{p['nombre']} ({p['sku']})" if p.get("sku") and p["sku"] != p.get("nombre") else (p.get("nombre") or p.get("sku") or "Producto")
+
+
+def tres_bandas(comp, bodegas, fechas=None, hoy=None, dias=GRACIA_DIAS_HABILES):
+    """La OT ↔ la guía (Random) ↔ Check. Check tiene la última palabra sobre lo que SALIÓ de bodega.
+    `comp`: salida de comparar(). `bodegas`: {número de guía: salida de bodega()} — solo las guías a las que se le preguntó a
+    Check. `fechas`: {número: 'dd/mm/aaaa'} de las guías (para el plazo de gracia). `hoy`: date en hora Chile.
+    → {estado, modo, por_guia: {num: {estado, color, texto, vence, en_plazo, pedidas, salieron, sin_info}},
+       productos: {sku_norm: {ot, guia, check, estado}}, hallazgos: [reglas B y C], evaluados: [(código, detalle)]}.
+    Estados de una guía frente a Check: sin_info (gris: no se puede saber, no se alerta) · completo (verde) · parcial (ámbar)
+    · preparando (ámbar, dentro del plazo: no se guarda ni suena) · sin_salida (ámbar + regla C)."""
+    comp = comp or {}
+    fechas = {str(k): v for k, v in (fechas or {}).items()}
+    out = {"estado": "sin_datos", "modo": "", "por_guia": {}, "productos": {}, "hallazgos": [], "evaluados": []}
+    if comp.get("estado") not in ("coincide", "diferencias"):
+        return out                         # sin guía, anuladas o sin productos gestionados: nada que pedirle a Check
+    out["estado"] = "ok"
+    bodegas = {str(k): v for k, v in (bodegas or {}).items() if v}
+    vivas = [str(n) for n in comp.get("guias") or []]
+    por_guia_comp = comp.get("por_guia") or {}
+    out["evaluados"] += [(COD_C, str(n)) for n in comp.get("anuladas") or []]   # una guía anulada ya no espera nada de Check
+
+    # ── Regla C y el semáforo de bodega, guía por guía ──
+    con_fisicas = []
+    for num in vivas:
+        fisicas = [l for l in (por_guia_comp.get(num) or {}).get("lineas") or [] if norm_sku(l.get("sku"))]
+        if fisicas:
+            con_fisicas.append(num)
+        b = bodegas.get(num)
+        if b is None:
+            continue                       # no se le preguntó a Check por esta guía: nada se concluye
+        vence = vence_el(fechas.get(num), dias)
+        plazo = en_plazo(fechas.get(num), hoy, dias)
+        info = {"estado": "sin_info", "color": "gris", "texto": "", "vence": fecha_txt(vence), "en_plazo": plazo,
+                "pedidas": 0, "salieron": 0, "sin_info": 0}
+        if b.get("estado") != "ok":
+            info["texto"] = _txt_bodega_no_ok(b)
+        elif b.get("malo") or cantidad(b.get("pedidas")) <= _EPS:
+            t = (b.get("texto") or "sin información de bodega").rstrip(".")
+            info["texto"] = t[:1].lower() + t[1:]
+        elif not fisicas:
+            info["texto"] = "la guía no trae productos con código para comparar con Check"
+        else:
+            cruz = cruzar_bodega(fisicas, b)
+            con = [l for l in cruz if l.get("bodega")]
+            sin_sku_check = any(not norm_sku(l.get("sku")) for l in b.get("lineas") or [])
+            if con:
+                p = sum(cantidad(l.get("cantidad")) for l in con)
+                d = sum(min(cantidad(l["bodega"].get("despachadas")), cantidad(l.get("cantidad"))) for l in con)
+                faltan = len(cruz) - len(con)
+            elif sin_sku_check:            # Check no informa por producto: se mira el total de su documento
+                p = sum(cantidad(l.get("cantidad")) for l in fisicas)
+                d = min(cantidad(b.get("despachadas")), p)
+                faltan = 0
+            else:
+                p = d = 0.0
+                faltan = len(cruz)
+            if p <= _EPS:
+                info["texto"] = "Check no informa los productos de esta guía"
+            else:
+                nota = f" (Check no informa {faltan} {_plural(faltan, 'producto', 'productos')})" if faltan else ""
+                info.update(pedidas=_red(p), salieron=_red(d), sin_info=faltan)
+                if d + _EPS >= p:
+                    info.update(estado="completo", color=("gris" if faltan else "verde"),
+                                texto=f"bodega expidió {cant_txt(d)} de {cant_txt(p)}" + nota)
+                elif d > _EPS:
+                    info.update(estado="parcial", color="ambar", texto=f"bodega expidió {cant_txt(d)} de {cant_txt(p)}" + nota)
+                elif plazo:
+                    info.update(estado="preparando", color="ambar",
+                                texto=f"bodega expidió 0 de {cant_txt(p)}, todavía en plazo"
+                                      + (f" (hasta el {fecha_txt(vence)})" if vence else ""))
+                else:
+                    info.update(estado="sin_salida", color="ambar",
+                                texto="Check no registra la salida" + (f" (plazo vencido el {fecha_txt(vence)})" if vence else ""))
+                    f_txt = fecha_txt(fecha_de(fechas.get(num)))
+                    out["hallazgos"].append({
+                        "codigo": COD_C, "detalle": num[:80], "guias": f"GDV {num}",
+                        "texto": (f"Hay guía GDV {num}" + (f" del {f_txt}" if f_txt else "")
+                                  + f" y Check no registra que haya salido ({cant_txt(p)} {_plural(p, 'unidad', 'unidades')}"
+                                  + (f"; el plazo de {dias} días hábiles venció el {fecha_txt(vence)}" if vence else "")
+                                  + ").")[:500]})
+                out["evaluados"].append((COD_C, num))
+        out["por_guia"][num] = info
+    if con_fisicas and all((COD_C, n) in out["evaluados"] for n in con_fisicas):
+        out["evaluados"].append((COD_C, TODOS))
+
+    # ── Regla B: Check expidió MENOS de lo que la OT gestiona (y la guía dice que salió) ──
+    cs = check_por_sku({n: bodegas[n] for n in vivas if n in bodegas})
+    out["modo"] = ("por_total" if cs and cs["sin_sku"] else "por_producto") if cs else ""
+
+    def guias_ok(gs):
+        return bool(gs) and all((bodegas.get(str(g)) or {}).get("estado") == "ok" for g in gs)
+
+    def todas_sin_salida(gs):
+        return bool(gs) and all((out["por_guia"].get(str(g)) or {}).get("estado") == "sin_salida" for g in gs)
+
+    def alguna_en_plazo(gs):
+        return any((out["por_guia"].get(str(g)) or {}).get("en_plazo", True) for g in gs)
+
+    esperados, b_todo = [], True
+    for p in comp.get("productos") or []:
+        k = p.get("sku_norm") or norm_sku(p.get("sku"))
+        ot = max(cantidad(p.get("gestiona")) - cantidad(p.get("declarada")), 0.0)
+        s = cantidad(p.get("salio"))
+        esperado = min(ot, s)
+        fila = {"ot": _red(ot), "guia": _red(s), "check": None, "estado": "no_aplica"}
+        out["productos"][k] = fila
+        if esperado <= _EPS:
+            continue                       # nada que Check deba expedir (lo que falta en la guía es la regla A)
+        gs = [str(g) for g in p.get("guias") or []]
+        if not cs or not guias_ok(gs):
+            fila["estado"] = "sin_info"
+            b_todo = False
+            continue
+        esperados.append((p, k, ot, s, esperado, gs))
+        if cs["sin_sku"]:
+            fila["estado"] = "por_total"
+            continue
+        c = cs["por_sku"].get(k)
+        if c is None:
+            fila["estado"] = "sin_info"    # Check no informa este producto: no se puede saber
+            b_todo = False
+            continue
+        chk = cantidad(c["despachadas"])
+        fila["check"] = _red(chk)
+        out["evaluados"].append((COD_B, k[:80]))
+        if chk + _EPS >= esperado:
+            fila["estado"] = "salio"
+        elif todas_sin_salida(gs):
+            fila["estado"] = "sin_salida"  # ya lo dice la regla C de su guía: no se acusa dos veces
+        elif chk + _EPS >= cantidad(c["pedidas"]) or not alguna_en_plazo(gs):
+            fila["estado"] = "menos"
+            dec = cantidad(p.get("declarada"))
+            t = (f"la OT gestiona {cant_txt(ot)}" + (f" y la guía dice {cant_txt(s)}" if abs(s - ot) > _EPS else "")
+                 + f"; Check informa que {_plural(chk, 'salió', 'salieron')} {cant_txt(chk)}"
+                 + (f" (la OT ya declaró que no llegó {cant_txt(dec)})" if dec > _EPS else "") + ".")
+            out["hallazgos"].append({"codigo": COD_B, "detalle": k[:80], "texto": f"{_quien(p)}: {t}"[:500],
+                                     "guias": ", ".join(f"GDV {g}" for g in gs)[:200]})
+        else:
+            fila["estado"] = "preparando"  # Check todavía espera expedir y la guía está dentro del plazo
+    if cs and cs["sin_sku"] and esperados:
+        # Check no informa por producto: se comparan los TOTALES (lo dice el texto, para no confundir).
+        gs_all = sorted({g for e in esperados for g in e[5]})
+        esp_t = sum(e[4] for e in esperados)
+        chk_t = cantidad(cs["despachadas"])
+        out["evaluados"].append((COD_B, DETALLE_TOTAL))
+        if chk_t + _EPS < esp_t and not todas_sin_salida(gs_all) and (chk_t + _EPS >= cantidad(cs["pedidas"])
+                                                                      or not alguna_en_plazo(gs_all)):
+            out["hallazgos"].append({
+                "codigo": COD_B, "detalle": DETALLE_TOTAL, "guias": ", ".join(f"GDV {g}" for g in gs_all)[:200],
+                "texto": (f"La OT gestiona {cant_txt(esp_t)} {_plural(esp_t, 'producto', 'productos')}; Check informa que "
+                          f"{_plural(chk_t, 'salió', 'salieron')} {cant_txt(chk_t)} (Check no informa por producto: se "
+                          f"comparan los totales).")[:500]})
+    if cs and b_todo:
+        out["evaluados"].append((COD_B, TODOS))
+    return out
+
+
+def detalle_guia(comp, num, tb=None, bod=None):
+    """Lo que se ve al tocar la guía (Daniel: «quiero que me diga TODOS LOS MOVIMIENTOS: qué se entregó y qué no se entregó,
+    y si hay DIFERENCIA con la orden de trabajo, que es lo que me interesa»):
+      diferencias: [{codigo, regla, texto}] — lo que no cuadra con la OT, para mostrar ARRIBA ([] = coincide);
+      productos: una fila por producto de esta guía y por lo que la OT gestiona y no salió en NINGUNA guía, con lo que dice
+                 cada banda (OT · guía · Check) y qué pasó en bodega, en palabras;
+      check: el semáforo de bodega de esta guía (tres_bandas). Sin montos."""
+    comp, num = comp or {}, str(num)
+    pg = (comp.get("por_guia") or {}).get(num) or {}
+    tbg = ((tb or {}).get("por_guia") or {}).get(num) or {}
+    prods = {p.get("sku_norm"): p for p in comp.get("productos") or []}
+    cruz = {}
+    if bod and bod.get("estado") == "ok":
+        for l in cruzar_bodega(pg.get("lineas") or [], bod):
+            k = norm_sku(l.get("sku"))
+            if k and l.get("bodega"):
+                cruz[k] = l["bodega"]
+    filas = []
+    for l in pg.get("lineas") or []:
+        k = norm_sku(l.get("sku"))
+        p = prods.get(k) or {}
+        q = cantidad(l.get("cantidad"))
+        b = cruz.get(k) if k else None
+        chk = min(cantidad(b.get("despachadas")), q) if b else None
+        if not k:
+            ctxt, ccol = "Sin código: no se compara con Check", "gris"
+        elif b is None:
+            ctxt, ccol = "Check no informa este producto", "gris"
+        elif chk + _EPS >= q:
+            ctxt, ccol = f"Salió de bodega ({cant_txt(chk)} de {cant_txt(q)}, según Check)", "verde"
+        elif chk > _EPS:
+            ctxt, ccol = f"Según Check {_plural(chk, 'salió', 'salieron')} {cant_txt(chk)} de {cant_txt(q)}", "ambar"
+        elif tbg.get("en_plazo", True):
+            ctxt, ccol = "Bodega todavía no lo expide" + (f" (en plazo hasta el {tbg['vence']})" if tbg.get("vence") else ""), "ambar"
+        else:
+            ctxt, ccol = "Check no registra que haya salido", "ambar"
+        dif = bool(l.get("es_diferencia"))
+        color = "ambar" if (dif or ccol == "ambar") else ("verde" if (ccol == "verde" and l.get("estado") == "coincide") else "gris")
+        filas.append({"sku": str(l.get("sku") or "").strip(), "nombre": l.get("nombre") or p.get("nombre") or "",
+                      "ot": p.get("gestiona") if p else None, "guia": _red(q), "check": (_red(chk) if chk is not None else None),
+                      "estado": l.get("estado") or "", "estado_txt": l.get("estado_txt") or "", "es_diferencia": dif,
+                      "texto": l.get("texto") or "", "check_txt": ctxt, "check_color": ccol, "color": color, "en_guia": True})
+    for p in comp.get("no_salio") or []:
+        filas.append({"sku": p.get("sku") or "", "nombre": p.get("nombre") or "", "ot": p.get("gestiona"), "guia": 0,
+                      "check": None, "estado": p.get("estado") or "", "estado_txt": p.get("estado_txt") or "",
+                      "es_diferencia": bool(p.get("es_diferencia")), "texto": p.get("texto") or "",
+                      "check_txt": "No salió en ninguna guía", "check_color": "gris",
+                      "color": "ambar" if p.get("es_diferencia") else "gris", "en_guia": False})
+    skus = {norm_sku(l.get("sku")) for l in pg.get("lineas") or []} - {""}
+    diferencias = []
+    for h in hallazgos(comp, tb):
+        c, d = h.get("codigo"), h.get("detalle")
+        if ((c == COD_C and d == num) or (c == COD_B and (d in skus or d == DETALLE_TOTAL))
+                or (c in COD_A and (d in skus or c == "esta_en_la_OT_y_no_salio"))):
+            diferencias.append({"codigo": c, "texto": h.get("texto") or "",
+                                "regla": "C" if c == COD_C else ("B" if c == COD_B else "A")})
+    orden = {"C": 0, "B": 1, "A": 2}
+    diferencias.sort(key=lambda x: orden.get(x["regla"], 3))
+    return {"guia": num, "diferencias": diferencias, "productos": filas,
+            "check": ({k: tbg.get(k) for k in ("estado", "color", "texto", "vence", "en_plazo")} if tbg else None)}

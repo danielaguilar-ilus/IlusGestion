@@ -12,6 +12,11 @@
      · muestra la cadena nota de venta → factura o boleta → guía de despacho, el saldo de cada documento y qué otras OT
        lo usan, con su margen;
      · alerta en ámbar lo que no cuadra (otra empresa, una factura que no viene de la nota de venta). Nunca bloquea.
+   2026-10-29 (Daniel: «quiero que sea PEQUEÑA; no quiero que ocupe tanto espacio la trazabilidad de Random. Pero cuando le
+   doy clic… que me diga TODOS LOS MOVIMIENTOS»): cada venta es UNA fila fina de chips (nota de venta → factura → guías, con un
+   punto de semáforo por guía) y el detalle de cada documento (saldo por línea, otras OT que lo usan y su margen, productos,
+   «otra empresa», dada de baja) se abre al tocar su chip, en un panel debajo de la fila. Nada se perdió (REGLA #4.2): es lo
+   mismo de antes, detrás del clic. El panel de una GUÍA lo pinta static/ot_guia_logistica.js (qué salió y qué no, Check).
    Sin alert/confirm/prompt nativos (REGLA #1). Todo el texto se escapa. */
 (function (global) {
   'use strict';
@@ -83,10 +88,10 @@
     }).join('') + '</ul>';
   }
 
+  function tipoCls(n) { return n.tipo === 'GDV' ? 'guia' : /^(FCV|FCE|BLV|BLE)$/.test(n.tipo) ? 'cobro' : 'nota'; }
+
+  /* El DETALLE de un documento (lo que antes era su tarjeta grande): se pinta en el panel de la venta al tocar su chip. */
   function htmlNodo(n) {
-    var cls = 'dc-n t-' + (n.tipo === 'GDV' ? 'guia' : /^(FCV|FCE|BLV|BLE)$/.test(n.tipo) ? 'cobro' : 'nota');
-    if (n.en_ot && !n.dada_de_baja) cls += ' en-ot';
-    if (n.dada_de_baja) cls += ' baja';
     var chips = [];
     if (n.tipo !== 'GDV') {
       if (n.dada_de_baja) chips.push('<span class="dc-chip gris">Dada de baja por ' + esc(n.reemplazado_por || 'la factura') + '</span>');
@@ -95,29 +100,63 @@
       else chips.push('<span class="dc-chip azul">No está en esta OT</span>');
       if (n.mismo_cliente === false) chips.push('<span class="dc-chip ambar">Otra empresa</span>');
     }
-    var h = '<li class="' + cls + '"><div class="dc-n-h"><span class="dc-tipo">' + esc(n.tipo_txt) + '</span> <b>' + esc(n.titulo) + '</b>' +
+    var h = '<div class="dc-n t-' + tipoCls(n) + '"><div class="dc-n-h"><span class="dc-tipo">' + esc(n.tipo_txt) + '</span> <b>' + esc(n.titulo) + '</b>' +
       (n.fecha ? ' <span class="dc-f">' + esc(n.fecha) + '</span>' : '') + '</div>';
     if (chips.length) h += '<div class="dc-chips">' + chips.join('') + '</div>';
     if (n.tipo === 'GDV') {
+      /* Respaldo: si static/ot_guia_logistica.js no está, la guía muestra lo de Random (sin Check). */
       h += '<p class="dc-sal">' + esc(n.texto || 'Salió el stock') + (n.desde ? ' · desde ' + esc(n.desde) : '') + '</p>';
       if ((n.productos || []).length) {
         h += '<ul class="dc-prods">' + n.productos.map(function (p) {
           return '<li>' + esc(p.cantidad) + ' × ' + esc(p.nombre || p.sku) + (p.sku && p.nombre ? ' <small>' + esc(p.sku) + '</small>' : '') + '</li>';
         }).join('') + '</ul>';
       }
-      /* 🚚 2026-10-29 (Daniel: «en la guía de despacho, presiono y no hicimos la conexión con el WMS… para saber QUÉ SE FUE»):
-         «Ver logística» lo maneja static/ot_guia_logistica.js (bodega según Check y «lo que salió» vs «lo que gestiona la OT»). */
-      h += '<div class="gl" data-gl-guia="' + esc(n.numero) + '"><div class="gl-estado" data-gl-estado aria-live="polite"></div>' +
-        '<button type="button" class="gl-btn" data-gl-ver="' + esc(n.numero) + '" aria-expanded="false">' +
-        '<i class="bi bi-truck" aria-hidden="true"></i> Ver logística</button>' +
-        '<div class="gl-cuerpo" data-gl-cuerpo hidden></div></div>';
     } else {
       if (n.mismo_cliente === false && (n.rut || n.razon_social)) {
         h += '<p class="dc-sal dc-ambar">Emitida a ' + esc(n.razon_social || 'otra empresa') + (n.rut ? ' (RUT ' + esc(n.rut) + ')' : '') + '</p>';
       }
       h += htmlSaldo(n) + htmlUsos(n);
     }
-    return h + '</li>';
+    return h + '</div>';
+  }
+
+  /* El CHIP de un documento en la fila de la venta: tipo y número, y una marca chica (✓ en esta OT, ⚠ otra empresa,
+     tachado si quedó dada de baja). Las guías llevan además su punto de semáforo (lo pinta ot_guia_logistica.js). */
+  function chipDoc(n, vi, ni, panelId) {
+    var guia = n.tipo === 'GDV';
+    var cls = 'dc-doc t-' + tipoCls(n) + (n.en_ot && !n.dada_de_baja ? ' en-ot' : '') + (n.dada_de_baja ? ' baja' : '');
+    var estado = [];
+    if (!guia) {
+      if (n.dada_de_baja) estado.push('dada de baja por ' + (n.reemplazado_por || 'la factura'));
+      else if (n.heredado) estado.push('copia de la OT madre');
+      else if (n.en_ot) estado.push('en esta OT');
+      else estado.push('no está en esta OT');
+      if (n.mismo_cliente === false) estado.push('emitida a otra empresa');
+    } else if (n.fecha) estado.push('del ' + n.fecha);
+    var marca = '';
+    if (!guia && n.en_ot && !n.dada_de_baja && !n.heredado) marca += '<i class="bi bi-check2 dc-ok" aria-hidden="true"></i>';
+    if (!guia && n.mismo_cliente === false) marca += '<i class="bi bi-exclamation-triangle-fill dc-warn" aria-hidden="true"></i>';
+    var etiqueta = (n.tipo_txt || n.tipo) + ' ' + (n.titulo || '') + (estado.length ? ', ' + estado.join(', ') : '') +
+      (guia ? '. Ver qué salió y qué no' : '. Ver su detalle');
+    return '<button type="button" class="' + cls + '" data-dc-doc="' + vi + ':' + ni + '"' +
+      (guia ? ' data-gl-guia="' + esc(n.numero) + '" data-gl-ver="' + esc(n.numero) + '"' : '') +
+      ' aria-expanded="false" aria-controls="' + esc(panelId) + '" aria-label="' + esc(etiqueta) + '" title="' + esc(etiqueta) + '">' +
+      (guia ? '<span class="gl-dot gris pend" data-gl-dot aria-hidden="true"></span>' : '') +
+      '<span class="dc-doc-t">' + esc(n.tipo) + '</span> <b>' + esc(n.numero) + '</b>' + marca + '</button>';
+  }
+
+  function htmlVenta(c, vi, pref) {
+    var docs = [], guias = [], id = 'dc-panel-' + pref + '-' + vi;
+    (c.nodos || []).forEach(function (n, ni) { (n.tipo === 'GDV' ? guias : docs).push(chipDoc(n, vi, ni, id)); });
+    // La flecha va pegada al documento que sigue: al partirse la fila en el celular nunca queda suelta al final.
+    var flecha = '<i class="bi bi-arrow-right dc-fl" aria-hidden="true"></i>';
+    var items = docs.map(function (d, i) { return '<li>' + (i ? flecha : '') + d + '</li>'; });
+    if (guias.length) items.push('<li class="dc-gs">' + (docs.length ? flecha : '') + guias.join('') + '</li>');
+    return '<div class="dc-venta" data-dc-venta="' + vi + '"><ol class="dc-fila" aria-label="Cadena de documentos de una venta">' +
+      items.join('') + '</ol>' +
+      '<p class="dc-res" data-gl-resumen hidden></p>' +
+      '<div class="dc-panel" id="' + id + '" data-dc-panel role="region" aria-label="Detalle del documento" hidden></div>' +
+      (c.leida === false ? '<p class="dc-help">Random no respondió del todo: esta cadena puede estar incompleta.</p>' : '') + '</div>';
   }
 
   function htmlSugerencia(s, i) {
@@ -133,18 +172,43 @@
 
   function html(d) {
     var h = '<div class="dc-h"><h3><i class="bi bi-diagram-3-fill" aria-hidden="true"></i> Trazabilidad en Random</h3>' +
-      '<small>Nota de venta → factura o boleta → guía de despacho · solo lectura</small>' +
+      '<small>Nota de venta → factura o boleta → guía de despacho · toca un documento para ver su detalle</small>' +
       '<span class="gl-chip-slot" data-gl-chip></span></div>';
     (d.sugerencias || []).forEach(function (s, i) { h += htmlSugerencia(s, i); });
     (d.alertas || []).forEach(function (a) {
       h += '<div class="dc-al" role="note"><i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i><p>' + esc(a.texto) + '</p></div>';
     });
-    (d.cadenas || []).forEach(function (c) {
+    var pref = String(d.visita_id || '').replace(/\D/g, '') || 'x';
+    (d.cadenas || []).forEach(function (c, vi) {
       if (!(c.nodos || []).length) return;
-      h += '<ol class="dc-cad' + (c.nodos.length > 3 ? ' largo' : '') + '" aria-label="Cadena de documentos de una venta">' + c.nodos.map(htmlNodo).join('') + '</ol>';
-      if (c.leida === false) h += '<p class="dc-help">Random no respondió del todo: esta cadena puede estar incompleta.</p>';
+      h += htmlVenta(c, vi, pref);
     });
     return h;
+  }
+
+  /* ── El panel de una venta: un documento abierto a la vez ─────────────── */
+  function marcar(venta, chip) {
+    var bs = venta.querySelectorAll('[data-dc-doc]');
+    for (var i = 0; i < bs.length; i++) bs[i].setAttribute('aria-expanded', bs[i] === chip ? 'true' : 'false');
+  }
+  function abrirDoc(chip, vid) {
+    var venta = chip.closest('[data-dc-venta]');
+    var panel = venta && venta.querySelector('[data-dc-panel]');
+    if (!panel) return;
+    if (chip.getAttribute('aria-expanded') === 'true') { cerrarPanel(venta); return; }
+    var pos = String(chip.getAttribute('data-dc-doc') || '').split(':');
+    var c = ((datos[vid] || {}).cadenas || [])[parseInt(pos[0], 10)] || {};
+    var n = (c.nodos || [])[parseInt(pos[1], 10)];
+    if (!n) return;
+    marcar(venta, chip);
+    panel.removeAttribute('data-gl-abierta');      // si una guía seguía cargando, ya no pinta encima
+    panel.innerHTML = htmlNodo(n);
+    panel.hidden = false;
+  }
+  function cerrarPanel(venta) {
+    var panel = venta.querySelector('[data-dc-panel]');
+    if (panel) { panel.hidden = true; panel.innerHTML = ''; panel.removeAttribute('data-gl-abierta'); }
+    marcar(venta, null);
   }
 
   /* ── Montaje dentro del motor ───────────────────────────────────────── */
@@ -185,11 +249,21 @@
     var vid = parseInt(el.getAttribute('data-vid'), 10);
     if (!vid) return;
     el.addEventListener('click', function (e) {
+      if (!e.target || !e.target.closest) return;
       var b = e.target.closest('[data-dc-add]');
-      if (!b || !el.contains(b)) return;
-      e.preventDefault();
-      var s = ((datos[vid] || {}).sugerencias || [])[parseInt(b.getAttribute('data-dc-add'), 10)];
-      if (s) agregar(vid, s);
+      if (b && el.contains(b)) {
+        e.preventDefault();
+        var s = ((datos[vid] || {}).sugerencias || [])[parseInt(b.getAttribute('data-dc-add'), 10)];
+        if (s) agregar(vid, s);
+        return;
+      }
+      // Un chip de documento abre su detalle. El de una GUÍA lo atiende ot_guia_logistica.js (marca e.__glHecho); si ese
+      // archivo no cargó, se muestra lo de Random como respaldo.
+      var chip = e.target.closest('[data-dc-doc]');
+      if (chip && el.contains(chip) && !e.__glHecho) {
+        e.preventDefault();
+        abrirDoc(chip, vid);
+      }
     });
     var t = null;
     var obs = new MutationObserver(function () {
@@ -205,7 +279,7 @@
     for (var i = 0; i < els.length; i++) montar(els[i]);
   }
 
-  global.OTDocCadena = { iniciar: iniciar, _html: html };
+  global.OTDocCadena = { iniciar: iniciar, _html: html, _htmlNodo: htmlNodo };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);
   else iniciar();
 })(window);

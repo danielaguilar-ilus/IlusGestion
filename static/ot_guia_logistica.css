@@ -1,19 +1,23 @@
 /* 🚚 Logística (WMS) de cada guía de despacho (static/ot_guia_logistica.js, 29-oct-2026). Vive dentro de «Trazabilidad en
-   Random» (.dc). Daniel: «todo bien resumido, no tarjetas tan grandes»: una línea por guía con un semáforo CHICO (verde =
-   salió todo lo gestionado · ámbar = falta o sobra algo · gris = sin información de bodega) y el detalle solo al hacer clic,
-   en secciones planas separadas por una línea fina. Colores con medida: semáforo y chips, nunca la tarjeta pintada
-   (REGLA #2). Nombres completos, sin cortar (REGLA #15). Celular primero (REGLA #3): botones de 44 px en el celular. */
-.gl{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:2px;min-width:0;border-top:1px solid var(--fm-borde,#e5e7eb);padding-top:6px}
-.gl-estado{flex:1 1 200px;min-width:0}
-.gl-estado:empty{display:none}
+   Random» (.dc). Daniel: «todo bien resumido, no tarjetas tan grandes» y, en la tarde, «la tarjeta de la guía… PEQUEÑA»: la
+   guía es un chip con un punto de semáforo de 10 px (verde = salió todo lo gestionado y Check lo expidió · ámbar = hay
+   diferencia o falta expedir · gris = Check no tiene información) y el detalle se abre al tocarla, en secciones planas
+   separadas por una línea fina. Colores con medida: el punto y los chips, nunca la tarjeta pintada ni un borde lateral grueso
+   (REGLA #2). Nombres completos, sin cortar (REGLA #15). Celular primero (REGLA #3): toques de 44 px en el celular. */
 .gl-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
-/* El semáforo: un punto de 10 px y la frase. */
+/* El semáforo: un punto de 10 px. */
 .gl-dot{display:inline-block;width:10px;height:10px;border-radius:50%;flex:0 0 10px;margin-right:6px;vertical-align:-1px;
   background:#9ca3af;box-shadow:0 0 0 2px #f3f4f6}
 .gl-dot.verde{background:#16a34a;box-shadow:0 0 0 2px #dcfce7}
 .gl-dot.ambar{background:#f59e0b;box-shadow:0 0 0 2px #fff8e1}
-.gl-dot.gris{background:#9ca3af;box-shadow:0 0 0 2px #f3f4f6}
+/* Gris = «no se puede saber»: un anillo hueco, no un punto lleno. Así no depende solo del color (verde y gris tienen una
+   luminancia parecida para quien no distingue el verde; WCAG 1.4.1). */
+.gl-dot.gris{background:#fff;box-shadow:inset 0 0 0 2px #6b7280}
+.gl-dot.pend{animation:gl-pulso 1.4s ease-in-out infinite}
+@keyframes gl-pulso{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.gl-dot.pend{animation:none}}
+.dc-doc .gl-dot{margin-right:0}
 .gl-sem{display:flex;align-items:baseline;font-size:.78rem;font-weight:700;color:#111827;overflow-wrap:anywhere}
 .gl-sem.pend .gl-sem-t{color:#4b5563;font-weight:600}
 
@@ -30,33 +34,52 @@ button.gl-chip{cursor:pointer;font-family:inherit}
 .gl-chip.ambar{background:var(--fm-ambar-f,#fff8e1);color:#78350f;border-color:#fde68a}
 .gl-chip.verde{background:var(--fm-verde-f,#dcfce7);color:#14532d;border-color:#bbf7d0}
 
-/* Detalle (al hacer clic): secciones planas, letra chica, sin cajas pintadas. */
-.gl-cuerpo{flex:1 1 100%;min-width:0}
+/* El panel de la guía (al tocarla): secciones planas, letra chica, sin cajas pintadas. Las diferencias con la OT, arriba. */
 .gl-det{display:grid;grid-template-columns:minmax(0,1fr);gap:0}
+.gl-cab{margin:0 0 2px;font-size:.8rem;color:#111827;overflow-wrap:anywhere}
 .gl-sec{padding:6px 0;border-top:1px dashed var(--fm-borde,#e5e7eb);display:flex;flex-direction:column;gap:3px;min-width:0}
-.gl-sec:first-child{border-top:0}
 .gl-sec h5{margin:0;font-size:.74rem;font-weight:900;color:#374151;text-transform:uppercase;letter-spacing:.03em;display:flex;align-items:center;gap:5px}
+.gl-difs h5{color:#92400e}
+.gl-difs h5 i{color:#b45309}
+.gl-lista,.gl-mov{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.gl-lista li{display:flex;align-items:baseline;font-size:.8rem;font-weight:700;color:#78350f;overflow-wrap:anywhere;min-width:0}
 .gl-fr{margin:0;font-size:.78rem;font-weight:600;color:#111827;overflow-wrap:anywhere}
+.gl-ok{color:#14532d;font-weight:700}
 .gl-meta{font-size:.74rem;color:#4b5563;font-weight:500;overflow-wrap:anywhere}
-p.gl-meta,p.gl-sub{margin:0}
-.gl-sub{font-size:.74rem;font-weight:800;color:#374151}
+p.gl-meta{margin:0}
 .gl-err{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:.78rem;color:#78350f;font-weight:700}
 
-.gl-lineas,.gl-mov{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
-.gl-lineas li{display:flex;align-items:baseline;font-size:.78rem;min-width:0}
+/* «Qué salió y qué no»: OT · guía · Check por producto. */
+.gl-tab{width:100%;border-collapse:collapse;font-size:.78rem}
+.gl-tab th{text-align:left;font-size:.68rem;font-weight:900;color:#4b5563;text-transform:uppercase;letter-spacing:.03em;padding:3px 6px;border-bottom:1px solid var(--fm-borde,#e5e7eb)}
+.gl-tab td{padding:5px 6px;border-bottom:1px solid #f3f4f6;vertical-align:top;font-variant-numeric:tabular-nums}
+.gl-tab th:nth-child(2),.gl-tab th:nth-child(3),.gl-tab th:nth-child(4),
+.gl-tab td:nth-child(2),.gl-tab td:nth-child(3),.gl-tab td:nth-child(4){text-align:center;width:3.6rem;font-weight:800}
+.gl-tab tr:last-child td{border-bottom:0}
+.gl-td-p{overflow-wrap:anywhere}
 .gl-l{min-width:0;overflow-wrap:anywhere}
 .gl-l small{color:#4b5563;font-size:.72rem}
 .gl-l-x{display:block}
-.gl-q{font-weight:900;font-variant-numeric:tabular-nums}
+.gl-td-b{font-weight:700;overflow-wrap:anywhere}
+.gl-td-b.verde{color:#14532d}
+.gl-td-b.ambar{color:#92400e}
+.gl-td-b.gris{color:#4b5563;font-weight:600}
 .gl-mov li{font-size:.76rem;overflow-wrap:anywhere}
 .gl-mov small{color:#4b5563}
 
 @media (min-width:900px){
-  .dc-cad.largo .gl-det{grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0 18px}
-  .dc-cad.largo .gl-sec{border-top:0}
+  .gl-det{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}
+  .gl-det>.gl-cab,.gl-det>.gl-difs,.gl-det>.gl-prods,.gl-det>.gl-notas{grid-column:1/-1}
 }
 @media (max-width:600px){
   .gl-btn{min-height:44px;width:100%}
   .gl-chip-slot{margin-left:0;width:100%}
   .gl-chip{min-height:44px}
+  .gl-tab thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+  .gl-tab,.gl-tab tbody,.gl-tab tr,.gl-tab td{display:block;width:auto}
+  .gl-tab tr{padding:6px 0;border-bottom:1px solid var(--fm-borde,#e5e7eb)}
+  .gl-tab td{border:0;padding:1px 0}
+  .gl-tab td:nth-child(2),.gl-tab td:nth-child(3),.gl-tab td:nth-child(4){display:inline-block;width:auto;margin-right:12px;text-align:left}
+  .gl-tab td[data-l]::before{content:attr(data-l) " ";font-size:.68rem;font-weight:800;color:#4b5563;text-transform:uppercase}
+  .gl-tab td.gl-td-b{display:block}
 }

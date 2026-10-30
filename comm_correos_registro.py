@@ -344,6 +344,18 @@ REGISTRO = (
        modo="automatico", avisa_a="A los correos de bodega de Retiros → Configuración (nunca al cliente ni al técnico)",
        nota="Es un aviso interno: no sale a clientes ni a técnicos. Usa los mismos correos de bodega que «Avisar a bodega» de Retiros "
             "(Retiros → Configuración). Sale por la llave de Comunicación interna."),
+    # 2026-10-29 (REGLA #58, logística de las guías de despacho). Daniel: «si hay diferencia, dame una ALERTA, así sea POR CORREO».
+    # Nace ENCENDIDO (lo pidió él). Lo envía _ot_logi_correo (app.py) por _aviso_interno_correo con esta clave.
+    _c("ot_guia_diferencia", "Lo que salió de bodega no cuadra con la OT: aviso a la gestión", "ot", "comunicacion_interna",
+       "responsable_ot",
+       "Al revisar la trazabilidad de una OT: la guía de despacho (Random) o lo que Check (bodega) informa que salió no cuadra con "
+       "lo que gestiona la OT (p. ej. «la OT gestiona 10; Check informa que salieron 8»), o hay guía y Check no registra la salida "
+       "pasados 3 días hábiles.",
+       modo="automatico",
+       avisa_a="A la gestión de la OT (el responsable primero, después quien la creó y el ejecutivo del cliente), nunca al técnico "
+               "ni al cliente",
+       nota="Interno y sin montos: un correo por diferencia y otro solo si esa diferencia cambia. También suena la campana. Sin "
+            "información de Check no se avisa (no se puede saber)."),
     # 2026-10-21 (Daniel, comunicación de la OT, REGLA #37): «OT terminada» automática al aprobar el cierre y «Enviar OT por correo» manual.
     # El del CLIENTE nace APAGADO (variable de entorno, REGLA #22) y solo Daniel lo enciende; los demás salen por la puerta de siempre.
     _c("ot_terminada_cliente", "OT terminada: aviso al cliente (documento firmado, sin montos)", "ot", "mantenciones", "cliente",
