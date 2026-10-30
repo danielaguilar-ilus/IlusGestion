@@ -709,7 +709,13 @@ async function subirFoto(input) {
 }
 
 async function eliminarFoto() {
-  if (!confirm('¿Quitar tu foto de perfil? Volverás a las iniciales.')) return;
+  const ok = await ilusConfirm({
+    title: 'Quitar foto de perfil',
+    message: '¿Quitar tu foto de perfil? Volverás a las iniciales.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const r = await fetch('/mi-cuenta/foto', { method:'DELETE' });
     if (r.ok) location.reload();
