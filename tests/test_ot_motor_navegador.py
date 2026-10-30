@@ -101,6 +101,55 @@ class TestMotorEnElNavegador(unittest.TestCase):
         self.assertEqual(m["fondoQ"], "rgb(21, 128, 61)", "el GANAMOS, lleno de verde (tolerancia de la REGLA #57)")
         self.assertEqual(m["tamQ"], m["tamMax"], "la cifra del GANAMOS es la más grande del bloque")
 
+    def _perdida_ot220(self):
+        """OT-2026-00220: cobramos $124.440, nos cobraron $170.000 (instalación $120.000 + despacho $50.000 que no se le cobró al cliente)."""
+        rec, pan = _ejemplo_de_daniel()
+        f = rec["fin"]
+        f["me_cobraron"].update(tecnico=120000, despacho=50000, total=170000)
+        f["cobre"].update(servicio=124440, despacho=0, total=124440)
+        f["queda"].update(servicio=4440, despacho=-50000, total=-45560, pct=-36.6, mostrar=True)
+        rec["autorizaciones"] = [{"tipo": "cerrar_con_perdida", "tipo_txt": "Cerrar con pérdida", "estado": "aprobada", "estado_txt": "Aprobada",
+                                  "argumento": "El proveedor cobró el despacho aparte y el cliente ya había pagado la boleta.",
+                                  "solicitado_por_nombre": "Víctor Betancur", "solicitado_at": "17/09/2026 11:47",
+                                  "resuelto_por_nombre": "Daniel Aguilar", "resuelto_at": "17/09/2026 12:10"}]
+        return rec, pan
+
+    def test_la_perdida_dice_por_que_se_perdio(self):
+        rec, pan = self._perdida_ot220()
+        ruta = self._pagina(rec, pan, "perdida")
+        with sync_playwright() as p:
+            nav = p.chromium.launch()
+            for ancho, alto in ((1280, 900), (375, 812)):
+                pag = nav.new_page(viewport={"width": ancho, "height": alto})
+                errores = []
+                pag.on("pageerror", lambda e: errores.append(str(e)))
+                pag.goto(ruta.as_uri())
+                pag.wait_for_selector(".fm-perd", timeout=10000)
+                txt = pag.inner_text(".fm-perd").replace("⁠", "")
+                self.assertIn("¿Por qué perdimos?", txt)
+                self.assertIn("el despacho costó $50.000 y no se le cobró al cliente (−$50.000)", txt)
+                self.assertIn("A favor: la instalación o el servicio dejó +$4.440", txt)
+                self.assertIn("Anexo N° 221", txt)
+                self.assertIn("Motivo declarado por Víctor Betancur el 17/09/2026 11:47", txt)
+                self.assertIn("El proveedor cobró el despacho aparte", txt)
+                self.assertIn("autorizada por Daniel Aguilar", txt)
+                self.assertLessEqual(pag.evaluate("document.documentElement.scrollWidth"), ancho, "sin scroll horizontal")
+                self.assertEqual(errores, [])
+                pag.screenshot(path=os.path.join(self.capturas, f"motor_perdida_{ancho}.png"), full_page=True)
+                pag.close()
+            nav.close()
+
+    def test_sin_perdida_no_hay_explicacion(self):
+        rec, pan = _ejemplo_de_daniel()
+        ruta = self._pagina(rec, pan, "ganancia")
+        with sync_playwright() as p:
+            nav = p.chromium.launch()
+            pag = nav.new_page(viewport={"width": 1280, "height": 900})
+            pag.goto(ruta.as_uri())
+            pag.wait_for_selector(".fm-res", timeout=10000)
+            self.assertEqual(pag.locator(".fm-perd").count(), 0, "con ganancia no se dibuja la explicación")
+            nav.close()
+
     def test_celular_375(self):
         rec, pan = _ejemplo_de_daniel()
         pan["cliente"] = rec["cliente"] = "Corporación de Gimnasios y Centros Deportivos Integrales del Sur de Chile SpA"

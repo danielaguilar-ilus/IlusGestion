@@ -755,6 +755,41 @@
 
   function pctTxt(p) { return p === null || p === undefined ? '' : String(p).replace('.', ',').replace('-', '−') + ' %'; }
 
+  /* ¿POR QUÉ PERDIMOS? (Daniel, 30-oct: «en caso de pérdida me gustaría que hubiera un comentario explicativo junto a la pérdida para saber por qué
+     perdimos»). Dos cosas, ambas junto al «Perdimos»: 1) la explicación automática, armada con las MISMAS cifras de la cuenta (qué negocio dejó
+     pérdida y cuál a favor, y de qué anexo viene lo que nos cobraron); 2) el motivo que una persona declaró al autorizar la pérdida
+     (`cerrar_con_perdida`: quién, cuándo y su argumento). Solo informa; nunca se inventa un motivo. */
+  function porQuePerdimos(inst) {
+    var fin = inst.rec.fin || {}, C = fin.cobre || {}, M = fin.me_cobraron || {}, Q = fin.queda || {};
+    if (!fin.cobra || !Q.mostrar || !(Q.total < 0)) return '';
+    var n = function (v) { return Number(v) || 0; };
+    var malos = [], buenos = [];
+    var cat = function (q, nombre, malTxt) {
+      q = n(q);
+      if (q < 0) malos.push(malTxt + ' (' + signo(q) + ')');
+      else if (q > 0) buenos.push(nombre + ' dejó ' + signo(q));
+    };
+    cat(Q.servicio, 'la instalación o el servicio', n(C.servicio) <= 0
+      ? 'el servicio costó ' + clp(n(M.tecnico)) + ' y no se le cobró al cliente'
+      : 'por el servicio le pagamos ' + clp(n(M.tecnico)) + ' al proveedor y al cliente le cobramos ' + clp(n(C.servicio)));
+    cat(Q.despacho, 'el despacho', n(C.despacho) <= 0
+      ? 'el despacho costó ' + clp(n(M.despacho)) + ' y no se le cobró al cliente'
+      : 'por el despacho pagamos ' + clp(n(M.despacho)) + ' y al cliente le cobramos ' + clp(n(C.despacho)));
+    cat(Q.repuestos, 'los repuestos', 'los repuestos instalados costaron ' + clp(n(M.repuestos)) + ' y no se cobran aparte');
+    var txt = malos.length ? 'Perdimos porque ' + malos.join('; ') + (buenos.length ? '. A favor: ' + buenos.join(', ') : '') + '.'
+      : 'Perdimos porque nos cobraron ' + clp(n(M.total)) + ' y al cliente le cobramos ' + clp(n(C.total)) + '.';
+    var ax = anexoVivo(inst);
+    if (ax) txt += ' Lo que nos cobraron viene del Anexo N° ' + ax.numero + (ax.firmado ? ' (firmado)' : ' (vigente)') + '.';
+    txt = txt.replace(/([−+])\$/g, '$1⁠$');      // «−$50.000» no se parte en dos líneas
+    var h = '<div class="fm-perd" role="note"><i class="bi bi-info-circle-fill"></i><div><b>¿Por qué perdimos?</b><span>' + esc(txt) + '</span>';
+    var aut = (inst.rec.autorizaciones || []).filter(function (a) { return a.tipo === 'cerrar_con_perdida' && a.argumento; });
+    aut = aut.filter(function (a) { return a.estado === 'aprobada'; })[0] || aut[0];
+    if (aut)
+      h += '<span class="fm-perd-aut"><b>Motivo declarado</b> por ' + esc(aut.solicitado_por_nombre || 'quien la pidió') + (aut.solicitado_at ? ' el ' + esc(aut.solicitado_at) : '') +
+        ': «' + esc(aut.argumento) + '»' + (aut.estado === 'aprobada' && aut.resuelto_por_nombre ? ' · autorizada por ' + esc(aut.resuelto_por_nombre) : (aut.estado === 'pendiente' ? ' · pendiente de autorización' : '')) + '</span>';
+    return h + '</div></div>';
+  }
+
   /* «De dónde sale lo cobrado», en palabras de Daniel: de la VD 10653: servicio $899.726 + despacho $553.460. Un renglón por
      documento que de verdad suma al cobro (los de referencia, dados de baja o sin líneas de servicio no entran). */
   function origenCobro(inst) {
@@ -1036,6 +1071,7 @@
         '<span class="fm-motivo">' + esc(motivo) + '</span>' + sem;
     }
     h += '</div>';
+    h += porQuePerdimos(inst);
     h += htmlNegocios(inst);
     var det = [];
     if (fin.valorizado && fin.valorizado.monto)

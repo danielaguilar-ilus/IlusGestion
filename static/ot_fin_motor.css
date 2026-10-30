@@ -493,3 +493,10 @@
 .fm-perdida-cuenta{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
 .fm-perdida-cuenta>span{background:#f3f4f6;border-radius:999px;padding:4px 12px;font-size:.82rem;color:#374151}
 .fm-perdida-cuenta>span.mal{background:#fee2e2;color:#991b1b}
+
+/* ¿Por qué perdimos? (30-oct, Daniel): explicación junto a la pérdida; tono ámbar suave, nombres completos, sin truncar. */
+.fm-perd{display:flex;gap:10px;align-items:flex-start;margin:10px 0 4px;padding:10px 12px;border-radius:10px;background:#fff8e1;border:1px solid #fde68a;color:#78350f;font-size:.82rem;line-height:1.4}
+.fm-perd > i{color:#d97706;font-size:1rem;margin-top:1px;flex:0 0 auto}
+.fm-perd > div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.fm-perd b{font-weight:800}
+.fm-perd-aut{padding-top:6px;border-top:1px dashed #fcd34d;overflow-wrap:anywhere}
