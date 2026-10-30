@@ -1705,8 +1705,11 @@
 .otd-doc .del:hover{color:#dc2626}
 
 /* Evidencia — galería de fotos reales de la visita */
+/* 2026-10-30 (Daniel: «las fotos de la OT, cuando crece tanto, dejan vacío el espacio entre Costos y documentación y el tiempo del
+   técnico… contenla dentro de la tarjeta y dale scroll»): la galería tiene un alto máximo y scrollea por dentro; la tarjeta
+   deja de estirar la columna (REGLA #16). */
 .otd-ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;
-  padding:14px 16px}
+  padding:14px 16px;max-height:min(460px,55vh);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .otd-ev-item{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#fafbfc;position:relative}
 {# ⭐ 2026-09-26: estrella de "foto principal" sobre la miniatura de la
    galería general -- mismo criterio visual que el checklist. #}

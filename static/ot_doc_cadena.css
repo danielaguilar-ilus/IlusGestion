@@ -146,3 +146,10 @@ html.dc-mo-abierto{overflow:hidden}
 .dc-cif-c.ambar{background:#fff8e1;border-color:#fde68a}
 .dc-cif-c.ambar b{color:#78350f}
 .dc-cif-c.ambar small{color:#92400e}
+
+/* 30-oct (Daniel: «mira todo lo que se está perdiendo en pantalla»): la guía va EN LA MISMA LÍNEA que la nota de venta y la
+   factura cuando hay lugar; solo baja a otra línea si no cabe. Las tarjetas crecen un poco para aprovechar el ancho. */
+.dc-fila>li.dc-gs{flex:1 1 240px}
+.dc-doc.dc-card{max-width:320px}
+.dc-gs .dc-doc.dc-card{flex:1 1 210px;max-width:320px}
+@media (max-width:600px){.dc-fila>li.dc-gs{flex:1 1 auto}}
