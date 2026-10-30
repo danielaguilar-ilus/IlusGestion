@@ -47,6 +47,7 @@ import tickets_sla as _tksla
 import tickets_nuevo_motivos as _tkmotivos
 import tickets_guia as _tkguia
 import tickets_firma_correo as _tkfirma
+import cot_composicion as _cotcomp
 from retiros_monitor import hace as rm_hace
 
 # Validacion server-side del "correo que da la cara" (Reply-To de tickets).
@@ -4157,6 +4158,12 @@ def register_tickets_routes(app, ctx):
 
         alcance_lineas = _lineas(cot.get("alcance"))
         recomendacion_lineas = _lineas(cot.get("recomendacion"))
+        # 30-oct (Daniel, COT-000195): en una instalación, qué hay de verdad en la cotización (equipos / materiales / servicios).
+        _comp_inst = (_cotcomp.componer(items, cot.get("dias_habiles_estimado"))
+                      if cot.get("tipo_servicio") == "instalacion" else None)
+        _inst_parrafo = _inst_servicio = None
+        if _comp_inst is not None:
+            _inst_parrafo, _a_inst, _r_inst, _inst_servicio = _cotcomp.textos_instalacion(_comp_inst, uf_info=bool(uf_info))
         # Auto-recomendación inteligente (2026-07-22, Daniel: "algo
         # inteligente que no dependa mucho del usuario... la gente tiene que
         # saber si tiene visitas previas o si es la primera vez"). Si es
@@ -4248,7 +4255,6 @@ def register_tickets_routes(app, ctx):
                     "Cotizar por separado cualquier repuesto o reparación que se detecte durante la visita.",
                 ]
         elif cot.get("tipo_servicio") == "instalacion" and not alcance_lineas and not recomendacion_lineas:
-            _n_equipos = sum(it["cantidad"] for it in items) or len(items)
             _rut_cli = (cot.get("rut") or "").strip()
             _previas = 0
             if _rut_cli:
@@ -4261,27 +4267,10 @@ def register_tickets_routes(app, ctx):
                     _previas = int((_pr or {}).get("n") or 0)
                 except Exception:
                     _previas = 0
-            alcance_lineas = [
-                f"Instalación de {_n_equipos} equipo(s) en las dependencias del cliente.",
-                "Desembalaje, armado y posicionamiento final según las condiciones del recinto.",
-                "Nivelación, fijación y ajustes técnicos según especificación del fabricante.",
-                "Pruebas de funcionamiento y calibración antes de la entrega.",
-                "Retiro de embalajes y despeje del área de trabajo.",
-            ]
-            if _previas > 0:
-                recomendacion_lineas = [
-                    f"Cliente recurrente: ya registra {_previas} instalación(es) previa(s) con nosotros — se mantiene el mismo estándar técnico en la puesta en marcha de los equipos.",
-                    "Registrar número de serie y fecha de puesta en marcha de cada equipo instalado.",
-                    "Programar la primera mantención preventiva dentro de los primeros meses de uso.",
-                    "Capacitar al personal del cliente en el uso y cuidado básico del equipo.",
-                ]
-            else:
-                recomendacion_lineas = [
-                    "Primera instalación registrada para este cliente: se documentará la puesta en marcha de cada equipo como referencia técnica.",
-                    "Registrar número de serie y fecha de puesta en marcha de cada equipo instalado.",
-                    "Programar la primera mantención preventiva dentro de los primeros meses de uso.",
-                    "Capacitar al personal del cliente en el uso y cuidado básico del equipo.",
-                ]
+            # 30-oct (Daniel, COT-000195: «dice 6 equipos y es un solo servicio»): el texto sale de lo que la cotización TIENE
+            # (equipos / materiales / servicios, ver cot_composicion.py); con equipos conserva la redacción de siempre.
+            _inst_parrafo, alcance_lineas, recomendacion_lineas, _inst_servicio = _cotcomp.textos_instalacion(
+                _comp_inst, uf_info=bool(uf_info), previas=_previas)
         modo_rico = (cot.get("tipo_servicio") in ("mantencion", "visita_tecnica", "instalacion")) and bool(alcance_lineas or recomendacion_lineas)
 
         kpis = None
@@ -4350,21 +4339,15 @@ def register_tickets_routes(app, ctx):
                     "detalle_titulo": "Detalle Económico de la Visita Técnica",
                 }
             elif _tipo_rico == "instalacion":
-                _parrafo = (
-                    "La presente propuesta corresponde a la instalación de los equipos individualizados en el "
-                    "detalle adjunto, incluyendo armado, nivelación y pruebas de funcionamiento antes de la "
-                    "entrega. Una instalación correcta asegura la operatividad y seguridad del equipo desde el "
-                    "primer uso, y facilita la trazabilidad técnica para futuras mantenciones."
-                    + (" Los precios están expresados en UF y se calculan con la UF vigente a la fecha del "
-                       "servicio." if uf_info else "")
-                )
                 rico_textos = {
                     "titulo": "Propuesta de Instalación",
                     "bt_sub": "Valor de la Instalación",
-                    "parrafo": _parrafo,
+                    "parrafo": _inst_parrafo,
                     "alcance_titulo": "Alcance de la Instalación",
                     "valor_unitario_titulo": "Valor de la Instalación",
                     "detalle_titulo": "Detalle Económico de la Instalación",
+                    # «6 equipos» era la suma de las unidades de TODAS las líneas; ahora dice lo que hay (equipos · servicios · materiales).
+                    "detalle_sub": _comp_inst["detalle_sub"],
                 }
 
         # Fechas/validez ANTES de los términos: el término "Validez" los usa.
@@ -4394,7 +4377,7 @@ def register_tickets_routes(app, ctx):
                                "adjunto, ejecutada en las dependencias del cliente."),
                 "visita_tecnica": ("visita técnica de revisión y diagnóstico de los equipos "
                                    "individualizados en el detalle adjunto."),
-                "instalacion": ("instalación, armado, nivelación y puesta en marcha de los equipos "
+                "instalacion": (_inst_servicio or "instalación, armado, nivelación y puesta en marcha de los equipos "
                                 "individualizados en el detalle adjunto."),
                 "venta_repuesto": ("suministro de los repuestos individualizados en el detalle adjunto."),
             }.get(_tipo_srv, "servicio técnico sobre los ítems individualizados en el detalle adjunto.")
@@ -4444,6 +4427,8 @@ def register_tickets_routes(app, ctx):
             "rico_textos": rico_textos,
             "alcance_lineas": alcance_lineas,
             "recomendacion_lineas": recomendacion_lineas,
+            # Tarjetas de la cabecera de una instalación: lo que hay de verdad, no «equipos = suma de unidades» (None = las de siempre).
+            "kpi_cards": (_comp_inst["cards"] if (_comp_inst is not None and modo_rico) else None),
             "terminos_pares": terminos_pares,
             "mostrar_col_documento": mostrar_col_documento,
             # Bloque "Documentos asociados" del PDF (2026-09-05). Se deriva
