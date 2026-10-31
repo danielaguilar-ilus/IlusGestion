@@ -3007,6 +3007,13 @@ class TestHallazgosFueraDeLaOT(unittest.TestCase):
         self.assertEqual(_entorno().get_template("ot2/_hallazgos.html").render(hallazgos=self._ctx(), es_tecnico=True,
                                                                                  hz_pagina=True).strip(), "")
 
+    def test_la_foto_de_un_hallazgo_deja_elegir_camara_o_galeria(self):
+        # Daniel 30-oct: «en los hallazgos sí puedes tomar fotos de la galería». Sin `capture` el teléfono ofrece cámara o galería;
+        # la evidencia de una tarea que NO es hallazgo sigue abriendo solo la cámara.
+        i = self.DETALLE.index('id="otdChkFotoInp-${t.id}"')
+        etiqueta = self.DETALLE[i:i + 260]
+        self.assertIn("(_pideHallazgo || _fshConFotos) ? '' : ' capture=\"environment\"'", etiqueta)
+
     def test_las_rutas_nuevas_son_solo_de_gestion(self):
         for ruta, fn in (('@app.route("/ot/hallazgos", methods=["GET"])', "def ot_hallazgos_pagina("),
                          ('@app.route("/ot/api/hallazgos/contador", methods=["GET"])', "def ot_api_hallazgos_contador(")):

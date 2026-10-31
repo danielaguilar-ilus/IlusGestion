@@ -14710,6 +14710,8 @@ function otdChkFotoBtnHtml(t){
     return '';
   }
   if (!exigeFoto && !_pideHallazgo && !_fshConFotos) return '';
+  // 🖼️ 2026-10-30 (Daniel: «en los hallazgos sí puedes tomar fotos de la galería»): la foto de un HALLAZGO deja elegir cámara o galería (sin `capture`);
+  // la evidencia de una tarea que no es hallazgo sigue abriendo solo la cámara.
   // 🧾 2026-10-19: tarea dispensada por «No llegó»: la foto ya no se exige; queda solo un «Agregar foto» neutro.
   const _disp = !!(t._ev && t._ev.dispensada);
   const need = !_disp && !(t.fotos && t.fotos.length);
@@ -14717,7 +14719,7 @@ function otdChkFotoBtnHtml(t){
             onclick="otdChkAbrirFoto(${t.id}, ${t.maquina_id})">
             <i class="bi bi-camera-fill"></i> ${need ? (_pideHallazgo ? 'Falta foto del hallazgo' : 'Falta foto')
               : ((t.fotos && t.fotos.length) ? 'Agregar otra' : 'Agregar foto')}</button>
-          <input type="file" id="otdChkFotoInp-${t.id}" accept="image/*" capture="environment"
+          <input type="file" id="otdChkFotoInp-${t.id}" accept="image/*"${(_pideHallazgo || _fshConFotos) ? '' : ' capture="environment"'}
                  style="display:none" onchange="otdChkSubirFoto(this, ${t.id})">`;
 }
 
