@@ -238,3 +238,8 @@ a.hz-btn{text-decoration:none}
 .hz-plazo.ambar{background:#fff8e1;border-color:#fde68a;color:#78350f}.hz-plazo.ambar small{color:#92400e}
 .hz-plazo.rojo{background:#fee2e2;border-color:#fecaca;color:#991b1b}.hz-plazo.rojo small{color:#991b1b}
 .hz-rec-sub{display:block}
+
+/* 2026-10-30 (auditoría de diseño): las variables --rm-* de Retiros solo se definían dentro de .rm-monitor; la barra fija de borrado, la ficha
+   y sus tarjetas quedaban fuera y sus botones .rm-btn salían sin borde ni color. */
+.hzm-barra,.hzp-sel-cab,.hzf-vacio,.hzf-cab,.hzf-card,#hzpTarjeta{--rm-red:#dc2626;--rm-black:#0a0a0a;--rm-green:#16a34a;--rm-amber:#f59e0b;--rm-blue:#3b82f6;
+  --rm-ink:#111827;--rm-ink2:#374151;--rm-line:#e5e7eb}

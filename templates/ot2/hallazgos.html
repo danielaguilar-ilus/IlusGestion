@@ -106,11 +106,15 @@
           {% for n in (opciones.rep if opciones else []) %}<option value="{{ n }}"{{ ' selected' if tec == n }}>{{ n }}</option>{% endfor %}
           {% if tec and tec not in (opciones.rep if opciones else []) %}<option value="{{ tec }}" selected>{{ tec }}</option>{% endif %}</select>
         <button class="rm-btn" type="submit"><i class="bi bi-funnel-fill"></i>Filtrar</button>
-        {% if q or sev or tec or resp_f or tom_f %}<a class="rm-btn rm-btn-rojo" href="?vista={{ vista }}&pp={{ por_pag }}"><i class="bi bi-x-circle"></i>Limpiar filtros</a>{% endif %}
+        {% if q or sev or tec or resp_f or tom_f %}<a class="rm-btn" href="?vista={{ vista }}&pp={{ por_pag }}"><i class="bi bi-x-circle"></i>Limpiar filtros</a>{% endif %}
       </div>
     </div>
   </form>
 
+  {#- Leyenda de los 7 puntos de la columna «Atención» (auditoría 30-oct: solo color y sin leyenda). -#}
+  <div class="hzm-leyenda" aria-label="Qué significan los puntos de colores">Puntos de la columna Atención, en orden:
+    <b>atención</b> · <b>valorización</b> · <b>OT de seguimiento</b> · <b>ticket</b> · <b>abastecimiento</b> · <b>bodega</b> · <b>consumo</b>
+    <span class="hzm-ley-v">verde: hecho</span><span class="hzm-ley-a">ámbar: falta</span><span class="hzm-ley-g">gris: no aplica todavía</span></div>
   <div class="rm-wrap">
     <div class="table-responsive">
       <table class="ilus-table table-mobile-cards rm-table align-middle" id="hzTabla">
@@ -279,6 +283,14 @@
     #hzTabla .rm-ic-btn{width:36px;height:36px}
     #hzTabla .rm-reloj-fila{margin-top:4px}
   }
+  .hzm-leyenda{font-size:.8rem;color:#374151;margin:10px 4px 0;line-height:1.5}
+  .hzm-leyenda span{display:inline-block;margin-left:10px;font-weight:700}
+  .hzm-ley-v{color:#166534}.hzm-ley-a{color:#92400e}.hzm-ley-g{color:#6b7280}
+  /* Pantallas medianas: «Reportado» ya está en la guía y en la ficha; sin él las filas no sacan scroll horizontal (REGLA #4.3). */
+  @media (min-width:769px) and (max-width:1399px){
+    #hzTabla .hzm-w-f,#hzTabla td[data-label="Reportado"]{display:none}
+    #hzTabla .hzm-w-h{width:20%}#hzTabla .hzm-w-s{width:18%}
+  }
   /* Celular (REGLA #3): una tarjeta CORTA por hallazgo, como Retiros: sin etiquetas de columna, alineado a la izquierda, la casilla arriba a la
      derecha y «Gestionar» de 44 px al pie. La guía completa está en la ficha del hallazgo (la flecha se oculta). */
   @media (max-width:768px){
@@ -287,8 +299,9 @@
     #hzTabla tbody tr.hzm-row > td{display:block;padding:3px 0;border:0;text-align:left}
     #hzTabla tbody tr.hzm-row > td::before{display:none !important}
     #hzTabla tbody tr.hzm-row > td.rm-c-exp{display:none}
-    #hzTabla tbody tr.hzm-row > td.hzm-chk{position:absolute;top:8px;right:8px;width:auto;padding:0}
+    #hzTabla tbody tr.hzm-row > td.hzm-chk{position:absolute;top:0;right:0;width:44px;height:44px;padding:0;display:flex;align-items:center;justify-content:center}
     #hzTabla tbody tr.hzm-row > td.hzm-chk input{width:26px;height:26px}
+    .hzm-barra #hzTodoBtn span,.hzm-barra #hzQuitarSel span{display:none}
     #hzTabla tbody tr.hzm-row .rm-cell{align-items:flex-start;text-align:left}
     #hzTabla tbody tr.hzm-row > td:last-child{display:flex;justify-content:flex-end;margin-top:6px;padding-top:8px}
     #hzTabla tbody tr.hzm-det{display:none !important}

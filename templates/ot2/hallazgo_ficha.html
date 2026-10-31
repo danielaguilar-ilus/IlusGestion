@@ -10,7 +10,7 @@
   Solo gestión (REGLAS #19/#26). Datos: ot_hallazgo_ficha (app.py).
 #}
 
-{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='retiros_monitor.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='ot_hallazgos.css') }}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='retiros_monitor.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='inquietudes.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='ot_hallazgos.css') }}">{% endblock %}
 
 {% block content %}
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -39,7 +39,7 @@
       {% if x.riesgo %}<span class="hz-chip rojo"><i class="bi bi-person-exclamation" aria-hidden="true"></i> Puede lastimar a alguien</span>{% endif %}
       <span class="badge rm-estado e-{{ x.estado_color }}">{{ x.estado_txt }}</span>
     </div>
-    <div class="hzf-ot"><a class="rm-code" href="{{ ot.url }}">{{ x.numero_ot }}</a>{% if x.ot_estado %} <span class="rm-origen">{{ x.ot_estado }}</span>{% endif %}
+    <div class="hzf-ot">{% if ot %}<a class="rm-code" href="{{ ot.url }}">{{ x.numero_ot }}</a>{% else %}<span class="rm-code">{{ x.numero_ot }}</span>{% endif %}{% if x.ot_estado %} <span class="rm-origen">{{ x.ot_estado }}</span>{% endif %}
       · <b>{{ x.cliente }}</b>{% if x.cliente_rut %} <span class="hzf-sub">RUT {{ x.cliente_rut }}</span>{% endif %}</div>
     <div class="hzf-sub"><i class="bi bi-person-badge" aria-hidden="true"></i> Reportó <b>{{ x.reporto }}</b> · {{ x.reportado }}{% if x.hace %} · {{ x.hace }}{% endif %}</div>
   </div>
@@ -89,6 +89,16 @@
   </section>
 </div>
 
+{#- La gestión de siempre, con solo este hallazgo. -#}
+<div id="hzpTarjeta">
+  <div class="hzp-sel-cab">
+    <span><i class="bi bi-sliders" aria-hidden="true"></i> Gestionar este hallazgo</span>
+    {% if ot.n_hallazgos and ot.n_hallazgos > 1 %}<a href="{{ ot.todos_url }}" class="rm-btn"><i class="bi bi-list-check"></i>Ver los {{ ot.n_hallazgos }} hallazgos de {{ ot.numero_ot }}</a>{% endif %}
+  </div>
+  {% include 'ot2/_hallazgos.html' %}
+  {% if not hallazgos or not hallazgos.n_total %}<div class="hzp-vacio">Este hallazgo ya no se puede gestionar desde aquí.</div>{% endif %}
+</div>
+
 <section class="hzf-card hzf-rec" aria-label="Recorrido del hallazgo">
   <div class="hzm-guia-tit"><i class="bi bi-signpost-split" aria-hidden="true"></i> Recorrido de {{ x.sev_texto|lower }} · {{ x.numero_ot }}
     <small>salidas: OT de seguimiento, ticket, abastecimiento, bodega y consumo de la OT</small></div>
@@ -100,15 +110,6 @@
   </ol>
 </section>
 
-{#- La gestión de siempre, con solo este hallazgo. -#}
-<div id="hzpTarjeta">
-  <div class="hzp-sel-cab">
-    <span><i class="bi bi-sliders" aria-hidden="true"></i> Gestionar este hallazgo</span>
-    {% if ot.n_hallazgos and ot.n_hallazgos > 1 %}<a href="{{ ot.todos_url }}" class="rm-btn"><i class="bi bi-list-check"></i>Ver los {{ ot.n_hallazgos }} hallazgos de {{ ot.numero_ot }}</a>{% endif %}
-  </div>
-  {% include 'ot2/_hallazgos.html' %}
-  {% if not hallazgos or not hallazgos.n_total %}<div class="hzp-vacio">Este hallazgo ya no se puede gestionar desde aquí.</div>{% endif %}
-</div>
 {% endif %}
 
 <style>
@@ -125,7 +126,7 @@
   .hzf-ot{font-size:.95rem;color:#111827;overflow-wrap:anywhere}
   .hzf-sub{font-size:.82rem;color:#6b7280;margin-top:4px}
   .hzf-sig{margin:12px 0 0}
-  .hzf-sig a{color:inherit;font-weight:800}
+  .hzf-sig a{color:inherit;font-weight:800;display:inline-flex;align-items:center;min-height:44px}
   .hzf-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
   @media (max-width:768px){.hzf-grid{grid-template-columns:1fr}}
   .hzf-card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:14px 18px}
