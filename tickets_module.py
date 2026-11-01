@@ -4946,9 +4946,13 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     #  PAGINA — Cotizaciones (esqueleto, Fase 5 del blueprint)
     # ─────────────────────────────────────────────────────────────────
+    # 🔒 2026-10-31 (REGLA #26, Daniel: «sí, ciérrala»): la LISTA era la única página de cotizaciones sin el candado
+    #    «sin técnicos» que sí llevan sus APIs y el histórico; el técnico elevado la abría y la plantilla pinta
+    #    totales y margen. Ahora la familia técnico recibe el aviso amable y vuelve a Tickets. Gestión no cambia.
     @app.route("/tickets/cotizaciones")
     @_tickets_required
     @_no_tecnico_externo
+    @_tk_sin_cotizaciones_tecnico
     def tk_cotizaciones_list():
         # LEFT JOIN a tk_tickets para poder pintar "Ver ticket TK-..." cuando
         # ya existe (flujo inverso, Daniel 2026-07-15) y decidir si el boton

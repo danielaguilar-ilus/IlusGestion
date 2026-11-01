@@ -652,8 +652,10 @@
        reconoce "tecnico_externo", así que el link SÍ aparecía para el
        proveedor externo. Backend ya bloqueado con @_no_tecnico_externo en
        tk_cotizaciones_list. #}
-    {% if current_user and current_user.role != 'tecnico'
-          and not (current_user.role or '').startswith('tecnico_externo') %}
+    {# 🔒 2026-10-31 (REGLA #26, Daniel: «sí, ciérrala»): Cotizaciones no se ofrece a NINGÚN técnico (interno, elevado ni externo:
+       `es_tecnico` es la familia completa). Antes solo excluía el rol exacto «tecnico» y «tecnico_externo*», y el técnico
+       elevado (Jaizer, Lenin, Dave) la veía aunque la página lleve montos y margen. Gestión no cambia. #}
+    {% if current_user and not es_tecnico %}
     {# 2026-07-23 (Daniel, feedback en vivo: "le das crear cotizaciones,
        te lleva como a otra tabla de cotizaciones, y no puedes volver").
        Causa real: este link apuntaba a cotizaciones_hub_list (un hub
