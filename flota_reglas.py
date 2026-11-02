@@ -1,4 +1,4 @@
-"""Reglas PURAS de la flota de ILUS Fitness (vehículos propios y, en las fases siguientes, choferes y solicitudes de uso).
+"""Reglas PURAS de la flota de ILUS Fitness (vehículos propios, choferes y solicitudes de uso).
 
 Sin Flask, sin base de datos y sin red: todo lo que DECIDE algo vive acá y se prueba en tests/test_flota_vehiculos.py.
 flota_module.py solo lee, escribe y pinta.
@@ -8,7 +8,7 @@ fija en el código: hoy son un furgón y un camión, pero cada vehículo nuevo s
 combustibles, clase de licencia) y la persona decide (REGLA #32). Este módulo no maneja precios ni costos.
 """
 import re
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 # Clases de licencia de conducir de Chile (Ley de Tránsito N°18.290). Réplica local a propósito de LICENCIA_CLASES_CHILE de app.py: este
@@ -341,4 +341,263 @@ def lineas_de_cambios(cambios_):
         antes = v.get("antes") or "(vacío)"
         despues = v.get("despues") or "(vacío)"
         out.append(f"{ETIQUETAS.get(c, c)}: {antes} → {despues}")
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  FASE 1b · CHOFERES Y SOLICITUDES DE USO
+#  Daniel (02-nov-2026): «la solicitud la va a poder hacer logística o servicio técnico, asignando el chofer que va a ir a retirar la
+#  llave. Aarón marca que la llave fue entregada tal y tal hora». «El sello decide» cuando dos personas piden lo mismo: no hay quien
+#  apruebe un choque, el sistema lo dice y se elige otro horario u otro vehículo. Es una RESERVA: no maneja precios ni costos.
+# ═══════════════════════════════════════════════════════════════════════════
+ESTADOS = {
+    "solicitada": "Por confirmar",
+    "confirmada": "Confirmada",
+    "llave_entregada": "Llave entregada",
+    "cancelada": "Cancelada",
+}
+ESTADOS_OCUPAN = ("solicitada", "confirmada", "llave_entregada")     # los que bloquean el calendario del vehículo
+ESTADOS_EDITABLES = ("solicitada", "confirmada")                      # con la llave ya entregada no se mueve (se cancela con motivo)
+AREAS_SUGERIDAS = ("Logística", "Servicio Técnico")                   # solo sugerencia (REGLA #32): la persona escribe la suya si hace falta
+MAX_DIAS_USO = 7
+USO_MOTIVO_MIN, USO_MOTIVO_MAX = 5, 500
+CAMBIO_MOTIVO_MIN = 5
+
+DIAS_SEMANA = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+
+
+def _id(valor):
+    """Entero positivo o None (acepta 3 o '3')."""
+    if isinstance(valor, bool) or valor is None:
+        return None
+    try:
+        n = int(str(valor).strip())
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def parse_hora(valor):
+    """'8:30' / '08:30' / '08:30:00' → time. None si viene vacía. ValueError si no es una hora."""
+    if valor is None or (isinstance(valor, str) and not valor.strip()):
+        return None
+    if isinstance(valor, time):
+        return valor.replace(second=0, microsecond=0)
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})(?::\d{2})?", str(valor).strip())
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        raise ValueError("Hora no válida (usa el formato 08:30).")
+    return time(int(m.group(1)), int(m.group(2)))
+
+
+def hora_texto(dt_):
+    return dt_.strftime("%H:%M") if dt_ else ""
+
+
+def fecha_dia_texto(f):
+    """date/datetime → 'lun 03/11/2026' (día de la semana en español, nunca ISO crudo: REGLA #6)."""
+    if isinstance(f, datetime):
+        f = f.date()
+    return f"{DIAS_SEMANA[f.weekday()]} {f.strftime('%d/%m/%Y')}" if f else ""
+
+
+def rango_texto(inicio, fin):
+    """El horario dicho como lo diría una persona: 'lun 03/11/2026 · 08:00 a 12:30' o, si cruza de día,
+    'lun 03/11/2026 08:00 → mar 04/11/2026 12:30'."""
+    if not inicio or not fin:
+        return ""
+    if inicio.date() == fin.date():
+        return f"{fecha_dia_texto(inicio)} · {hora_texto(inicio)} a {hora_texto(fin)}"
+    return f"{fecha_dia_texto(inicio)} {hora_texto(inicio)} → {fecha_dia_texto(fin)} {hora_texto(fin)}"
+
+
+def numero_solicitud(sid, anio):
+    """VEH-2026-0042. Sale del id (único y sin carreras), no de un contador aparte."""
+    return f"VEH-{int(anio)}-{int(sid):04d}"
+
+
+# ── Validación de la solicitud ─────────────────────────────────────────────
+def validar_solicitud(payload, ahora=None, editando=False):
+    """Normaliza lo que llega del formulario de solicitud. Devuelve (datos, errores).
+    `ahora` = la hora de Chile (naive). Con `editando=True` (la gestión mueve una reserva) un uso que ya empezó puede seguir, pero uno que
+    ya terminó no. El horario es OBLIGATORIO: «necesito que me declaren el horario en que necesitan el camión»."""
+    p = payload or {}
+    ahora = ahora or datetime.now()
+    hoy = ahora.date()
+    errores, datos = {}, {}
+
+    for campo, msg in (("vehiculo_id", "Elige el vehículo."), ("chofer_id", "Elige el chofer que retirará la llave.")):
+        n = _id(p.get(campo))
+        if n is None:
+            errores[campo] = msg
+        datos[campo] = n
+
+    area = re.sub(r"\s+", " ", str(p.get("area") or "")).strip()
+    if not area:
+        errores["area"] = "Indica desde qué área lo pides (por ejemplo Logística o Servicio Técnico)."
+    elif len(area) < 2 or len(area) > 60:
+        errores["area"] = "El área debe tener entre 2 y 60 caracteres."
+    datos["area"] = area or None
+
+    motivo = re.sub(r"\s+", " ", str(p.get("motivo") or "")).strip()
+    if len(motivo) < USO_MOTIVO_MIN:
+        errores["motivo"] = f"Cuenta para qué lo necesitas (mínimo {USO_MOTIVO_MIN} caracteres)."
+    elif len(motivo) > USO_MOTIVO_MAX:
+        errores["motivo"] = f"Máximo {USO_MOTIVO_MAX} caracteres."
+    datos["motivo"] = motivo or None
+
+    f = fh = hd = hh = None
+    try:
+        f = fecha_o_none(p.get("fecha"))
+    except ValueError as e:
+        errores["fecha"] = str(e)
+    if f is None and "fecha" not in errores:
+        errores["fecha"] = "Elige el día."
+    try:
+        fh = fecha_o_none(p.get("fecha_hasta")) or f
+    except ValueError as e:
+        errores["fecha_hasta"] = str(e)
+    for campo, msg in (("hora_desde", "Indica a qué hora lo necesitas."), ("hora_hasta", "Indica hasta qué hora lo usarás.")):
+        try:
+            h = parse_hora(p.get(campo))
+        except ValueError as e:
+            errores[campo] = str(e)
+            h = None
+        if h is None and campo not in errores:
+            errores[campo] = msg
+        if campo == "hora_desde":
+            hd = h
+        else:
+            hh = h
+
+    datos["inicio"] = datos["fin"] = None
+    if f and fh and hd and hh and "fecha_hasta" not in errores:
+        inicio, fin = datetime.combine(f, hd), datetime.combine(fh, hh)
+        datos["inicio"], datos["fin"] = inicio, fin
+        if not editando and f < hoy:
+            errores["fecha"] = "Ese día ya pasó. Elige hoy o una fecha futura."
+        elif fin <= inicio:
+            errores["hora_hasta"] = "La hora de término debe ser después de la de inicio."
+        elif fin <= ahora:
+            errores["hora_hasta"] = "Ese horario ya terminó. Elige uno que no haya pasado."
+        elif fin - inicio > timedelta(days=MAX_DIAS_USO):
+            errores["hora_hasta"] = f"Una solicitud puede durar hasta {MAX_DIAS_USO} días."
+    return datos, errores
+
+
+def validar_motivo_cambio(texto, minimo=CAMBIO_MOTIVO_MIN):
+    """(motivo, error) del porqué se mueve o se cancela una reserva: obligatorio, queda en la bitácora."""
+    t = re.sub(r"\s+", " ", str(texto or "")).strip()
+    if len(t) < minimo:
+        return None, f"Cuenta brevemente por qué (mínimo {minimo} caracteres)."
+    if len(t) > MOTIVO_MAX:
+        return None, f"Máximo {MOTIVO_MAX} caracteres."
+    return t, None
+
+
+# ── Choques de horario: el SELLO decide ────────────────────────────────────
+def se_cruzan(a_ini, a_fin, b_ini, b_fin):
+    """Dos horarios se pisan solo si cada uno empieza antes de que termine el otro. Terminar justo cuando empieza otro NO es un choque."""
+    return a_ini < b_fin and a_fin > b_ini
+
+
+def conflictos(inicio, fin, filas, excluir_id=None):
+    """Las reservas de `filas` (con 'inicio', 'fin', 'estado', 'id') que se pisan con [inicio, fin). Solo cuentan las que ocupan el calendario
+    (por confirmar, confirmadas y con la llave entregada); una cancelada libera el horario."""
+    out = []
+    for f in filas or []:
+        if excluir_id is not None and f.get("id") == excluir_id:
+            continue
+        if f.get("estado") not in ESTADOS_OCUPAN:
+            continue
+        if se_cruzan(inicio, fin, f["inicio"], f["fin"]):
+            out.append(f)
+    return sorted(out, key=lambda x: (x["inicio"], x.get("id") or 0))
+
+
+# ── Chofer y vehículo para una solicitud ───────────────────────────────────
+def licencia_cubre(clases_chofer, clases_vehiculo):
+    """El vehículo exige UNA de sus clases («Clase B o A4»): basta con que el chofer tenga alguna. Si el vehículo no exige ninguna, cubre."""
+    exigidas = set(normalizar_clases(clases_vehiculo))
+    if not exigidas:
+        return True
+    return bool(exigidas & set(normalizar_clases(clases_chofer)))
+
+
+def evaluar_chofer(chofer, clases_vehiculo, fecha_fin, hoy):
+    """(error, aviso) de poner a este chofer en este vehículo hasta `fecha_fin`.
+    Bloquea lo que sería manejar sin licencia: chofer inhabilitado, sin la clase que exige el vehículo, sin vencimiento registrado o con la
+    licencia vencida antes de terminar el uso. Avisa (sin bloquear) si le vence pronto."""
+    nombre = (chofer or {}).get("nombre") or "El chofer"
+    if not (chofer or {}).get("habilitado"):
+        return f"{nombre} está inhabilitado como chofer.", None
+    exigidas = normalizar_clases(clases_vehiculo)
+    if not licencia_cubre(chofer.get("licencia_clases"), exigidas):
+        return f"{nombre} no tiene registrada la licencia que exige este vehículo (clase {' o '.join(exigidas)}).", None
+    try:
+        vence = fecha_o_none(chofer.get("licencia_vence"))
+    except ValueError:
+        vence = None
+    if vence is None:
+        return f"{nombre} no tiene registrado el vencimiento de su licencia.", None
+    if isinstance(fecha_fin, datetime):
+        fecha_fin = fecha_fin.date()
+    if vence < fecha_fin:
+        return f"La licencia de {nombre} vence el {fecha_corta(vence)}, antes de terminar este uso.", None
+    if estado_vencimiento(vence, hoy) == "por_vencer":
+        return None, f"La licencia de {nombre} {texto_dias((vence - hoy).days).lower()} ({fecha_corta(vence)})."
+    return None, None
+
+
+def avisos_vehiculo(fila_vehiculo, fecha_uso):
+    """Documentos del vehículo que estarán vencidos el día del uso. ALERTA, no bloquea (queda pendiente la decisión de Daniel)."""
+    out = []
+    for clave, nombre in DOCUMENTOS:
+        try:
+            v = fecha_o_none((fila_vehiculo or {}).get(clave + "_vence"))
+        except ValueError:
+            v = None
+        if v is not None and v < fecha_uso:
+            out.append(f"{nombre}: vence el {fecha_corta(v)}, antes del día de uso.")
+    return out
+
+
+# ── Choferes ───────────────────────────────────────────────────────────────
+CHOFER_COLUMNAS = ("licencia_clases", "licencia_vence", "notas")
+CHOFER_ETIQUETAS = {"licencia_clases": "Clases de licencia", "licencia_vence": "Licencia vence", "notas": "Observaciones"}
+
+
+def validar_chofer(payload, con_usuario=True):
+    """Normaliza el alta o la edición de un chofer. Devuelve (datos, errores). Cada chofer es un usuario de ILUS (Daniel: «cada chofer
+    tiene su usuario»): el nombre y el teléfono salen de su perfil, acá solo se guarda lo propio de conducir."""
+    p = payload or {}
+    errores, datos = {}, {}
+    if con_usuario:
+        uid = _id(p.get("usuario_id"))
+        if uid is None:
+            errores["usuario_id"] = "Elige a qué usuario de ILUS corresponde este chofer."
+        datos["usuario_id"] = uid
+    clases = normalizar_clases(p.get("licencia_clases"))
+    if not clases:
+        errores["licencia_clases"] = "Elige al menos una clase de licencia (por ejemplo B)."
+    datos["licencia_clases"] = ",".join(clases) if clases else None
+    try:
+        vence = fecha_o_none(p.get("licencia_vence"))
+    except ValueError as e:
+        errores["licencia_vence"] = str(e)
+        vence = None
+    if vence is None and "licencia_vence" not in errores:
+        errores["licencia_vence"] = "Indica cuándo vence la licencia: sin esa fecha no se puede comprobar que esté vigente."
+    datos["licencia_vence"] = vence
+    notas = str(p.get("notas") or "").strip()
+    if len(notas) > 500:
+        errores["notas"] = "Máximo 500 caracteres."
+    datos["notas"] = notas or None
+    return datos, errores
+
+
+def lineas_de_cambios_chofer(cambios_):
+    out = []
+    for c, v in (cambios_ or {}).items():
+        out.append(f"{CHOFER_ETIQUETAS.get(c, c)}: {v.get('antes') or '(vacío)'} → {v.get('despues') or '(vacío)'}")
     return out

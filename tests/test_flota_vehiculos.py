@@ -230,6 +230,8 @@ class BaseFalsa:
             return dict(self.veh[p[0]]) if p[0] in self.veh else None
         if s == "SELECT * FROM flota_vehiculos WHERE patente=%s":
             return next((dict(v) for v in self.veh.values() if v["patente"] == p[0]), None)
+        if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE vehiculo_id=%s"):
+            return {"n": 0}          # reservas por delante (fase 1b): acá no hay solicitudes
         raise AssertionError("fetchone no previsto: " + s[:90])
 
     def fetchall(self, q, p=None):
@@ -541,7 +543,7 @@ class TestCableado(unittest.TestCase):
 
     def test_arranque_barato_una_sentencia_por_ddl_y_sin_alter(self):
         self.assertNotRegex(self.MODULO, r"ALTER\s+TABLE")
-        self.assertEqual(len(re.findall(r"CREATE TABLE IF NOT EXISTS flota_", self.MODULO)), 2)
+        self.assertEqual(len(re.findall(r"CREATE TABLE IF NOT EXISTS flota_", self.MODULO)), 6)     # 2 de vehículos + 4 de la fase 1b
 
     def test_la_bitacora_solo_se_agrega(self):
         self.assertNotRegex(self.MODULO, r"UPDATE\s+flota_vehiculo_log")
@@ -624,9 +626,13 @@ class TestPantalla(unittest.TestCase):
     def test_el_js_no_usa_request_animation_frame(self):
         self.assertNotRegex(self.js, r"requestAnimationFrame\s*\(")      # el comentario que lo menciona no cuenta
 
-    def test_las_pestanas_pendientes_no_se_pueden_abrir(self):
-        self.assertEqual(len(re.findall(r'class="fl-tab"[^>]*disabled', self.html)), 2)
-        self.assertIn("Próxima fase", self.html)
+    def test_las_tres_pestanas_estan_abiertas(self):
+        # Fase 1b: Solicitudes, Vehículos y Choferes ya se pueden abrir (antes dos decían «Próxima fase»)
+        self.assertEqual(len(re.findall(r'class="fl-tab[^"]*"[^>]*disabled', self.html)), 0)
+        self.assertNotIn("Próxima fase", self.html)
+        for t in ("solicitudes", "vehiculos", "choferes"):
+            self.assertIn(f'data-tab="{t}"', self.html)
+            self.assertIn(f'data-panel="{t}"', self.html)
 
     @unittest.skipUnless(HAY_NODE, "node no está instalado")
     def test_js_pasa_node_check(self):

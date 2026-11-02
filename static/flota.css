@@ -1,4 +1,4 @@
-/* Solicitudes de vehículo · Flota (Fase 1a). Paleta ILUS (REGLA #2): rojo #dc2626, negro #0a0a0a, blanco; apoyo verde/ámbar. */
+/* Solicitudes de vehículo · Flota (Fases 1a y 1b). Paleta ILUS (REGLA #2): rojo #dc2626, negro #0a0a0a, blanco; apoyo verde/ámbar. */
 .fl-preview{display:flex;align-items:center;gap:10px;background:#fff8e1;border:1px solid #fde68a;color:#92400e;
   border-radius:12px;padding:10px 14px;margin:0 0 14px;font-size:.84rem;line-height:1.35}
 .fl-preview i{font-size:1.05rem;flex:0 0 auto}
@@ -142,3 +142,153 @@
   .fl-pie-ctrl{justify-content:space-between}
 }
 @media (prefers-reduced-motion: reduce){.fl-paso-n{transition:none}}
+
+
+/* ═══ FASE 1b · Solicitudes (lista y calendario) y choferes ═══ */
+.fl-panel[hidden]{display:none}
+.fl-kpi--info{border-left-color:#3b82f6}
+.fl-tab{cursor:pointer}
+.fl-tab:hover:not(.on){color:#0a0a0a}
+.fl-tab:focus-visible,.fl-fchip:focus-visible,.fl-dia:focus-visible,.fl-btn:focus-visible{outline:3px solid #fecaca;outline-offset:2px}
+
+/* Chips de filtro (otra clase que .fl-chip a propósito: flota.js engancha esa) */
+.fl-fchip{border:0;background:#fff;color:#374151;font-weight:700;font-size:.8rem;padding:0 16px;min-height:44px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.fl-fchip.on{background:#0a0a0a;color:#fff}
+.fl-vistas{display:inline-flex;border:1px solid #d1d5db;border-radius:50px;overflow:hidden;background:#fff}
+.fl-toolbar .fl-chips + .fl-chips{margin-left:0}
+.fl-select{min-height:44px;border:1px solid #d1d5db;border-radius:10px;padding:8px 12px;font-size:16px;background:#fff;color:#111827;max-width:100%}
+.fl-select:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px #fee2e2}
+.fl-select--lleno{width:100%;border-width:1.5px}
+.fl-campo.ok .fl-select{border-color:#16a34a}.fl-campo.bad .fl-select{border-color:#dc2626}.fl-campo.warn .fl-select{border-color:#f59e0b}
+
+/* Solicitud: número, horario y estado */
+.fl-num{display:inline-block;white-space:nowrap;font-family:ui-monospace,Consolas,monospace;font-weight:800;font-size:.9rem;color:#0a0a0a;
+  background:#f3f4f6;border-radius:7px;padding:3px 9px;letter-spacing:.02em}
+.fl-cuando{display:block;overflow-wrap:anywhere}
+.fl-nombre{display:block;font-weight:800;color:#0a0a0a;font-size:.95rem;overflow-wrap:anywhere}
+.fl-sub--bad{color:#b91c1c}
+.fl-est{display:inline-flex;align-items:center;gap:6px;font-size:.74rem;font-weight:800;border-radius:50px;padding:4px 11px;white-space:nowrap}
+.fl-est--solicitada{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+.fl-est--confirmada{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}
+.fl-est--llave_entregada{background:#0a0a0a;color:#fff;border:1px solid #0a0a0a}
+.fl-est--cancelada{background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb}
+.fl-btn--llave{color:#fff;background:#0a0a0a;border-color:#0a0a0a}.fl-btn--llave:hover{background:#27272a;border-color:#27272a}
+
+/* Calendario del mes */
+.fl-cal-cab{display:flex;align-items:center;gap:8px;margin:0 0 10px}
+.fl-cal-titulo{flex:1 1 auto;margin:0;font-weight:800;text-align:center;font-size:1.1rem}
+.fl-cal-info{font-size:.8rem;color:#6b7280;margin:0 0 10px;text-align:center}
+.fl-cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;background:#e5e7eb;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden}
+.fl-cal-d{background:#fafafa;text-align:center;font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;padding:8px 0}
+.fl-dia{background:#fff;border:0;text-align:left;min-height:112px;padding:6px 7px;display:flex;flex-direction:column;gap:3px;cursor:pointer;
+  font:inherit;color:inherit;min-width:0;position:relative}
+.fl-dia:hover{background:#fef2f2}
+.fl-dia--vacio{background:#fafafa;cursor:default;pointer-events:none}
+.fl-dia--nolab{background:repeating-linear-gradient(135deg,#fafafa,#fafafa 8px,#f3f4f6 8px,#f3f4f6 16px)}
+.fl-dia--hoy{box-shadow:inset 0 0 0 2px #dc2626}
+.fl-dia-n{font-weight:800;font-size:.85rem;color:#0a0a0a}
+.fl-dia--hoy .fl-dia-n{color:#fff;background:#dc2626;border-radius:50px;min-width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;padding:0 6px;align-self:flex-start}
+.fl-dia-nom{font-size:.64rem;font-weight:700;color:#92400e;line-height:1.2;overflow-wrap:anywhere}
+.fl-cs{display:block;font-size:.68rem;line-height:1.25;border-radius:6px;padding:2px 6px;overflow-wrap:anywhere}
+.fl-cs b{font-weight:800}
+.fl-cs--solicitada{background:#fffbeb;color:#92400e;border-left:3px solid #f59e0b}
+.fl-cs--confirmada{background:#dcfce7;color:#166534;border-left:3px solid #16a34a}
+.fl-cs--llave_entregada{background:#0a0a0a;color:#fff;border-left:3px solid #dc2626}
+.fl-cs-mas{font-size:.68rem;font-weight:800;color:#6b7280}
+.fl-puntos{display:none;gap:3px;flex-wrap:wrap}
+.fl-pto{width:8px;height:8px;border-radius:50%;background:#9ca3af;display:inline-block}
+.fl-pto--solicitada{background:#f59e0b}.fl-pto--confirmada{background:#16a34a}.fl-pto--llave_entregada{background:#0a0a0a}
+.fl-cal-leyenda{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}
+.fl-ley{font-size:.72rem;font-weight:700;border-radius:50px;padding:3px 10px}
+.fl-ley--solicitada{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+.fl-ley--confirmada{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}
+.fl-ley--llave_entregada{background:#0a0a0a;color:#fff}
+.fl-ley--nolab{background:#f3f4f6;color:#4b5563;border:1px solid #e5e7eb}
+.fl-agenda{display:none;margin:14px 0 0}
+.fl-ag-dia{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;margin:0 0 8px}
+.fl-ag-dia--nolab{background:#fafafa}
+.fl-ag-cab{display:flex;flex-direction:column;gap:2px;margin:0 0 6px}
+.fl-ag-cab span{font-size:.74rem;color:#92400e;font-weight:700}
+.fl-ag-res{display:flex;align-items:center;gap:10px;width:100%;border:1px solid #e5e7eb;background:#fff;border-radius:10px;padding:8px 10px;
+  min-height:48px;text-align:left;margin:4px 0 0;cursor:pointer}
+.fl-ag-res > span:last-child{display:flex;flex-direction:column;min-width:0;font-size:.82rem}
+.fl-ag-res > span:last-child span{color:#6b7280;font-size:.76rem;overflow-wrap:anywhere}
+
+/* Un día del calendario: línea de tiempo de cada vehículo */
+.fl-aviso{display:flex;gap:10px;align-items:flex-start;border-radius:12px;padding:10px 14px;margin:0 0 12px;font-size:.84rem;line-height:1.35;border:1px solid}
+.fl-aviso--warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.fl-linea{border:1px solid #e5e7eb;border-radius:14px;padding:12px 14px;margin:0 0 12px;background:#fff}
+.fl-linea-cab{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px}
+.fl-pista{position:relative;height:34px;border-radius:8px;background:
+  repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),#e5e7eb calc(25% - 1px),#e5e7eb 25%),#f3f4f6;overflow:hidden}
+.fl-blq{position:absolute;top:3px;bottom:3px;border:0;border-radius:6px;cursor:pointer;min-width:6px;padding:0}
+.fl-blq--solicitada{background:#f59e0b}.fl-blq--confirmada{background:#16a34a}.fl-blq--llave_entregada{background:#0a0a0a}
+.fl-blq--cancelada{background:#9ca3af}
+.fl-pista-horas{display:flex;justify-content:space-between;font-size:.66rem;color:#9ca3af;margin:3px 0 8px;font-variant-numeric:tabular-nums}
+.fl-res-lista{display:flex;flex-direction:column;gap:6px}
+.fl-res{display:flex;align-items:center;gap:10px;width:100%;border:1px solid #e5e7eb;background:#fff;border-radius:10px;padding:8px 10px;
+  min-height:48px;text-align:left;cursor:pointer;font-size:.86rem}
+.fl-res:hover,.fl-ag-res:hover{border-color:#0a0a0a}
+.fl-libre{font-size:.82rem;color:#166534;display:flex;align-items:center;gap:6px;font-weight:700}
+
+/* Detalle de una solicitud */
+.fl-det-cab{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.fl-det-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.fl-det-b{background:#fafafa;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;min-width:0;overflow-wrap:anywhere}
+.fl-det-t{display:block;font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;margin:0 0 4px}
+.fl-det-h{font-weight:800;margin:18px 0 10px}
+.fl-det-acc{flex-wrap:wrap;gap:8px}
+.fl-det-acc .btn{min-height:44px}
+
+/* Formulario de solicitud */
+.fl-grid--3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.fl-campo--corto{max-width:280px}
+.fl-check{display:flex;align-items:center;gap:8px;font-size:.88rem;font-weight:600;margin:10px 0 0;min-height:44px;cursor:pointer}
+.fl-check input{width:20px;height:20px;accent-color:#dc2626}
+.fl-vcards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.fl-vcard,.fl-campo label.fl-vcard{display:flex;gap:10px;align-items:flex-start;border:1.5px solid #d1d5db;border-radius:12px;padding:12px;background:#fff;cursor:pointer;min-height:44px;margin:0;text-transform:none;letter-spacing:normal;font-size:.9rem;font-weight:400;color:#111827}
+.fl-vcard input{margin-top:4px;width:20px;height:20px;accent-color:#dc2626;flex:0 0 auto}
+.fl-vcard.on{border-color:#0a0a0a;background:#fafafa;box-shadow:0 0 0 2px #0a0a0a1a}
+.fl-vcard.off{opacity:.6;cursor:not-allowed}
+.fl-vcard-c{display:flex;flex-direction:column;gap:4px;min-width:0}
+.fl-vcard-t{font-size:.9rem;overflow-wrap:anywhere}
+.fl-vcard-s{font-size:.76rem;color:#6b7280}
+.fl-vcard-disp{font-size:.78rem;font-weight:700;overflow-wrap:anywhere}
+.fl-vcard-disp--libre{color:#166534}.fl-vcard-disp--ocupado{color:#b91c1c}.fl-vcard-disp--sin,.fl-vcard-disp--off{color:#6b7280}
+.fl-sugeridas{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 0}
+.fl-sug{border:1px solid #d1d5db;background:#fff;border-radius:50px;font-size:.78rem;font-weight:700;padding:0 12px;min-height:36px;cursor:pointer}
+.fl-sug:hover{border-color:#0a0a0a}
+.fl-chofer-fijo{background:#fafafa;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px}
+.fl-chofer-fijo b{display:block}
+
+@media (max-width: 860px){
+  .fl-vistas{width:100%}.fl-vistas .fl-fchip{flex:1 1 0;justify-content:center}
+  .fl-toolbar .fl-chips{width:100%;overflow-x:auto}
+  .fl-toolbar .fl-chips .fl-fchip{flex:1 0 auto}
+  .fl-select{width:100%}
+  .fl-dia{min-height:54px;align-items:center;padding:6px 2px}
+  .fl-dia .fl-cs,.fl-dia .fl-cs-mas,.fl-dia .fl-dia-nom{display:none}
+  .fl-puntos{display:flex;justify-content:center}
+  .fl-agenda{display:block}
+  .fl-det-grid,.fl-vcards{grid-template-columns:1fr}
+  .fl-grid--3{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fl-campo--corto{max-width:none}
+  .fl-tab{cursor:pointer}
+  .fl-btn,.fl-pg,.fl-sug{min-height:44px}      /* REGLA #3: blanco táctil de 44 px */
+}
+@media (max-width: 480px){
+  .fl-grid--3{grid-template-columns:1fr}
+}
+
+/* Con el menú lateral abierto, entre 861 y 1180 px la tabla de solicitudes no cabe en siete columnas: cada fila pasa a una tarjeta de tres columnas. */
+@media (min-width: 861px) and (max-width: 1180px){
+  .fl-tabla--sol thead{display:none}
+  .fl-tabla--sol,.fl-tabla--sol tbody{display:block;width:100%}
+  .fl-tabla--sol tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 18px;padding:14px;border-bottom:1px solid #e5e7eb}
+  .fl-tabla--sol td{display:block;padding:0;border:0;min-width:0}
+  .fl-tabla--sol td[data-label]::before{content:attr(data-label);display:block;font-size:.66rem;font-weight:800;text-transform:uppercase;
+    letter-spacing:.05em;color:#9ca3af;margin-bottom:3px}
+  .fl-tabla--sol td:last-child{grid-column:1/-1;min-width:0}
+  .fl-tabla--sol .fl-acc{justify-content:flex-start}
+}

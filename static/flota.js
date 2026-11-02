@@ -388,6 +388,7 @@
       api(API + '/' + v.id + '/inhabilitar', { method: 'POST', body: { motivo: motivo } }).then(function (d) {
         if (!d.ok) { toast(d.error || 'No se pudo inhabilitar.', 'error'); return; }
         toast(v.patente_fmt + ' quedó inhabilitado.', 'success');
+        if (d.avisos && d.avisos.length) toast(d.avisos.join(' '), 'warning');   // alertar, no trabar: tenía reservas por delante
         cargar();
       });
     });
