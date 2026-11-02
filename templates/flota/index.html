@@ -9,9 +9,15 @@
     <h4><i class="bi bi-truck-front me-2"></i>Solicitudes de vehículo</h4>
     <div class="sub">Flota propia de ILUS Fitness: vehículos, choferes y reservas</div>
   </div>
-  <div class="d-flex gap-2">
-    <button type="button" class="btn btn-danger fl-btn-nuevo" id="flBtnNuevo">
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="button" class="btn btn-danger fl-btn-nuevo" id="flBtnSolicitud">
+      <i class="bi bi-calendar-plus me-1"></i>Nueva solicitud
+    </button>
+    <button type="button" class="btn btn-danger fl-btn-nuevo" id="flBtnNuevo" hidden>
       <i class="bi bi-plus-lg me-1"></i>Agregar vehículo
+    </button>
+    <button type="button" class="btn btn-danger fl-btn-nuevo" id="flBtnChofer" hidden>
+      <i class="bi bi-person-plus me-1"></i>Agregar chofer
     </button>
   </div>
 </div>
@@ -21,12 +27,99 @@
   <span><b>Vista previa.</b> Esta sección solo la ves tú (superadministrador). Todavía no aparece para ningún otro usuario.</span>
 </div>
 
-<nav class="fl-tabs" aria-label="Secciones de la flota">
-  <button type="button" class="fl-tab" disabled aria-disabled="true"><i class="bi bi-calendar-week"></i>Solicitudes <span class="fl-soon">Próxima fase</span></button>
-  <button type="button" class="fl-tab on" aria-current="page"><i class="bi bi-truck"></i>Vehículos</button>
-  <button type="button" class="fl-tab" disabled aria-disabled="true"><i class="bi bi-person-vcard"></i>Choferes <span class="fl-soon">Próxima fase</span></button>
+<nav class="fl-tabs" role="tablist" aria-label="Secciones de la flota">
+  <button type="button" class="fl-tab on" role="tab" data-tab="solicitudes" aria-selected="true"><i class="bi bi-calendar-week"></i>Solicitudes</button>
+  <button type="button" class="fl-tab" role="tab" data-tab="vehiculos" aria-selected="false"><i class="bi bi-truck"></i>Vehículos</button>
+  <button type="button" class="fl-tab" role="tab" data-tab="choferes" aria-selected="false"><i class="bi bi-person-vcard"></i>Choferes</button>
 </nav>
 
+{# ═══ Panel: SOLICITUDES de vehículo (lista y calendario) ═══ #}
+<div class="fl-panel" id="flPanelSolicitudes" data-panel="solicitudes">
+  <section class="fl-kpis" aria-label="Resumen de las solicitudes">
+    <div class="fl-kpi fl-kpi--warn"><span class="fl-kpi-n" id="flKpiPorConfirmar">–</span><span class="fl-kpi-l">Por confirmar</span></div>
+    <div class="fl-kpi fl-kpi--ok"><span class="fl-kpi-n" id="flKpiConfirmadas">–</span><span class="fl-kpi-l">Confirmadas</span></div>
+    <div class="fl-kpi"><span class="fl-kpi-n" id="flKpiLlave">–</span><span class="fl-kpi-l">Con la llave entregada</span></div>
+    <div class="fl-kpi fl-kpi--info"><span class="fl-kpi-n" id="flKpiHoy">–</span><span class="fl-kpi-l">Reservas de hoy</span></div>
+  </section>
+
+  <div class="fl-toolbar">
+    <div class="fl-vistas" role="group" aria-label="Forma de ver las solicitudes">
+      <button type="button" class="fl-fchip on" data-vista="lista"><i class="bi bi-list-ul"></i>Lista</button>
+      <button type="button" class="fl-fchip" data-vista="calendario"><i class="bi bi-calendar3"></i>Calendario</button>
+    </div>
+    <div class="fl-buscar" id="flSolBuscarWrap">
+      <i class="bi bi-search"></i>
+      <input type="search" id="flSolBuscar" placeholder="Buscar N°, patente, área, chofer o motivo" aria-label="Buscar solicitud" autocomplete="off">
+    </div>
+    <select id="flSolVeh" class="fl-select" aria-label="Filtrar por vehículo"><option value="">Todos los vehículos</option></select>
+  </div>
+
+  <div id="flSolListaWrap">
+    <div class="fl-toolbar" id="flSolFiltros">
+      <div class="fl-chips" role="group" aria-label="Filtrar por estado">
+        <button type="button" class="fl-fchip on" data-sest="todas">Todas</button>
+        <button type="button" class="fl-fchip" data-sest="solicitada">Por confirmar</button>
+        <button type="button" class="fl-fchip" data-sest="confirmada">Confirmadas</button>
+        <button type="button" class="fl-fchip" data-sest="llave_entregada">Llave entregada</button>
+        <button type="button" class="fl-fchip" data-sest="cancelada">Canceladas</button>
+      </div>
+      <div class="fl-chips" role="group" aria-label="Cuándo">
+        <button type="button" class="fl-fchip on" data-svista="proximas">Próximas</button>
+        <button type="button" class="fl-fchip" data-svista="pasadas">Pasadas</button>
+      </div>
+    </div>
+    <div class="fl-tabla-wrap">
+      <table class="fl-tabla fl-tabla--sol" id="flSolTabla">
+        <thead>
+          <tr>
+            <th>Solicitud</th>
+            <th>Vehículo</th>
+            <th>Cuándo</th>
+            <th>Área y quién pidió</th>
+            <th>Chofer</th>
+            <th>Estado</th>
+            <th class="fl-th-acc">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="flSolCuerpo"></tbody>
+      </table>
+      <div class="fl-vacio" id="flSolVacio" hidden></div>
+      <div class="fl-pie" id="flSolPie">
+        <div class="fl-pie-info" id="flSolPieInfo" aria-live="polite"></div>
+        <div class="fl-pie-ctrl">
+          <label class="fl-pie-por">Por página
+            <select id="flSolPorPagina" aria-label="Solicitudes por página">
+              <option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option>
+            </select>
+          </label>
+          <button type="button" class="fl-pg" id="flSolAnterior">Anterior</button>
+          <span class="fl-pg-n" id="flSolPaginaN"></span>
+          <button type="button" class="fl-pg" id="flSolSiguiente">Siguiente</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="flSolCalWrap" hidden>
+    <div class="fl-cal-cab">
+      <button type="button" class="fl-btn" id="flCalPrev" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></button>
+      <h5 class="fl-cal-titulo" id="flCalTitulo" aria-live="polite"></h5>
+      <button type="button" class="fl-btn" id="flCalSig" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>
+      <button type="button" class="fl-btn" id="flCalHoy">Hoy</button>
+    </div>
+    <div class="fl-cal-info" id="flCalInfo"></div>
+    <div class="fl-cal" id="flCalGrid"></div>
+    <div class="fl-cal-leyenda" aria-label="Qué significa cada color">
+      <span class="fl-ley fl-ley--solicitada">Por confirmar</span>
+      <span class="fl-ley fl-ley--confirmada">Confirmada</span>
+      <span class="fl-ley fl-ley--llave_entregada">Llave entregada</span>
+      <span class="fl-ley fl-ley--nolab">Feriado o fin de semana</span>
+    </div>
+    <div class="fl-agenda" id="flCalAgenda"></div>
+  </div>
+</div>
+
+<div class="fl-panel" id="flPanelVehiculos" data-panel="vehiculos" hidden>
 <section class="fl-kpis" aria-label="Resumen de la flota">
   <div class="fl-kpi fl-kpi--ok"><span class="fl-kpi-n" id="flKpiHabilitados">–</span><span class="fl-kpi-l">Habilitados</span></div>
   <div class="fl-kpi"><span class="fl-kpi-n" id="flKpiInhabilitados">–</span><span class="fl-kpi-l">Inhabilitados</span></div>
@@ -72,6 +165,57 @@
       <button type="button" class="fl-pg" id="flAnterior">Anterior</button>
       <span class="fl-pg-n" id="flPaginaN"></span>
       <button type="button" class="fl-pg" id="flSiguiente">Siguiente</button>
+    </div>
+  </div>
+</div>
+</div>
+
+{# ═══ Panel: CHOFERES (repositorio de licencias) ═══ #}
+<div class="fl-panel" id="flPanelChoferes" data-panel="choferes" hidden>
+  <section class="fl-kpis" aria-label="Resumen de los choferes">
+    <div class="fl-kpi fl-kpi--ok"><span class="fl-kpi-n" id="flKpiChHab">–</span><span class="fl-kpi-l">Choferes habilitados</span></div>
+    <div class="fl-kpi"><span class="fl-kpi-n" id="flKpiChInhab">–</span><span class="fl-kpi-l">Inhabilitados</span></div>
+    <div class="fl-kpi fl-kpi--warn"><span class="fl-kpi-n" id="flKpiChPorVencer">–</span><span class="fl-kpi-l">Con licencia por vencer</span></div>
+    <div class="fl-kpi fl-kpi--bad"><span class="fl-kpi-n" id="flKpiChVencidas">–</span><span class="fl-kpi-l">Con licencia vencida</span></div>
+  </section>
+
+  <div class="fl-toolbar">
+    <div class="fl-buscar">
+      <i class="bi bi-search"></i>
+      <input type="search" id="flChBuscar" placeholder="Buscar nombre, usuario o clase de licencia" aria-label="Buscar chofer" autocomplete="off">
+    </div>
+    <div class="fl-chips" role="group" aria-label="Filtrar choferes por estado">
+      <button type="button" class="fl-fchip on" data-chest="todos">Todos</button>
+      <button type="button" class="fl-fchip" data-chest="habilitados">Habilitados</button>
+      <button type="button" class="fl-fchip" data-chest="inhabilitados">Inhabilitados</button>
+    </div>
+  </div>
+
+  <div class="fl-tabla-wrap">
+    <table class="fl-tabla" id="flChTabla">
+      <thead>
+        <tr>
+          <th>Chofer</th>
+          <th>Licencia</th>
+          <th>Estado</th>
+          <th class="fl-th-acc">Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="flChCuerpo"></tbody>
+    </table>
+    <div class="fl-vacio" id="flChVacio" hidden></div>
+    <div class="fl-pie" id="flChPie">
+      <div class="fl-pie-info" id="flChPieInfo" aria-live="polite"></div>
+      <div class="fl-pie-ctrl">
+        <label class="fl-pie-por">Por página
+          <select id="flChPorPagina" aria-label="Choferes por página">
+            <option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option>
+          </select>
+        </label>
+        <button type="button" class="fl-pg" id="flChAnterior">Anterior</button>
+        <span class="fl-pg-n" id="flChPaginaN"></span>
+        <button type="button" class="fl-pg" id="flChSiguiente">Siguiente</button>
+      </div>
     </div>
   </div>
 </div>
@@ -238,7 +382,212 @@
     </div>
   </div>
 </div>
+
+{# ═══ Modal: nueva solicitud / mover una reserva (más de 5 campos → Bootstrap modal, REGLA #8) ═══ #}
+<div class="modal fade" id="flModalSol" tabindex="-1" aria-labelledby="flModalSolTitulo" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content fl-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="flModalSolTitulo">Nueva solicitud de vehículo</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <form id="flFormSol" novalidate autocomplete="off">
+
+          <section class="fl-paso" data-paso="1">
+            <div class="fl-paso-n" aria-hidden="true">1</div>
+            <div class="fl-paso-cont">
+              <h6>¿Cuándo lo necesitas?</h6>
+              <p class="fl-ayuda">Declara el día y el horario en que lo usarás. Con eso los demás saben cuándo está ocupado.</p>
+              <div class="fl-grid fl-grid--3">
+                <div class="fl-campo" data-campo="fecha">
+                  <label for="flSolFecha">Día <span class="fl-req">*</span></label>
+                  <input type="date" id="flSolFecha" name="fecha">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="hora_desde">
+                  <label for="flSolDesde">Desde <span class="fl-req">*</span></label>
+                  <input type="time" id="flSolDesde" name="hora_desde" step="900">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="hora_hasta">
+                  <label for="flSolHasta">Hasta <span class="fl-req">*</span></label>
+                  <input type="time" id="flSolHasta" name="hora_hasta" step="900">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+              </div>
+              <label class="fl-check"><input type="checkbox" id="flSolOtroDia"> Lo devuelvo otro día</label>
+              <div class="fl-campo fl-campo--corto" data-campo="fecha_hasta" id="flSolOtroDiaCampo" hidden>
+                <label for="flSolFechaHasta">Día de devolución</label>
+                <input type="date" id="flSolFechaHasta" name="fecha_hasta">
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="2">
+            <div class="fl-paso-n" aria-hidden="true">2</div>
+            <div class="fl-paso-cont">
+              <h6>¿Qué vehículo? <span class="fl-req">*</span></h6>
+              <p class="fl-ayuda">Te mostramos si está libre en ese horario. Si alguien lo pidió antes, queda a su nombre y eliges otro horario u otro vehículo.</p>
+              <div class="fl-campo" data-campo="vehiculo_id">
+                <div class="fl-vcards" id="flSolVehiculos" role="radiogroup" aria-label="Vehículo"></div>
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="3">
+            <div class="fl-paso-n" aria-hidden="true">3</div>
+            <div class="fl-paso-cont">
+              <h6>¿Quién retira la llave? <span class="fl-req">*</span></h6>
+              <p class="fl-ayuda">Debe ser un chofer del repositorio, con la licencia que exige el vehículo y vigente durante todo el uso.</p>
+              <div class="fl-campo" data-campo="chofer_id">
+                <select id="flSolChofer" name="chofer_id" class="fl-select fl-select--lleno" aria-label="Chofer"></select>
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="4">
+            <div class="fl-paso-n" aria-hidden="true">4</div>
+            <div class="fl-paso-cont">
+              <h6>¿Desde qué área y para qué?</h6>
+              <div class="fl-grid">
+                <div class="fl-campo fl-campo--ancho" data-campo="area">
+                  <label for="flSolArea">Área que lo pide <span class="fl-req">*</span></label>
+                  <input type="text" id="flSolArea" name="area" maxlength="60" list="flSolAreasList" placeholder="Logística, Servicio Técnico…">
+                  <datalist id="flSolAreasList"></datalist>
+                  <div class="fl-sugeridas" id="flSolAreasRapidas"></div>
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo fl-campo--ancho" data-campo="motivo">
+                  <label for="flSolMotivo">Motivo <span class="fl-req">*</span></label>
+                  <textarea id="flSolMotivo" name="motivo" rows="2" maxlength="500" placeholder="Para qué lo necesitas y a dónde irá"></textarea>
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="5" id="flSolPasoCambio" hidden>
+            <div class="fl-paso-n" aria-hidden="true">5</div>
+            <div class="fl-paso-cont">
+              <h6>¿Por qué se mueve esta reserva? <span class="fl-req">*</span></h6>
+              <p class="fl-ayuda">Queda en la bitácora de la solicitud, con tu nombre y la hora.</p>
+              <div class="fl-campo" data-campo="motivo_cambio">
+                <textarea id="flSolMotivoCambio" name="motivo_cambio" rows="2" maxlength="300" placeholder="Por ejemplo: el chofer no estará ese día"></textarea>
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+        </form>
+      </div>
+      <div class="modal-footer">
+        <div class="fl-pie-form" id="flSolPieForm" aria-live="polite"></div>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="flSolGuardar"><i class="bi bi-send-check me-1"></i>Solicitar vehículo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ═══ Modal: detalle de una solicitud (con su bitácora y las acciones de la gestión) ═══ #}
+<div class="modal fade" id="flModalSolDet" tabindex="-1" aria-labelledby="flModalSolDetTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content fl-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="flModalSolDetTitulo">Solicitud</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body"><div id="flSolDetCuerpo"></div></div>
+      <div class="modal-footer fl-det-acc" id="flSolDetAcc"></div>
+    </div>
+  </div>
+</div>
+
+{# ═══ Modal: un día del calendario (quién tiene cada vehículo y de qué hora a qué hora) ═══ #}
+<div class="modal fade" id="flModalDia" tabindex="-1" aria-labelledby="flModalDiaTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content fl-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="flModalDiaTitulo">Día</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body"><div id="flDiaCuerpo"></div></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button type="button" class="btn btn-danger" id="flDiaReservar"><i class="bi bi-calendar-plus me-1"></i>Reservar este día</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ═══ Modal: agregar / editar chofer ═══ #}
+<div class="modal fade" id="flModalChofer" tabindex="-1" aria-labelledby="flModalChoferTitulo" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content fl-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="flModalChoferTitulo">Agregar chofer</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <form id="flFormCh" novalidate autocomplete="off">
+
+          <section class="fl-paso" data-paso="1">
+            <div class="fl-paso-n" aria-hidden="true">1</div>
+            <div class="fl-paso-cont">
+              <h6>¿Quién es? <span class="fl-req">*</span></h6>
+              <p class="fl-ayuda">Cada chofer es un usuario de ILUS: su nombre y su teléfono salen de su perfil.</p>
+              <div class="fl-campo" data-campo="usuario_id">
+                <select id="flChUsuario" name="usuario_id" class="fl-select fl-select--lleno" aria-label="Usuario de ILUS"></select>
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+              <div class="fl-chofer-fijo" id="flChFijo" hidden></div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="2">
+            <div class="fl-paso-n" aria-hidden="true">2</div>
+            <div class="fl-paso-cont">
+              <h6>Licencia de conducir <span class="fl-req">*</span></h6>
+              <div class="fl-campo" data-campo="licencia_clases">
+                <div class="fl-clases" id="flChClases" role="group" aria-label="Clases de licencia"></div>
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+              <div class="fl-campo fl-campo--corto" data-campo="licencia_vence">
+                <label for="flChVence">La licencia vence <span class="fl-req">*</span></label>
+                <input type="date" id="flChVence" name="licencia_vence">
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="3">
+            <div class="fl-paso-n" aria-hidden="true">3</div>
+            <div class="fl-paso-cont">
+              <h6>Observaciones</h6>
+              <div class="fl-campo" data-campo="notas">
+                <textarea id="flChNotas" name="notas" rows="2" maxlength="500" placeholder="Cualquier dato útil sobre este chofer"></textarea>
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+        </form>
+      </div>
+      <div class="modal-footer">
+        <div class="fl-pie-form" id="flChPieForm" aria-live="polite"></div>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="flChGuardar"><i class="bi bi-check2-circle me-1"></i>Guardar chofer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='flota.js') }}"></script>
+<script src="{{ url_for('static', filename='flota_uso.js') }}"></script>
 {% endblock %}
