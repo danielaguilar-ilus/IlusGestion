@@ -395,3 +395,48 @@
   .fl-td-pdf{min-width:0}
   .fl-gestion{width:100%}.fl-gestion .btn{flex:1 1 auto}
 }
+
+/* ═══ Vehículos como TARJETA GRANDE (Daniel, 02-nov-2026) ═══ */
+.fl-vlista-wrap{background:transparent;border:0;overflow:visible}
+.fl-vlista{display:block}
+#flCuerpo{display:flex;flex-direction:column;gap:14px}
+.fl-vtar{background:#fff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.fl-vtar.inhab{background:#fafafa}
+.fl-vtar.inhab .fl-vtar-foto{filter:grayscale(.7);opacity:.8}
+.fl-vtar-top{display:flex;gap:20px;padding:18px;align-items:stretch}
+.fl-vtar-foto{position:relative;flex:0 0 260px;width:260px;aspect-ratio:4/3;border-radius:12px;background:#f3f4f6;border:1px solid #e5e7eb;
+  overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#9ca3af;font-size:3rem;gap:4px}
+.fl-vtar-foto img{width:100%;height:100%;object-fit:cover;display:block}
+.fl-vtar-foto span:not(.fl-vtar-ref){font-size:.78rem;font-weight:700}
+.fl-vtar-ref{position:absolute;left:8px;bottom:8px;font-size:.66rem;font-weight:800;background:rgba(10,10,10,.75);color:#fff;border-radius:50px;padding:3px 9px}
+.fl-vtar-info{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:4px}
+.fl-vtar-tit{font-size:1.2rem;font-weight:800;color:#0a0a0a;margin:0 0 2px;overflow-wrap:anywhere}
+.fl-vtar-meta{margin:0;font-size:.95rem;color:#374151}
+.fl-vtar-l2{margin:0;font-size:.88rem;color:#4b5563}
+.fl-vtar-prop{margin:0;font-size:.88rem;color:#111827;overflow-wrap:anywhere}
+.fl-vtar-pie{margin-top:auto;padding-top:12px;display:flex;align-items:center;gap:14px 18px;flex-wrap:wrap}
+.fl-vtar-pie .fl-acc{margin-left:auto}
+.fl-vtar-cal{min-width:200px}
+.fl-vtar-cal .fl-falta{margin-top:2px}
+.fl-btn--primario{background:#0a0a0a;color:#fff;border-color:#0a0a0a}.fl-btn--primario:hover{background:#27272a;border-color:#27272a}
+.fl-vtar-docs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid #f3f4f6;background:#fcfcfd}
+.fl-vd{padding:12px 16px;display:flex;flex-direction:column;gap:3px;border-left:1px solid #f3f4f6;min-width:0}
+.fl-vd:first-child{border-left:0}
+.fl-vd-n{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#6b7280}
+.fl-vd-f{display:flex;align-items:center;gap:7px;font-weight:800;font-size:.92rem;color:#0a0a0a}
+.fl-vd--sin_fecha .fl-vd-f{color:#9ca3af;font-weight:700}
+.fl-vd-t{font-size:.76rem;color:#6b7280}
+.fl-vd--vencido .fl-vd-t{color:#b91c1c;font-weight:700}.fl-vd--por_vencer .fl-vd-t{color:#92400e;font-weight:700}
+.fl-pto--doc-vigente{background:#16a34a}.fl-pto--doc-por_vencer{background:#f59e0b}.fl-pto--doc-vencido{background:#dc2626}.fl-pto--doc-sin_fecha{background:#d1d5db}
+.fl-vd .fl-pto{width:10px;height:10px;flex:0 0 10px}
+.fl-vd-pdf{font-size:.74rem;color:#9ca3af;display:inline-flex;align-items:center;gap:5px;margin-top:2px}
+.fl-vd-pdf--ok{color:#166534;font-weight:700}
+#flPie{background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-top:12px}
+@media (max-width: 860px){
+  .fl-vtar-top{flex-direction:column;gap:14px;padding:14px}
+  .fl-vtar-foto{flex-basis:auto;width:100%}
+  .fl-vtar-pie .fl-acc{margin-left:0;width:100%}
+  .fl-vtar-docs{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fl-vd:nth-child(3){border-left:0}
+  .fl-vd:nth-child(n+3){border-top:1px solid #f3f4f6}
+}
