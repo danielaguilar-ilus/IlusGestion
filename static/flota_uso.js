@@ -807,7 +807,8 @@
   function campoCh(c) { return document.querySelector('#flFormCh .fl-campo[data-campo="' + c + '"]'); }
   function vCh(c) { var el = $('flFormCh').elements[c]; return el && el.value != null ? String(el.value) : ''; }
   function clasesCh() { return Array.prototype.slice.call(document.querySelectorAll('#flChClases input:checked')).map(function (i) { return i.value; }); }
-  var NOMBRES_CH = { usuario_id: 'el usuario', nombre_completo: 'el nombre completo', rut: 'el RUT', licencia_clases: 'la clase de licencia', licencia_vence: 'el vencimiento de la licencia' };
+  var NOMBRES_CH = { usuario_id: 'el usuario', nombre_completo: 'el nombre completo', rut: 'el RUT', direccion: 'la dirección validada con Google',
+    licencia_clases: 'la clase de licencia', licencia_vence: 'el vencimiento de la licencia' };
   function rutValido(t) {
     var r = String(t || '').replace(/[^0-9kK]/g, '').toUpperCase();
     if (!/^\d{7,8}[0-9K]$/.test(r)) return false;
@@ -851,7 +852,7 @@
     var rut = vCh('rut').trim();
     r.rut = !rut ? res('bad', 'Indica el RUT del chofer (por ejemplo 12.345.678-5).') : (rutValido(rut) ? res('ok', 'RUT válido: ' + formatoRut(rut) + '.') : res('bad', 'El RUT no es válido (revisa el dígito verificador).'));
     var dir = vCh('direccion').trim();
-    if (!dir) r.direccion = res('warn', 'Opcional, pero conviene registrarla: escríbela y elige una sugerencia de Google.');
+    if (!dir) r.direccion = res('bad', 'Indica la dirección del chofer: escríbela y elige una sugerencia de Google.');
     else if (vCh('direccion_place_id')) r.direccion = res('ok', 'Dirección verificada con Google Maps.');
     else if (S.editCh && dir === (S.editCh.direccion || '').trim()) r.direccion = res('warn', 'Guardada sin validar: vuelve a elegirla de la lista de Google.');
     else r.direccion = res('bad', 'Elige la dirección de la lista de sugerencias de Google para validarla.');

@@ -621,6 +621,9 @@ def validar_chofer(payload, con_usuario=True, direccion_actual=None):
     if not ok_dir:
         errores["direccion"] = dir_val
         dir_val = {"accion": "mantener", "direccion": None, "lat": None, "lng": None, "place_id": None}
+    elif dir_val["accion"] == "limpiar":
+        # Obligatoria (Daniel, 02-nov-2026: «colócalo obligatorio»): sin dirección no se guarda el chofer.
+        errores["direccion"] = "Indica la dirección del chofer: escríbela y elige una sugerencia de Google."
     datos["direccion"] = dir_val["direccion"]
     datos["direccion_lat"], datos["direccion_lng"], datos["direccion_place_id"] = dir_val["lat"], dir_val["lng"], dir_val["place_id"]
     datos["direccion_accion"] = dir_val["accion"]
