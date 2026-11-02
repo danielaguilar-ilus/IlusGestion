@@ -61,7 +61,8 @@ NOMBRES_COMPLETOS = {1: "Ana María Pérez Soto", 2: "Humberto Soto Rivas", 4: "
 
 def _datos_chofer(uid, **k):
     d = {"rut": _rut(10000000 + uid), "nombre_completo": NOMBRES_COMPLETOS.get(uid, f"Persona de Prueba {uid}"),
-         "direccion": "Av. Siempre Viva 742, Providencia", "licencia_clases": ["B"], "licencia_vence": FUTURO}
+         "direccion": "Av. Siempre Viva 742, Providencia", "direccion_lat": "-33.4263", "direccion_lng": "-70.6141",
+         "direccion_place_id": "ChIJprueba_providencia_742", "licencia_clases": ["B"], "licencia_vence": FUTURO}
     d.update(k)
     return d
 
@@ -227,7 +228,8 @@ class TestChoferYVehiculo(unittest.TestCase):
         self.assertEqual(R.avisos_vehiculo({}, dt.date(2026, 11, 5)), [])        # sin fechas no se inventa nada
 
     def test_validar_chofer(self):
-        base = {"rut": "76.996.964-0", "nombre_completo": "Ana María Pérez Soto", "direccion": "Av. Siempre Viva 742"}
+        base = {"rut": "76.996.964-0", "nombre_completo": "Ana María Pérez Soto", "direccion": "Av. Siempre Viva 742",
+                "direccion_lat": "-33.43", "direccion_lng": "-70.61", "direccion_place_id": "ChIJprueba_742"}
         d, e = R.validar_chofer(dict(base, usuario_id="3", licencia_clases=["b", "A4"], licencia_vence="2027-01-31"))
         self.assertEqual(e, {})
         self.assertEqual((d["usuario_id"], d["licencia_clases"], d["licencia_vence"]), (3, "A4,B", dt.date(2027, 1, 31)))
@@ -302,7 +304,7 @@ class Falsa(BaseFalsa):
         if s.startswith("SELECT id, nombre, active FROM `app_users` WHERE id=%s"):
             u = self.usr.get(p[0])
             return [{"id": u["id"], "nombre": u["nombre"], "active": u["active"]}] if u else []
-        if s.startswith("SELECT id, nombre, username, phone, cargo, rut, direccion, comuna FROM `app_users` WHERE active=1 AND id NOT IN"):
+        if s.startswith("SELECT id, nombre, username, phone, cargo, rut, direccion, direccion_lat, direccion_lng, direccion_place_id FROM `app_users` WHERE active=1 AND id NOT IN"):
             ya = {c["usuario_id"] for c in self.cho.values()}
             return sorted((dict(u) for u in self.usr.values() if u["active"] and u["id"] not in ya), key=lambda u: u["nombre"])
         if s.startswith("SELECT s.*, v.patente AS v_patente"):
@@ -358,10 +360,11 @@ class Falsa(BaseFalsa):
                 e = Exception("(1062, \"Duplicate entry '1' for key 'uq_flota_chofer_usuario'\")")
                 e.args = (1062, "Duplicate entry")
                 raise e
-            c = {"id": self.sig_c, "usuario_id": p[0], "rut": p[1], "nombre_completo": p[2], "direccion": p[3], "licencia_clases": p[4],
-                 "licencia_vence": p[5], "notas": p[6], "habilitado": 1, "archivado": 0, "archivado_motivo": None, "archivado_por": None,
+            c = {"id": self.sig_c, "usuario_id": p[0], "rut": p[1], "nombre_completo": p[2], "direccion": p[3], "direccion_lat": p[4],
+                 "direccion_lng": p[5], "direccion_place_id": p[6], "licencia_clases": p[7],
+                 "licencia_vence": p[8], "notas": p[9], "habilitado": 1, "archivado": 0, "archivado_motivo": None, "archivado_por": None,
                  "archivado_at": None, "inhabilitado_motivo": None, "inhabilitado_por": None, "inhabilitado_at": None,
-                 "created_by": p[7], "updated_by": p[8],
+                 "created_by": p[10], "updated_by": p[11],
                  "created_at": dt.datetime(2026, 11, 2, 15), "updated_at": dt.datetime(2026, 11, 2, 15)}
             self.cho[c["id"]] = c
             self.sig_c += 1
@@ -371,8 +374,8 @@ class Falsa(BaseFalsa):
                               "created_at": dt.datetime(2026, 11, 2, 18)})
             return 1, None
         if s.startswith("UPDATE flota_choferes SET rut=%s"):
-            c = self.cho[p[-1]]
-            c.update(rut=p[0], nombre_completo=p[1], direccion=p[2], licencia_clases=p[3], licencia_vence=p[4], notas=p[5], updated_by=p[6])
+            sets = re.findall(r"(\w+)=%s", s.split(" WHERE ")[0])
+            self.cho[p[-1]].update(dict(zip(sets, p[:-1])))
             return 1, None
         if s.startswith("UPDATE flota_choferes SET archivado=1"):
             motivo, por, inhab, _por2, _por3, cid = p

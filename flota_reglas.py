@@ -11,6 +11,8 @@ import re
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
+import usuarios_perfil as _up      # dirección validada con Google: la MISMA regla de Mi cuenta y Nuevo/Editar usuario
+
 # Clases de licencia de conducir de Chile (Ley de Tránsito N°18.290). Réplica local a propósito de LICENCIA_CLASES_CHILE de app.py: este
 # módulo es puro y no puede importar app.py. Si cambia una, cambia la otra.
 LICENCIA_CLASES = {
@@ -588,7 +590,7 @@ CHOFER_ETIQUETAS = {"rut": "RUT", "nombre_completo": "Nombre completo", "direcci
                     "licencia_clases": "Clases de licencia", "licencia_vence": "Licencia vence", "notas": "Observaciones"}
 
 
-def validar_chofer(payload, con_usuario=True):
+def validar_chofer(payload, con_usuario=True, direccion_actual=None):
     """Normaliza el alta o la edición de un chofer. Devuelve (datos, errores). Cada chofer es un usuario de ILUS (Daniel: «cada chofer
     tiene su usuario»): el nombre y el teléfono salen de su perfil, acá solo se guarda lo propio de conducir."""
     p = payload or {}
@@ -611,10 +613,17 @@ def validar_chofer(payload, con_usuario=True):
     elif len(nombre) > 190:
         errores["nombre_completo"] = "Máximo 190 caracteres."
     datos["nombre_completo"] = nombre or None
-    direccion = re.sub(r"\s+", " ", str(p.get("direccion") or "")).strip()
-    if len(direccion) > 300:
-        errores["direccion"] = "Máximo 300 caracteres."
-    datos["direccion"] = direccion or None
+    # Dirección validada con Google (Daniel, 02-nov-2026: «la dirección debe estar validada por Google»), con la MISMA regla que Mi cuenta y
+    # Nuevo/Editar usuario (usuarios_perfil.resolver_direccion): es opcional, pero si se escribe tiene que venir elegida de la lista de Google
+    # (coordenadas y place_id en Chile) o ser la misma que ya estaba guardada (no se toca su ubicación).
+    ok_dir, dir_val = _up.resolver_direccion(p.get("direccion"), p.get("direccion_lat"), p.get("direccion_lng"),
+                                             p.get("direccion_place_id"), direccion_actual=direccion_actual)
+    if not ok_dir:
+        errores["direccion"] = dir_val
+        dir_val = {"accion": "mantener", "direccion": None, "lat": None, "lng": None, "place_id": None}
+    datos["direccion"] = dir_val["direccion"]
+    datos["direccion_lat"], datos["direccion_lng"], datos["direccion_place_id"] = dir_val["lat"], dir_val["lng"], dir_val["place_id"]
+    datos["direccion_accion"] = dir_val["accion"]
     clases = normalizar_clases(p.get("licencia_clases"))
     if not clases:
         errores["licencia_clases"] = "Elige al menos una clase de licencia (por ejemplo B)."

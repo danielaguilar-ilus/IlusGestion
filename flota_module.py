@@ -221,6 +221,9 @@ def register_flota_routes(app, ctx):
             "ALTER TABLE flota_choferes ADD COLUMN rut VARCHAR(20) NULL",
             "ALTER TABLE flota_choferes ADD COLUMN nombre_completo VARCHAR(190) NULL",
             "ALTER TABLE flota_choferes ADD COLUMN direccion VARCHAR(300) NULL",
+            "ALTER TABLE flota_choferes ADD COLUMN direccion_lat DECIMAL(10,7) NULL",
+            "ALTER TABLE flota_choferes ADD COLUMN direccion_lng DECIMAL(10,7) NULL",
+            "ALTER TABLE flota_choferes ADD COLUMN direccion_place_id VARCHAR(200) NULL",
             "ALTER TABLE flota_choferes ADD COLUMN archivado TINYINT(1) NOT NULL DEFAULT 0",
             "ALTER TABLE flota_choferes ADD COLUMN archivado_motivo VARCHAR(300) NULL",
             "ALTER TABLE flota_choferes ADD COLUMN archivado_por VARCHAR(190) NULL",
@@ -823,10 +826,13 @@ def register_flota_routes(app, ctx):
             "disponible": bool(r.get("habilitado")) and activo and estado not in ("vencido", "sin_fecha"),
             # Lo personal (RUT, nombre completo, dirección, notas y el PDF de la licencia) solo con «Documentos y datos de la flota».
             "rut": None, "rut_fmt": "", "nombre_completo": None, "direccion": None, "notas": None, "licencia_archivo": None,
+            "direccion_verificada": False, "direccion_lat": None, "direccion_lng": None, "direccion_place_id": None,
         }
         if niv["documentos"]:
             out.update(rut=r.get("rut"), rut_fmt=fr.rut_formato(r.get("rut")) if r.get("rut") else "",
                        nombre_completo=r.get("nombre_completo"), direccion=r.get("direccion"), notas=r.get("notas"),
+                       direccion_verificada=bool(r.get("direccion_place_id")), direccion_lat=_num(r.get("direccion_lat")),
+                       direccion_lng=_num(r.get("direccion_lng")), direccion_place_id=r.get("direccion_place_id"),
                        licencia_archivo=_archivo_json(lic) if lic else None)
         return out
 
@@ -896,7 +902,8 @@ def register_flota_routes(app, ctx):
         para SUGERIRLO en el formulario; la persona decide qué queda (REGLA #32)."""
         try:
             filas = mysql_fetchall(
-                "SELECT id, nombre, username, phone, cargo, rut, direccion, comuna FROM `" + _AUTH + "` WHERE active=1 AND id NOT IN "
+                "SELECT id, nombre, username, phone, cargo, rut, direccion, direccion_lat, direccion_lng, direccion_place_id FROM `"
+                + _AUTH + "` WHERE active=1 AND id NOT IN "
                 "(SELECT usuario_id FROM flota_choferes) ORDER BY nombre LIMIT 1000") or []
         except Exception as e:
             print(f"[flota] usuarios para chofer: {type(e).__name__}: {e}", flush=True)
@@ -904,7 +911,10 @@ def register_flota_routes(app, ctx):
         return jsonify({"ok": True, "usuarios": [
             {"id": f["id"], "nombre": f.get("nombre") or f.get("username"), "username": f.get("username"),
              "telefono": f.get("phone"), "cargo": f.get("cargo"),
-             "rut": f.get("rut") or "", "direccion": ", ".join(x for x in (f.get("direccion"), f.get("comuna")) if x)} for f in filas]})
+             "rut": f.get("rut") or "", "direccion": f.get("direccion") or "",
+             # Si su dirección del perfil ya está validada con Google, viaja con su ubicación y se puede sugerir tal cual.
+             "direccion_lat": _num(f.get("direccion_lat")), "direccion_lng": _num(f.get("direccion_lng")),
+             "direccion_place_id": f.get("direccion_place_id") or ""} for f in filas]})
 
     @app.route("/flota/api/choferes", methods=["POST"])
     @_flota_admin_required
@@ -917,9 +927,10 @@ def register_flota_routes(app, ctx):
             return _error("Ese usuario no existe o está desactivado.", 400, errores={"usuario_id": "Elige un usuario activo de ILUS."})
         try:
             mysql_execute(
-                "INSERT INTO flota_choferes (usuario_id, rut, nombre_completo, direccion, licencia_clases, licencia_vence, notas, "
-                "created_by, updated_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (datos["usuario_id"], datos["rut"], datos["nombre_completo"], datos["direccion"], datos["licencia_clases"],
+                "INSERT INTO flota_choferes (usuario_id, rut, nombre_completo, direccion, direccion_lat, direccion_lng, direccion_place_id, "
+                "licencia_clases, licencia_vence, notas, created_by, updated_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (datos["usuario_id"], datos["rut"], datos["nombre_completo"], datos["direccion"], datos["direccion_lat"],
+                 datos["direccion_lng"], datos["direccion_place_id"], datos["licencia_clases"],
                  datos["licencia_vence"], datos["notas"], current_username(), current_username()))
         except Exception as e:
             if _es_duplicado(e):
@@ -939,19 +950,29 @@ def register_flota_routes(app, ctx):
         actual = _chofer_fila(cid)
         if not actual:
             return _error("No encontré ese chofer.", 404)
-        datos, errores = fr.validar_chofer(request.get_json(silent=True) or {}, con_usuario=False)
+        datos, errores = fr.validar_chofer(request.get_json(silent=True) or {}, con_usuario=False,
+                                           direccion_actual=actual.get("direccion"))
         if errores:
             return _error("Revisa los campos marcados.", 400, errores=errores)
         cambios = fr.cambios(dict(actual), datos, campos=fr.CHOFER_COLUMNAS)
+        if datos["direccion_accion"] == "guardar" and (actual.get("direccion_place_id") or "") != (datos["direccion_place_id"] or ""):
+            cambios["direccion"] = {"antes": actual.get("direccion") or None, "despues": (datos["direccion"] or "") + " (verificada con Google)"}
         if not cambios:
             return jsonify({"ok": True, "sin_cambios": True,
                             "chofer": _chofer_json(dict(actual), _hoy(), _archivos_activos("chofer").get(cid))})
         try:
-            mysql_execute(
-                "UPDATE flota_choferes SET rut=%s, nombre_completo=%s, direccion=%s, licencia_clases=%s, licencia_vence=%s, notas=%s, "
-                "updated_by=%s WHERE id=%s",
-                (datos["rut"], datos["nombre_completo"], datos["direccion"], datos["licencia_clases"], datos["licencia_vence"],
-                 datos["notas"], current_username(), cid))
+            if datos["direccion_accion"] == "mantener":       # misma dirección de antes: su ubicación no se toca
+                mysql_execute(
+                    "UPDATE flota_choferes SET rut=%s, nombre_completo=%s, direccion=%s, licencia_clases=%s, licencia_vence=%s, notas=%s, "
+                    "updated_by=%s WHERE id=%s",
+                    (datos["rut"], datos["nombre_completo"], datos["direccion"], datos["licencia_clases"], datos["licencia_vence"],
+                     datos["notas"], current_username(), cid))
+            else:
+                mysql_execute(
+                    "UPDATE flota_choferes SET rut=%s, nombre_completo=%s, direccion=%s, direccion_lat=%s, direccion_lng=%s, "
+                    "direccion_place_id=%s, licencia_clases=%s, licencia_vence=%s, notas=%s, updated_by=%s WHERE id=%s",
+                    (datos["rut"], datos["nombre_completo"], datos["direccion"], datos["direccion_lat"], datos["direccion_lng"],
+                     datos["direccion_place_id"], datos["licencia_clases"], datos["licencia_vence"], datos["notas"], current_username(), cid))
         except Exception as e:
             print(f"[flota] editar chofer: {type(e).__name__}: {e}", flush=True)
             return _error("No se pudo guardar los cambios. Intenta de nuevo.", 500)
