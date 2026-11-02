@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% block title %}Solicitudes de vehículo — ILUS Fitness{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='flota.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-truck-front me-2"></i>Solicitudes de vehículo</h4>
+    <div class="sub">Flota propia de ILUS Fitness: vehículos, choferes y reservas</div>
+  </div>
+  <div class="d-flex gap-2">
+    <button type="button" class="btn btn-danger fl-btn-nuevo" id="flBtnNuevo">
+      <i class="bi bi-plus-lg me-1"></i>Agregar vehículo
+    </button>
+  </div>
+</div>
+
+<div class="fl-preview" role="note">
+  <i class="bi bi-eye"></i>
+  <span><b>Vista previa.</b> Esta sección solo la ves tú (superadministrador). Todavía no aparece para ningún otro usuario.</span>
+</div>
+
+<nav class="fl-tabs" aria-label="Secciones de la flota">
+  <button type="button" class="fl-tab" disabled aria-disabled="true"><i class="bi bi-calendar-week"></i>Solicitudes <span class="fl-soon">Próxima fase</span></button>
+  <button type="button" class="fl-tab on" aria-current="page"><i class="bi bi-truck"></i>Vehículos</button>
+  <button type="button" class="fl-tab" disabled aria-disabled="true"><i class="bi bi-person-vcard"></i>Choferes <span class="fl-soon">Próxima fase</span></button>
+</nav>
+
+<section class="fl-kpis" aria-label="Resumen de la flota">
+  <div class="fl-kpi fl-kpi--ok"><span class="fl-kpi-n" id="flKpiHabilitados">–</span><span class="fl-kpi-l">Habilitados</span></div>
+  <div class="fl-kpi"><span class="fl-kpi-n" id="flKpiInhabilitados">–</span><span class="fl-kpi-l">Inhabilitados</span></div>
+  <div class="fl-kpi fl-kpi--warn"><span class="fl-kpi-n" id="flKpiPorVencer">–</span><span class="fl-kpi-l">Con documentos por vencer</span></div>
+  <div class="fl-kpi fl-kpi--bad"><span class="fl-kpi-n" id="flKpiVencidos">–</span><span class="fl-kpi-l">Con documentos vencidos</span></div>
+</section>
+
+<div class="fl-toolbar">
+  <div class="fl-buscar">
+    <i class="bi bi-search"></i>
+    <input type="search" id="flBuscar" placeholder="Buscar patente, tipo o marca" aria-label="Buscar vehículo" autocomplete="off">
+  </div>
+  <div class="fl-chips" role="group" aria-label="Filtrar por estado">
+    <button type="button" class="fl-chip on" data-estado="todos">Todos</button>
+    <button type="button" class="fl-chip" data-estado="habilitados">Habilitados</button>
+    <button type="button" class="fl-chip" data-estado="inhabilitados">Inhabilitados</button>
+  </div>
+</div>
+
+<div class="fl-tabla-wrap">
+  <table class="fl-tabla" id="flTabla">
+    <thead>
+      <tr>
+        <th>Vehículo</th>
+        <th>Licencia</th>
+        <th>Kilómetros</th>
+        <th>Documentos</th>
+        <th>Estado</th>
+        <th class="fl-th-acc">Acciones</th>
+      </tr>
+    </thead>
+    <tbody id="flCuerpo"></tbody>
+  </table>
+  <div class="fl-vacio" id="flVacio" hidden></div>
+  <div class="fl-pie" id="flPie">
+    <div class="fl-pie-info" id="flPieInfo" aria-live="polite"></div>
+    <div class="fl-pie-ctrl">
+      <label class="fl-pie-por">Por página
+        <select id="flPorPagina" aria-label="Vehículos por página">
+          <option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option>
+        </select>
+      </label>
+      <button type="button" class="fl-pg" id="flAnterior">Anterior</button>
+      <span class="fl-pg-n" id="flPaginaN"></span>
+      <button type="button" class="fl-pg" id="flSiguiente">Siguiente</button>
+    </div>
+  </div>
+</div>
+
+{# ═══ Modal: agregar / editar vehículo (más de 5 campos → Bootstrap modal, REGLA #8) ═══ #}
+<div class="modal fade" id="flModalVeh" tabindex="-1" aria-labelledby="flModalVehTitulo" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content fl-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="flModalVehTitulo">Agregar vehículo</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <form id="flForm" novalidate autocomplete="off">
+
+          <section class="fl-paso" data-paso="1">
+            <div class="fl-paso-n" aria-hidden="true">1</div>
+            <div class="fl-paso-cont">
+              <h6>Identificación</h6>
+              <div class="fl-grid">
+                <div class="fl-campo" data-campo="patente">
+                  <label for="flPatente">Patente <span class="fl-req">*</span></label>
+                  <input type="text" id="flPatente" name="patente" maxlength="10" inputmode="text" autocapitalize="characters" placeholder="Ej: ABCD-12">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="tipo">
+                  <label for="flTipo">Tipo de vehículo <span class="fl-req">*</span></label>
+                  <input type="text" id="flTipo" name="tipo" maxlength="60" list="flTiposList" placeholder="Furgón, camión…">
+                  <datalist id="flTiposList"></datalist>
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="marca">
+                  <label for="flMarca">Marca</label>
+                  <input type="text" id="flMarca" name="marca" maxlength="80">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="modelo">
+                  <label for="flModelo">Modelo</label>
+                  <input type="text" id="flModelo" name="modelo" maxlength="80">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="anio">
+                  <label for="flAnio">Año</label>
+                  <input type="text" id="flAnio" name="anio" maxlength="4" inputmode="numeric">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="color">
+                  <label for="flColor">Color</label>
+                  <input type="text" id="flColor" name="color" maxlength="40">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo fl-campo--ancho" data-campo="vin">
+                  <label for="flVin">N° de chasis (VIN)</label>
+                  <input type="text" id="flVin" name="vin" maxlength="40" autocapitalize="characters">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="2">
+            <div class="fl-paso-n" aria-hidden="true">2</div>
+            <div class="fl-paso-cont">
+              <h6>Capacidad y combustible</h6>
+              <div class="fl-grid">
+                <div class="fl-campo" data-campo="capacidad_kg">
+                  <label for="flCapKg">Capacidad de carga (kg)</label>
+                  <input type="text" id="flCapKg" name="capacidad_kg" inputmode="numeric">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="capacidad_m3">
+                  <label for="flCapM3">Volumen de carga (m³)</label>
+                  <input type="text" id="flCapM3" name="capacidad_m3" inputmode="decimal">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="combustible">
+                  <label for="flCombustible">Combustible</label>
+                  <input type="text" id="flCombustible" name="combustible" maxlength="30" list="flCombustiblesList">
+                  <datalist id="flCombustiblesList"></datalist>
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="estanque_l">
+                  <label for="flEstanque">Estanque (litros)</label>
+                  <input type="text" id="flEstanque" name="estanque_l" inputmode="numeric">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="km_actual">
+                  <label for="flKm">Kilómetros actuales</label>
+                  <input type="text" id="flKm" name="km_actual" inputmode="numeric">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="3">
+            <div class="fl-paso-n" aria-hidden="true">3</div>
+            <div class="fl-paso-cont">
+              <h6>Licencia que exige <span class="fl-req">*</span></h6>
+              <p class="fl-ayuda">Quien lo conduzca debe tener alguna de las clases que marques. Te sugerimos la clase B; puedes cambiarla.</p>
+              <div class="fl-campo" data-campo="licencia_clases">
+                <div class="fl-clases" id="flClases" role="group" aria-label="Clases de licencia"></div>
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="4">
+            <div class="fl-paso-n" aria-hidden="true">4</div>
+            <div class="fl-paso-cont">
+              <h6>Documentos y observaciones</h6>
+              <p class="fl-ayuda">Con estas fechas el sistema te avisará antes de que venzan.</p>
+              <div class="fl-grid">
+                <div class="fl-campo" data-campo="revision_tecnica_vence">
+                  <label for="flDocRevision">Revisión técnica vence</label>
+                  <input type="date" id="flDocRevision" name="revision_tecnica_vence">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="permiso_circulacion_vence">
+                  <label for="flDocPermiso">Permiso de circulación vence</label>
+                  <input type="date" id="flDocPermiso" name="permiso_circulacion_vence">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="soap_vence">
+                  <label for="flDocSoap">SOAP vence</label>
+                  <input type="date" id="flDocSoap" name="soap_vence">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="seguro_vence">
+                  <label for="flDocSeguro">Seguro vence</label>
+                  <input type="date" id="flDocSeguro" name="seguro_vence">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo fl-campo--ancho" data-campo="notas">
+                  <label for="flNotas">Observaciones</label>
+                  <textarea id="flNotas" name="notas" rows="2" maxlength="1000" placeholder="Cualquier dato útil sobre este vehículo"></textarea>
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+        </form>
+      </div>
+      <div class="modal-footer">
+        <div class="fl-pie-form" id="flPieForm" aria-live="polite"></div>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="flGuardar"><i class="bi bi-check2-circle me-1"></i>Guardar vehículo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ═══ Modal: historial de un vehículo ═══ #}
+<div class="modal fade" id="flModalHist" tabindex="-1" aria-labelledby="flModalHistTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content fl-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="flModalHistTitulo">Historial</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body"><div id="flHistCuerpo" class="fl-hist"></div></div>
+      <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='flota.js') }}"></script>
+{% endblock %}

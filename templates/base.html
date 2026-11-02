@@ -924,6 +924,16 @@
     </div>
     {% endif %}
 
+    {# ── SOLICITUDES DE VEHÍCULO (flota propia, Daniel 2026-11-02) ── UN solo ítem en el menú: los choferes y la gestión de cada vehículo
+       viven adentro. HOY SOLO SUPERADMIN («quiero solo verlo yo de momento»); para abrirlo a un rol se cambia _flota_puede() en
+       flota_module.py y esta condición. href fijo a propósito (no url_for): si el módulo no llegara a registrar sus rutas, un url_for
+       lanzaría BuildError y se caería TODA pantalla del sistema. #}
+    {% if permissions and permissions.superadmin %}
+    <a href="/flota" class="sidebar-link{% if request.path.startswith('/flota') %} active{% endif %}">
+      <i class="bi bi-truck-front"></i><span>Solicitudes de vehículo</span>
+    </a>
+    {% endif %}
+
   </div>
 
   {# ── AJUSTES — visible solo para roles con permiso 'ajustes' (default: superadmin) ── #}
