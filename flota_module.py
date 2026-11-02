@@ -7,7 +7,11 @@ FASE 1a: registro de los vehículos propios (alta, edición, habilitar / inhabil
 vencimiento y la bitácora de cada cambio. La flota NO se fija en el código: cada vehículo nuevo se ingresa a mano desde la pantalla.
 FASE 1b: repositorio de choferes (cada uno es un usuario de ILUS, con su licencia) y solicitudes de uso: cualquier área reserva un
 vehículo declarando día, horario, motivo y el chofer que retira la llave; la gestión confirma y marca la llave entregada; el sello
-decide los choques; lista y calendario. Este módulo no maneja precios ni costos. Siguen: devolución, mantención y GPS.
+decide los choques; lista y calendario.
+FASE 1c: permisos por el front (flota_solicitar / flota_gestionar / flota_documentos; agregar, editar, archivar y borrar vehículos y
+choferes es solo del superadministrador), foto del vehículo y PDF de sus documentos y de la licencia del chofer (privados), datos del
+propietario, motor y póliza, RUT, nombre completo y dirección de los choferes, y la calidad de la ficha. Este módulo no maneja precios ni
+costos. Siguen: devolución, mantención y GPS.
 
 HOY SOLO LO VE EL SUPERADMIN (Daniel: «quiero solo verlo yo de momento»): ningún rol tiene permiso y el ítem del menú no aparece para nadie
 más. Cuando se abra a otros roles se cambia SOLO `_flota_puede()`.
@@ -19,12 +23,15 @@ Wiring idéntico al de catalogo_module.py / tickets_module.py:
 Las tablas se crean al registrar el módulo, dentro de app_context (si no, mysql_execute falla en silencio: ver el gotcha de los _ensure_*).
 REGLA #18: una sentencia por DDL, `CREATE TABLE IF NOT EXISTS`, sin ALTER sobre tablas de otros módulos.
 """
+import hashlib
 import json
+import os
 import re
+import secrets
 from datetime import date, datetime, time, timedelta, timezone
 from functools import wraps
 
-from flask import g, jsonify, redirect, render_template, request, url_for
+from flask import Response, g, jsonify, redirect, render_template, request, url_for
 
 import flota_reglas as fr
 
@@ -173,31 +180,101 @@ def register_flota_routes(app, ctx):
                   KEY idx_flota_sollog (solicitud_id, id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # Fase 1c. Foto del vehículo, PDF de sus documentos y licencia del chofer. El archivo vive en GCS (privado); acá solo su ficha.
+            # Reemplazar o quitar NO borra: el anterior queda con activo=0 (historial).
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS flota_archivos (
+                  id               INT AUTO_INCREMENT PRIMARY KEY,
+                  entidad          VARCHAR(10)  NOT NULL,
+                  entidad_id       INT          NOT NULL,
+                  tipo             VARCHAR(30)  NOT NULL,
+                  nombre_original  VARCHAR(190) NULL,
+                  content_type     VARCHAR(80)  NULL,
+                  bytes            INT          NULL,
+                  gcs_key          VARCHAR(300) NOT NULL,
+                  sha256           CHAR(64)     NULL,
+                  activo           TINYINT(1)   NOT NULL DEFAULT 1,
+                  subido_por       VARCHAR(190) NULL,
+                  subido_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  quitado_por      VARCHAR(190) NULL,
+                  quitado_at       DATETIME     NULL,
+                  KEY idx_flota_arch (entidad, entidad_id, tipo, activo)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
         except Exception as e:
             print(f"[ILUS][WARN] _ensure_flota_tables: {type(e).__name__}: {e}", flush=True)
+        # Columnas nuevas de las tablas de la fase 1a/1b (REGLA #18: una sentencia por columna; mysql_execute salta la que ya existe).
+        columnas_nuevas = (
+            "ALTER TABLE flota_vehiculos ADD COLUMN patente_dv VARCHAR(2) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN numero_motor VARCHAR(40) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN cilindrada VARCHAR(20) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN propietario VARCHAR(160) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN propietario_rut VARCHAR(20) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN revision_tecnica_detalle VARCHAR(160) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN permiso_circulacion_detalle VARCHAR(160) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN soap_detalle VARCHAR(160) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN seguro_detalle VARCHAR(160) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN archivado TINYINT(1) NOT NULL DEFAULT 0",
+            "ALTER TABLE flota_vehiculos ADD COLUMN archivado_motivo VARCHAR(300) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN archivado_por VARCHAR(190) NULL",
+            "ALTER TABLE flota_vehiculos ADD COLUMN archivado_at DATETIME NULL",
+            "ALTER TABLE flota_choferes ADD COLUMN rut VARCHAR(20) NULL",
+            "ALTER TABLE flota_choferes ADD COLUMN nombre_completo VARCHAR(190) NULL",
+            "ALTER TABLE flota_choferes ADD COLUMN direccion VARCHAR(300) NULL",
+            "ALTER TABLE flota_choferes ADD COLUMN archivado TINYINT(1) NOT NULL DEFAULT 0",
+            "ALTER TABLE flota_choferes ADD COLUMN archivado_motivo VARCHAR(300) NULL",
+            "ALTER TABLE flota_choferes ADD COLUMN archivado_por VARCHAR(190) NULL",
+            "ALTER TABLE flota_choferes ADD COLUMN archivado_at DATETIME NULL",
+        )
+        for sql_col in columnas_nuevas:
+            try:
+                mysql_execute(sql_col)
+            except Exception as e:
+                if "Duplicate column" not in str(e) and "1060" not in str(e):
+                    print(f"[ILUS][WARN] _ensure_flota_tables (columna): {type(e).__name__}: {e}", flush=True)
 
     with app.app_context():
         _ensure_flota_tables()
         print("[ILUS] Tablas flota_* garantizadas (Solicitudes de vehículo).", flush=True)
 
     # ── Acceso ──────────────────────────────────────────────────────────────
+    # Cuatro niveles, decididos en UN solo lugar (flota_reglas.niveles): solicitar (entrar y pedir), gestionar (confirmar, llave, mover,
+    # cancelar), documentos (ver PDF y datos personales) y admin (agregar, editar, archivar y borrar vehículos y choferes: solo el
+    # superadministrador, sin llave). Las tres llaves se asignan por rol o por persona en el front (Roles → Solicitudes de vehículo).
+    def _niv():
+        return fr.niveles(g.get("permissions"))
+
     def _flota_puede():
-        """HOY solo el superadmin (Daniel 02-nov-2026). Es el ÚNICO lugar que decide quién entra: para abrirlo a un rol se cambia acá."""
-        return bool((g.get("permissions") or {}).get("superadmin"))
+        return _niv()["solicitar"]
+
+    def _flota_gestiona():
+        return _niv()["gestionar"]
+
+    def _flota_admin():
+        return _niv()["admin"]
+
+    def _flota_docs():
+        return _niv()["documentos"]
 
     def _es_api():
         return request.path.startswith("/flota/api/")
 
-    def _flota_required(view):
-        @wraps(view)
-        def wrapped(*a, **k):
-            if not _flota_puede():
-                if _es_api():
-                    return jsonify({"ok": False, "error": "Esta sección todavía no está habilitada para tu usuario.",
-                                    "error_codigo": "SIN_PERMISO_FLOTA"}), 403
-                return redirect(url_for("index"))
-            return view(*a, **k)
-        return login_required(wrapped)
+    def _puerta(chequeo, mensaje, codigo):
+        def deco(view):
+            @wraps(view)
+            def wrapped(*a, **k):
+                if not chequeo():
+                    if _es_api():
+                        return jsonify({"ok": False, "error": mensaje, "error_codigo": codigo}), 403
+                    return redirect(url_for("index"))
+                return view(*a, **k)
+            return login_required(wrapped)
+        return deco
+
+    _flota_required = _puerta(_flota_puede, "Esta sección todavía no está habilitada para tu usuario.", "SIN_PERMISO_FLOTA")
+    _flota_gestion_required = _puerta(_flota_gestiona, "Solo quien gestiona la flota puede hacer esto.", "SIN_PERMISO_GESTION_FLOTA")
+    _flota_admin_required = _puerta(_flota_admin, "Solo el superadministrador agrega, edita o borra vehículos y choferes.", "SIN_PERMISO_ADMIN_FLOTA")
+    _flota_docs_required = _puerta(_flota_docs, "No tienes permiso para ver los documentos de la flota.", "SIN_PERMISO_DOCUMENTOS_FLOTA")
 
     # ── Utilidades ──────────────────────────────────────────────────────────
     def _hoy():
@@ -227,25 +304,80 @@ def register_flota_routes(app, ctx):
         f = float(v)
         return int(f) if f.is_integer() else f
 
-    def _a_json(row, hoy):
+    # ── Archivos: foto y PDF (privados) ─────────────────────────────────────
+    # Todo vive en GCS bajo «flota_privado/» y se abre SOLO por /flota/api/archivos/<id>, que pide sesión y el permiso que corresponde.
+    # /f/<key> (la ruta pública de ILUS) responde 404 a cualquier clave que empiece así. La foto la ve quien entra a la flota; los PDF solo
+    # quien tenga «Documentos y datos de la flota» (o el superadministrador). Subir y quitar archivos es del superadministrador.
+    _PREFIJO_PRIVADO = "flota_privado/"
+
+    def _bucket():
+        try:
+            fn = ctx.get("_gcs_bucket")
+            return fn() if fn else None
+        except Exception as e:
+            print(f"[flota] almacenamiento: {type(e).__name__}", flush=True)
+            return None
+
+    def _archivos_activos(entidad):
+        """{id de la entidad: {tipo: fila}} con el archivo VIGENTE de cada tipo (el último subido)."""
+        out = {}
+        try:
+            filas = mysql_fetchall(
+                "SELECT id, entidad_id, tipo, nombre_original, content_type, bytes, subido_por, subido_at FROM flota_archivos "
+                "WHERE entidad=%s AND activo=1 ORDER BY id", (entidad,)) or []
+        except Exception as e:
+            print(f"[flota] leer archivos: {type(e).__name__}: {e}", flush=True)
+            return out
+        for f in filas:
+            out.setdefault(f["entidad_id"], {})[f["tipo"]] = f
+        return out
+
+    def _archivo_json(f):
+        return {"id": f["id"], "tipo": f.get("tipo"), "nombre": f.get("nombre_original"), "content_type": f.get("content_type"),
+                "bytes": int(f.get("bytes") or 0), "subido_por": f.get("subido_por"), "subido_fmt": _hora_chile(f.get("subido_at"))}
+
+    # ── Vehículos ───────────────────────────────────────────────────────────
+    def _a_json(row, hoy, archivos=None):
+        niv = _niv()
+        archivos = archivos or {}
         docs = fr.resumen_documentos(row, hoy)
+        tiene_pdf = {}
+        for d in docs:
+            a = archivos.get(d["clave"])
+            tiene_pdf[d["clave"]] = bool(a)
+            d["tiene_pdf"] = bool(a)
+            # El detalle (póliza, N°) y el PDF solo los ve quien tiene «Documentos y datos de la flota».
+            d["detalle"] = (row.get(d["clave"] + "_detalle") or "") if niv["documentos"] else ""
+            d["archivo"] = _archivo_json(a) if (a and niv["documentos"]) else None
         clases = fr.normalizar_clases(row.get("licencia_clases"))
         titulo = " ".join(x for x in (row.get("tipo"), row.get("marca"), row.get("modelo"),
                                       str(row["anio"]) if row.get("anio") else None) if x)
+        foto = archivos.get("foto")
         out = {
             "id": row["id"], "patente": row["patente"], "patente_fmt": fr.patente_con_guion(row["patente"]),
+            "patente_dv": row.get("patente_dv"), "patente_completa": fr.patente_completa(row["patente"], row.get("patente_dv")),
             "tipo": row.get("tipo"), "marca": row.get("marca"), "modelo": row.get("modelo"), "anio": row.get("anio"),
-            "color": row.get("color"), "vin": row.get("vin"), "titulo": titulo,
+            "color": row.get("color"), "titulo": titulo, "cilindrada": row.get("cilindrada"), "propietario": row.get("propietario"),
             "capacidad_kg": _num(row.get("capacidad_kg")), "capacidad_m3": _num(row.get("capacidad_m3")),
             "combustible": row.get("combustible"), "estanque_l": _num(row.get("estanque_l")), "km_actual": _num(row.get("km_actual")),
             "licencia_clases": clases, "licencia_texto": ("Clase " + " o ".join(clases)) if clases else "Sin definir",
-            "documentos": docs, "docs_estado": fr.peor_estado(docs),
+            "documentos": docs, "docs_estado": fr.peor_estado(docs), "proximo_vencimiento": fr.proximo_vencimiento(docs),
+            "foto_id": foto["id"] if foto else None,
             "notas": row.get("notas"), "habilitado": bool(row.get("habilitado")),
             "inhabilitado_motivo": row.get("inhabilitado_motivo"), "inhabilitado_por": row.get("inhabilitado_por"),
             "inhabilitado_fmt": _hora_chile(row.get("inhabilitado_at")),
+            "archivado": bool(row.get("archivado")), "archivado_motivo": row.get("archivado_motivo"),
+            "archivado_por": row.get("archivado_por"), "archivado_fmt": _hora_chile(row.get("archivado_at")),
             "creado_por": row.get("created_by"), "creado_fmt": _hora_chile(row.get("created_at")),
             "actualizado_por": row.get("updated_by"), "actualizado_fmt": _hora_chile(row.get("updated_at")),
+            "vin": None, "numero_motor": None, "propietario_rut": None, "propietario_rut_fmt": "", "calidad": None,
         }
+        if niv["documentos"]:
+            out.update(vin=row.get("vin"), numero_motor=row.get("numero_motor"), propietario_rut=row.get("propietario_rut"),
+                       propietario_rut_fmt=fr.rut_formato(row.get("propietario_rut")) if row.get("propietario_rut") else "",
+                       calidad=fr.calidad_ficha(row, tiene_pdf, bool(foto)))
+            for clave, _n in fr.DOCUMENTOS:
+                out[clave + "_detalle"] = row.get(clave + "_detalle")
         for clave, _n in fr.DOCUMENTOS:
             v = row.get(clave + "_vence")
             out[clave + "_vence"] = v.isoformat() if isinstance(v, (date, datetime)) else (v or None)
@@ -259,8 +391,8 @@ def register_flota_routes(app, ctx):
             "areas": list(fr.AREAS_SUGERIDAS), "max_dias_uso": fr.MAX_DIAS_USO,
         }
 
-    def _log(vid, accion, detalle=None):
-        """Agrega una línea a la bitácora. Nunca rompe la acción principal."""
+    def _log(vid, accion, detalle=None, estricto=False):
+        """Agrega una línea a la bitácora. Nunca rompe la acción principal, salvo `estricto` (antes de BORRAR: si no queda anotado, no se borra)."""
         try:
             mysql_execute(
                 "INSERT INTO flota_vehiculo_log (vehiculo_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s)",
@@ -268,6 +400,8 @@ def register_flota_routes(app, ctx):
                  (current_username() or "")[:190] or None))
         except Exception as e:
             print(f"[flota] bitácora ({accion}): {type(e).__name__}", flush=True)
+            if estricto:
+                raise
 
     def _es_duplicado(exc):
         a = getattr(exc, "args", ())
@@ -279,34 +413,45 @@ def register_flota_routes(app, ctx):
     def _error(msg, status=400, **extra):
         return jsonify({"ok": False, "error": msg, **extra}), status
 
+    def _vehiculo_respuesta(vid, **extra):
+        f = _fila(vid)
+        return jsonify({"ok": True, "vehiculo": _a_json(dict(f), _hoy(), _archivos_activos("vehiculo").get(vid)) if f else None, **extra})
+
     # ── Página ──────────────────────────────────────────────────────────────
     @app.route("/flota")
     @_flota_required
     def flota_index():
-        return render_template("flota/index.html")
+        return render_template("flota/index.html", flota_permisos=_niv())
 
-    # ── API ─────────────────────────────────────────────────────────────────
+    # ── API de vehículos ────────────────────────────────────────────────────
     @app.route("/flota/api/vehiculos", methods=["GET"])
     @_flota_required
     def flota_api_vehiculos():
+        archivados = 1 if (request.args.get("archivados") == "1" and _flota_admin()) else 0
         try:
-            filas = mysql_fetchall("SELECT * FROM flota_vehiculos ORDER BY habilitado DESC, tipo, patente LIMIT 500") or []
+            filas = mysql_fetchall(
+                "SELECT * FROM flota_vehiculos WHERE archivado=%s ORDER BY habilitado DESC, tipo, patente LIMIT 500", (archivados,)) or []
+            n_arch = int((mysql_fetchone("SELECT COUNT(*) AS n FROM flota_vehiculos WHERE archivado=1") or {}).get("n") or 0) if _flota_admin() else 0
         except Exception as e:
             print(f"[flota] listar: {type(e).__name__}: {e}", flush=True)
             return _error("No se pudo leer la flota. Intenta de nuevo en un momento.", 500)
         hoy = _hoy()
-        vehiculos = [_a_json(dict(f), hoy) for f in filas]
+        arch = _archivos_activos("vehiculo")
+        vehiculos = [_a_json(dict(f), hoy, arch.get(f["id"])) for f in filas]
         resumen = {
             "total": len(vehiculos),
             "habilitados": sum(1 for v in vehiculos if v["habilitado"]),
             "inhabilitados": sum(1 for v in vehiculos if not v["habilitado"]),
             "por_vencer": sum(1 for v in vehiculos if v["docs_estado"] == "por_vencer"),
             "vencidos": sum(1 for v in vehiculos if v["docs_estado"] == "vencido"),
+            "incompletos": sum(1 for v in vehiculos if v.get("calidad") and v["calidad"]["pct"] < 100),
+            "archivados": n_arch,
         }
-        return jsonify({"ok": True, "vehiculos": vehiculos, "resumen": resumen, "config": _config(), "hoy": hoy.isoformat()})
+        return jsonify({"ok": True, "vehiculos": vehiculos, "resumen": resumen, "config": _config(), "hoy": hoy.isoformat(),
+                        "permisos": _niv(), "ver_archivados": bool(archivados)})
 
     @app.route("/flota/api/vehiculos", methods=["POST"])
-    @_flota_required
+    @_flota_admin_required
     def flota_api_vehiculo_crear():
         datos, errores = fr.validar_vehiculo(request.get_json(silent=True) or {}, _hoy())
         if errores:
@@ -327,10 +472,10 @@ def register_flota_routes(app, ctx):
         if not fila:
             return _error("El vehículo se guardó pero no se pudo leer de vuelta. Recarga la pantalla.", 500)
         _log(fila["id"], "creado", {"patente": datos["patente"], "tipo": datos["tipo"]})
-        return jsonify({"ok": True, "vehiculo": _a_json(dict(fila), _hoy())})
+        return _vehiculo_respuesta(fila["id"])
 
     @app.route("/flota/api/vehiculos/<int:vid>", methods=["PUT"])
-    @_flota_required
+    @_flota_admin_required
     def flota_api_vehiculo_editar(vid):
         actual = _fila(vid)
         if not actual:
@@ -340,7 +485,8 @@ def register_flota_routes(app, ctx):
             return _error("Revisa los campos marcados.", 400, errores=errores)
         cambios = fr.cambios(dict(actual), datos)
         if not cambios:
-            return jsonify({"ok": True, "sin_cambios": True, "vehiculo": _a_json(dict(actual), _hoy())})
+            return jsonify({"ok": True, "sin_cambios": True,
+                            "vehiculo": _a_json(dict(actual), _hoy(), _archivos_activos("vehiculo").get(vid))})
         cols = fr.COLUMNAS
         try:
             mysql_execute(
@@ -353,10 +499,10 @@ def register_flota_routes(app, ctx):
             print(f"[flota] editar: {type(e).__name__}: {e}", flush=True)
             return _error("No se pudo guardar los cambios. Intenta de nuevo.", 500)
         _log(vid, "editado", {"cambios": cambios})
-        return jsonify({"ok": True, "vehiculo": _a_json(dict(_fila(vid) or actual), _hoy())})
+        return _vehiculo_respuesta(vid)
 
     @app.route("/flota/api/vehiculos/<int:vid>/inhabilitar", methods=["POST"])
-    @_flota_required
+    @_flota_admin_required
     def flota_api_vehiculo_inhabilitar(vid):
         if not _fila(vid):
             return _error("No encontré ese vehículo.", 404)
@@ -370,53 +516,237 @@ def register_flota_routes(app, ctx):
         if not n:
             return _error("Ese vehículo ya estaba inhabilitado.", 409)
         _log(vid, "inhabilitado", {"motivo": motivo})
-        v = _a_json(dict(_fila(vid)), _hoy())
+        f = _fila(vid)
+        v = _a_json(dict(f), _hoy(), _archivos_activos("vehiculo").get(vid))
         # Alertar, no trabar: se inhabilita igual, pero se dice si tenía reservas por delante.
         return jsonify({"ok": True, "vehiculo": v, "avisos": _aviso_reservas(_reservas_abiertas("vehiculo", vid), v["titulo"] or v["patente_fmt"])})
 
     @app.route("/flota/api/vehiculos/<int:vid>/habilitar", methods=["POST"])
-    @_flota_required
+    @_flota_admin_required
     def flota_api_vehiculo_habilitar(vid):
         previo = _fila(vid)
         if not previo:
             return _error("No encontré ese vehículo.", 404)
+        if previo.get("archivado"):
+            return _error("Este vehículo está archivado: primero desarchívalo.", 409)
         n = mysql_rowcount(
             "UPDATE flota_vehiculos SET habilitado=1, inhabilitado_motivo=NULL, inhabilitado_por=NULL, inhabilitado_at=NULL, updated_by=%s "
             "WHERE id=%s AND habilitado=0", (current_username(), vid))
         if not n:
             return _error("Ese vehículo ya estaba habilitado.", 409)
         _log(vid, "habilitado", {"motivo_anterior": previo.get("inhabilitado_motivo")})
-        v = _a_json(dict(_fila(vid)), _hoy())
+        f = _fila(vid)
+        v = _a_json(dict(f), _hoy(), _archivos_activos("vehiculo").get(vid))
         # Alertar, no trabar: se habilita igual, pero se dice qué documentos conviene mirar.
         avisos = [f"{d['nombre']}: {d['texto'].lower()}" for d in v["documentos"] if d["estado"] in ("vencido", "por_vencer")]
         return jsonify({"ok": True, "vehiculo": v, "avisos": avisos})
 
+    @app.route("/flota/api/vehiculos/<int:vid>/archivar", methods=["POST"])
+    @_flota_admin_required
+    def flota_api_vehiculo_archivar(vid):
+        """Archivar = sale de las listas pero conserva todo (datos, archivos y el historial de sus reservas). Se puede desarchivar."""
+        if not _fila(vid):
+            return _error("No encontré ese vehículo.", 404)
+        motivo, err = fr.validar_motivo_archivo((request.get_json(silent=True) or {}).get("motivo"))
+        if err:
+            return _error(err, 400, errores={"motivo": err})
+        n_res = _reservas_abiertas("vehiculo", vid)
+        if n_res:
+            return _error(f"Tiene {n_res} reserva{'s' if n_res != 1 else ''} por delante: muévelas o cancélalas antes de archivarlo.", 409,
+                          error_codigo="TIENE_RESERVAS")
+        quien = current_username()
+        n = mysql_rowcount(
+            "UPDATE flota_vehiculos SET archivado=1, archivado_motivo=%s, archivado_por=%s, archivado_at=NOW(), habilitado=0, "
+            "inhabilitado_motivo=%s, inhabilitado_por=%s, inhabilitado_at=NOW(), updated_by=%s WHERE id=%s AND archivado=0",
+            (motivo, quien, "Archivado: " + motivo, quien, quien, vid))
+        if not n:
+            return _error("Ese vehículo ya estaba archivado.", 409)
+        _log(vid, "archivado", {"motivo": motivo})
+        return _vehiculo_respuesta(vid)
+
+    @app.route("/flota/api/vehiculos/<int:vid>/desarchivar", methods=["POST"])
+    @_flota_admin_required
+    def flota_api_vehiculo_desarchivar(vid):
+        if not _fila(vid):
+            return _error("No encontré ese vehículo.", 404)
+        n = mysql_rowcount(
+            "UPDATE flota_vehiculos SET archivado=0, archivado_motivo=NULL, archivado_por=NULL, archivado_at=NULL, updated_by=%s "
+            "WHERE id=%s AND archivado=1", (current_username(), vid))
+        if not n:
+            return _error("Ese vehículo no estaba archivado.", 409)
+        _log(vid, "desarchivado", {})
+        # Vuelve inhabilitado a propósito: lo habilita una persona (queda a la vista el aviso de sus documentos).
+        return _vehiculo_respuesta(vid, avisos=["Volvió inhabilitado: usa «Habilitar» cuando quieras dejarlo disponible."])
+
+    @app.route("/flota/api/vehiculos/<int:vid>", methods=["DELETE"])
+    @_flota_admin_required
+    def flota_api_vehiculo_eliminar(vid):
+        """Borrado DEFINITIVO: solo si nunca tuvo reservas (si no, se perdería su historial: se archiva) y escribiendo la patente. Queda anotado
+        en la bitácora, con todos sus datos, ANTES de borrar (REGLA #5)."""
+        v = _fila(vid)
+        if not v:
+            return _error("No encontré ese vehículo.", 404)
+        if not fr.coincide_confirmacion((request.get_json(silent=True) or {}).get("confirmacion"), v["patente"], es_patente=True):
+            return _error("Para borrarlo definitivo escribe su patente.", 400, errores={"confirmacion": "No coincide con la patente."})
+        usadas = int((mysql_fetchone("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE vehiculo_id=%s", (vid,)) or {}).get("n") or 0)
+        if usadas:
+            return _error(f"Ya tuvo {usadas} reserva{'s' if usadas != 1 else ''}: no se puede borrar definitivo porque se perdería su historial. Archívalo.",
+                          409, error_codigo="TIENE_HISTORIAL")
+        try:
+            _log(vid, "eliminado", {"datos": {c: v.get(c) for c in fr.COLUMNAS}}, estricto=True)
+            mysql_execute("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() WHERE entidad='vehiculo' AND entidad_id=%s AND activo=1",
+                          (current_username(), vid))
+            mysql_execute("DELETE FROM flota_vehiculos WHERE id=%s", (vid,))
+        except Exception as e:
+            print(f"[flota] eliminar vehículo: {type(e).__name__}: {e}", flush=True)
+            return _error("No se pudo borrar el vehículo. No se borró nada.", 500)
+        return jsonify({"ok": True, "eliminado": True})
+
     @app.route("/flota/api/vehiculos/<int:vid>/historial", methods=["GET"])
-    @_flota_required
+    @_flota_gestion_required
     def flota_api_vehiculo_historial(vid):
         if not _fila(vid):
             return _error("No encontré ese vehículo.", 404)
         filas = mysql_fetchall(
             "SELECT id, accion, detalle, usuario, created_at FROM flota_vehiculo_log WHERE vehiculo_id=%s ORDER BY id DESC LIMIT 200",
             (vid,)) or []
-        titulos = {"creado": "Vehículo ingresado", "editado": "Datos modificados", "inhabilitado": "Inhabilitado", "habilitado": "Habilitado"}
+        return jsonify({"ok": True, "eventos": _eventos_historial(filas)})
+
+    _TITULOS_HISTORIAL = {
+        "creado": "Registrado", "editado": "Datos modificados", "inhabilitado": "Inhabilitado", "habilitado": "Habilitado",
+        "archivado": "Archivado", "desarchivado": "Desarchivado", "eliminado": "Borrado definitivo",
+        "archivo_subido": "Archivo guardado", "archivo_quitado": "Archivo quitado",
+    }
+
+    def _eventos_historial(filas, chofer=False):
         eventos = []
         for f in filas:
             try:
                 det = json.loads(f.get("detalle") or "null") or {}
             except Exception:
                 det = {}
-            if f["accion"] == "editado":
-                lineas = fr.lineas_de_cambios(det.get("cambios"))
-            elif f["accion"] == "inhabilitado":
+            acc = f["accion"]
+            if acc == "editado":
+                lineas = fr.lineas_de_cambios_chofer(det.get("cambios")) if chofer else fr.lineas_de_cambios(det.get("cambios"))
+            elif acc in ("inhabilitado", "archivado"):
                 lineas = ["Motivo: " + (det.get("motivo") or "(sin motivo)")]
-            elif f["accion"] == "habilitado":
+            elif acc == "habilitado":
                 lineas = (["Estaba inhabilitado por: " + det["motivo_anterior"]] if det.get("motivo_anterior") else [])
+            elif acc in ("archivo_subido", "archivo_quitado"):
+                lineas = [f"{fr.ETIQUETAS_ARCHIVO.get(det.get('tipo'), det.get('tipo') or 'Archivo')}: {det.get('nombre') or ''}".strip(": ")]
             else:
                 lineas = []
-            eventos.append({"accion": f["accion"], "titulo": titulos.get(f["accion"], f["accion"]), "lineas": lineas,
+            eventos.append({"accion": acc, "titulo": _TITULOS_HISTORIAL.get(acc, acc), "lineas": lineas,
                             "usuario": f.get("usuario") or "", "fecha": _hora_chile(f.get("created_at"))})
-        return jsonify({"ok": True, "eventos": eventos})
+        return eventos
+
+    # ── API de archivos (foto y PDF) ────────────────────────────────────────
+    def _entidad_existe(entidad, ident):
+        if entidad == "vehiculo":
+            return _fila(ident)
+        if entidad == "chofer":
+            return _chofer_fila(ident)
+        return None
+
+    def _log_entidad(entidad, ident, accion, detalle):
+        (_log if entidad == "vehiculo" else _clog)(ident, accion, detalle)
+
+    @app.route("/flota/api/archivos", methods=["POST"])
+    @_flota_admin_required
+    def flota_api_archivo_subir():
+        """Guarda (o reemplaza) la foto o un PDF. El anterior NO se borra: queda como no vigente, con su historial."""
+        entidad = (request.form.get("entidad") or "").strip()
+        tipo = (request.form.get("tipo") or "").strip()
+        ident = fr._id(request.form.get("entidad_id"))
+        archivo = request.files.get("archivo")
+        if entidad not in fr.TIPOS_ARCHIVO or not ident or archivo is None:
+            return _error("Faltan datos para guardar el archivo.", 400)
+        if not _entidad_existe(entidad, ident):
+            return _error("No encontré a quién pertenece ese archivo.", 404)
+        data = archivo.read(max(fr.ARCHIVO_MAX_BYTES.values()) + 1)
+        info, err = fr.validar_archivo(entidad, tipo, data)
+        if err:
+            return _error(err, 400, errores={"archivo": err})
+        bucket = _bucket()
+        if bucket is None:
+            return _error("El almacenamiento de archivos no está disponible en este momento. Intenta de nuevo en unos minutos.", 503)
+        contenido, ct, ext = data, info["content_type"], info["extension"]
+        if info["clase"] == "imagen":
+            try:
+                resize = ctx.get("_img_resize_bytes")
+                if resize:
+                    contenido, ct = resize(data, max_dim=1600, quality=84)
+                    ext = ".png" if ct == "image/png" else (".webp" if ct == "image/webp" else ".jpg")
+            except Exception as e:
+                print(f"[flota] redimensionar imagen: {type(e).__name__}", flush=True)
+        nombre = fr.nombre_seguro(getattr(archivo, "filename", "") or fr.ETIQUETAS_ARCHIVO.get(tipo, "archivo"), ext)
+        clave = f"{_PREFIJO_PRIVADO}{entidad}/{ident}/{tipo}_{secrets.token_hex(8)}{ext}"
+        try:
+            blob = bucket.blob(clave)
+            blob.cache_control = "private, max-age=0"
+            blob.upload_from_string(contenido, content_type=ct)
+        except Exception as e:
+            print(f"[flota] subir archivo: {type(e).__name__}: {e}", flush=True)
+            return _error("No se pudo guardar el archivo. Intenta de nuevo.", 502)
+        quien = current_username()
+        try:
+            mysql_execute("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() "
+                          "WHERE entidad=%s AND entidad_id=%s AND tipo=%s AND activo=1", (quien, entidad, ident, tipo))
+            mysql_execute(
+                "INSERT INTO flota_archivos (entidad, entidad_id, tipo, nombre_original, content_type, bytes, gcs_key, sha256, subido_por) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (entidad, ident, tipo, nombre, ct, len(contenido), clave, hashlib.sha256(contenido).hexdigest(), quien))
+        except Exception as e:
+            print(f"[flota] registrar archivo: {type(e).__name__}: {e}", flush=True)
+            return _error("El archivo se subió pero no quedó registrado. Intenta de nuevo.", 500)
+        _log_entidad(entidad, ident, "archivo_subido", {"tipo": tipo, "nombre": nombre, "bytes": len(contenido)})
+        return _devolver_entidad(entidad, ident)
+
+    def _devolver_entidad(entidad, ident):
+        if entidad == "vehiculo":
+            return _vehiculo_respuesta(ident)
+        f = _chofer_fila(ident)
+        return jsonify({"ok": True, "chofer": _chofer_json(dict(f), _hoy(), _archivos_activos("chofer").get(ident)) if f else None})
+
+    @app.route("/flota/api/archivos/<int:aid>", methods=["GET"])
+    @_flota_required
+    def flota_api_archivo_ver(aid):
+        """Abre un archivo guardado. La foto, quien entra a la flota; los PDF y la licencia, solo con el permiso de documentos."""
+        f = mysql_fetchone("SELECT * FROM flota_archivos WHERE id=%s", (aid,))
+        if not f:
+            return _error("No encontré ese archivo.", 404)
+        if f["tipo"] != "foto" and not _flota_docs():
+            return _error("No tienes permiso para ver los documentos de la flota.", 403, error_codigo="SIN_PERMISO_DOCUMENTOS_FLOTA")
+        if f["tipo"] == "foto" and not f.get("activo") and not _flota_docs():
+            return _error("No encontré ese archivo.", 404)
+        bucket = _bucket()
+        if bucket is None:
+            return _error("El almacenamiento de archivos no está disponible en este momento.", 503)
+        try:
+            data = bucket.blob(f["gcs_key"]).download_as_bytes()
+        except Exception as e:
+            print(f"[flota] leer archivo {aid}: {type(e).__name__}", flush=True)
+            return _error("No se pudo leer el archivo. Intenta de nuevo.", 502)
+        resp = Response(data, mimetype=f.get("content_type") or "application/octet-stream")
+        nombre = fr.nombre_seguro(f.get("nombre_original"), os.path.splitext(f["gcs_key"])[1] or "")
+        resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
+        resp.headers["Cache-Control"] = "private, max-age=3600" if f["tipo"] == "foto" else "private, no-store"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        return resp
+
+    @app.route("/flota/api/archivos/<int:aid>/quitar", methods=["POST"])
+    @_flota_admin_required
+    def flota_api_archivo_quitar(aid):
+        """Deja de ser el archivo vigente. El original sigue guardado (queda en el historial)."""
+        f = mysql_fetchone("SELECT * FROM flota_archivos WHERE id=%s", (aid,))
+        if not f:
+            return _error("No encontré ese archivo.", 404)
+        n = mysql_rowcount("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() WHERE id=%s AND activo=1",
+                           (current_username(), aid))
+        if not n:
+            return _error("Ese archivo ya no estaba vigente.", 409)
+        _log_entidad(f["entidad"], f["entidad_id"], "archivo_quitado", {"tipo": f["tipo"], "nombre": f.get("nombre_original")})
+        return _devolver_entidad(f["entidad"], f["entidad_id"])
 
     # ═══════════════════════════════════════════════════════════════════════
     #  FASE 1b · CHOFERES Y SOLICITUDES DE USO
@@ -442,22 +772,6 @@ def register_flota_routes(app, ctx):
         "SELECT s.id, s.numero, s.estado, s.inicio, s.fin, s.area, s.solicitante_nombre, s.sello_at, s.vehiculo_id, s.chofer_id, "
         "v.patente AS v_patente FROM flota_solicitudes s JOIN flota_vehiculos v ON v.id = s.vehiculo_id")
 
-    def _flota_gestiona():
-        """Quién gestiona la flota (Aarón: confirma, entrega la llave, mueve y cancela). HOY es la misma puerta que `_flota_puede`; cuando
-        exista el rol de responsable de flota se cambia SOLO esta función."""
-        return _flota_puede()
-
-    def _flota_gestion_required(view):
-        @wraps(view)
-        def wrapped(*a, **k):
-            if not _flota_gestiona():
-                if _es_api():
-                    return jsonify({"ok": False, "error": "Solo quien gestiona la flota puede hacer esto.",
-                                    "error_codigo": "SIN_PERMISO_GESTION_FLOTA"}), 403
-                return redirect(url_for("index"))
-            return view(*a, **k)
-        return login_required(wrapped)
-
     def _ahora_chile():
         """La hora de Chile como fecha-hora SIN zona (así se guardan inicio y fin de cada reserva: lo que la persona declaró)."""
         try:
@@ -478,7 +792,8 @@ def register_flota_routes(app, ctx):
         return d.date().isoformat() if isinstance(d, datetime) else None
 
     # ── Choferes ────────────────────────────────────────────────────────────
-    def _chofer_json(r, hoy):
+    def _chofer_json(r, hoy, archivos=None):
+        niv = _niv()
         clases = fr.normalizar_clases(r.get("licencia_clases"))
         try:
             vence = fr.fecha_o_none(r.get("licencia_vence"))
@@ -487,7 +802,8 @@ def register_flota_routes(app, ctx):
         estado = fr.estado_vencimiento(vence, hoy) or "sin_fecha"
         dias = (vence - hoy).days if vence else None
         activo = bool(r.get("u_activo")) if r.get("u_activo") is not None else False
-        return {
+        lic = (archivos or {}).get("licencia")
+        out = {
             "id": r["id"], "usuario_id": r.get("usuario_id"),
             "nombre": r.get("u_nombre") or "(usuario sin nombre)", "username": r.get("u_username"),
             "telefono": r.get("u_phone"), "cargo": r.get("u_cargo"), "usuario_activo": activo,
@@ -495,19 +811,29 @@ def register_flota_routes(app, ctx):
             "licencia_vence": vence.isoformat() if vence else None, "licencia_vence_fmt": fr.fecha_corta(vence),
             "licencia_estado": estado, "licencia_dias": dias,
             "licencia_texto_dias": fr.texto_dias(dias) if vence else "Sin fecha registrada",
-            "notas": r.get("notas"), "habilitado": bool(r.get("habilitado")),
+            "tiene_licencia_pdf": bool(lic),
+            "habilitado": bool(r.get("habilitado")),
             "inhabilitado_motivo": r.get("inhabilitado_motivo"), "inhabilitado_por": r.get("inhabilitado_por"),
             "inhabilitado_fmt": _hora_chile(r.get("inhabilitado_at")),
+            "archivado": bool(r.get("archivado")), "archivado_motivo": r.get("archivado_motivo"),
+            "archivado_por": r.get("archivado_por"), "archivado_fmt": _hora_chile(r.get("archivado_at")),
             "creado_por": r.get("created_by"), "creado_fmt": _hora_chile(r.get("created_at")),
             "actualizado_por": r.get("updated_by"), "actualizado_fmt": _hora_chile(r.get("updated_at")),
             # Puede recibir una reserva hoy: habilitado, con usuario activo y la licencia sin vencer.
             "disponible": bool(r.get("habilitado")) and activo and estado not in ("vencido", "sin_fecha"),
+            # Lo personal (RUT, nombre completo, dirección, notas y el PDF de la licencia) solo con «Documentos y datos de la flota».
+            "rut": None, "rut_fmt": "", "nombre_completo": None, "direccion": None, "notas": None, "licencia_archivo": None,
         }
+        if niv["documentos"]:
+            out.update(rut=r.get("rut"), rut_fmt=fr.rut_formato(r.get("rut")) if r.get("rut") else "",
+                       nombre_completo=r.get("nombre_completo"), direccion=r.get("direccion"), notas=r.get("notas"),
+                       licencia_archivo=_archivo_json(lic) if lic else None)
+        return out
 
     def _chofer_fila(cid):
         return mysql_fetchone(_SQL_CHOF + " WHERE c.id=%s", (cid,))
 
-    def _clog(cid, accion, detalle=None):
+    def _clog(cid, accion, detalle=None, estricto=False):
         try:
             mysql_execute(
                 "INSERT INTO flota_chofer_log (chofer_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s)",
@@ -515,9 +841,11 @@ def register_flota_routes(app, ctx):
                  (current_username() or "")[:190] or None))
         except Exception as e:
             print(f"[flota] bitácora de chofer ({accion}): {type(e).__name__}", flush=True)
+            if estricto:
+                raise
 
     def _reservas_abiertas(campo, ident):
-        """Cuántas reservas vivas (que aún no terminan) tiene un vehículo o un chofer: sirve para AVISAR al inhabilitarlo, no para trabar."""
+        """Cuántas reservas vivas (que aún no terminan) tiene un vehículo o un chofer: sirve para AVISAR al inhabilitarlo y para no archivarlo."""
         sql = ("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE vehiculo_id=%s AND fin >= %s AND estado IN "
                "('solicitada','confirmada','llave_entregada')") if campo == "vehiculo" else (
               "SELECT COUNT(*) AS n FROM flota_solicitudes WHERE chofer_id=%s AND fin >= %s AND estado IN "
@@ -533,42 +861,53 @@ def register_flota_routes(app, ctx):
             return []
         return [f"{quien} tiene {n} reserva{'s' if n != 1 else ''} pendiente{'s' if n != 1 else ''}: revísalas en Solicitudes."]
 
+    def _chofer_respuesta(cid, **extra):
+        f = _chofer_fila(cid)
+        return jsonify({"ok": True, "chofer": _chofer_json(dict(f), _hoy(), _archivos_activos("chofer").get(cid)) if f else None, **extra})
+
     @app.route("/flota/api/choferes", methods=["GET"])
     @_flota_required
     def flota_api_choferes():
+        archivados = 1 if (request.args.get("archivados") == "1" and _flota_admin()) else 0
         try:
-            filas = mysql_fetchall(_SQL_CHOF + " ORDER BY c.habilitado DESC, u.nombre LIMIT 500") or []
+            filas = mysql_fetchall(_SQL_CHOF + " WHERE c.archivado=%s ORDER BY c.habilitado DESC, u.nombre LIMIT 500", (archivados,)) or []
+            n_arch = int((mysql_fetchone("SELECT COUNT(*) AS n FROM flota_choferes WHERE archivado=1") or {}).get("n") or 0) if _flota_admin() else 0
         except Exception as e:
             print(f"[flota] listar choferes: {type(e).__name__}: {e}", flush=True)
             return _error("No se pudo leer el repositorio de choferes. Intenta de nuevo en un momento.", 500)
         hoy = _hoy()
-        choferes = [_chofer_json(dict(f), hoy) for f in filas]
+        arch = _archivos_activos("chofer")
+        choferes = [_chofer_json(dict(f), hoy, arch.get(f["id"])) for f in filas]
         resumen = {
             "total": len(choferes),
             "habilitados": sum(1 for c in choferes if c["habilitado"]),
             "inhabilitados": sum(1 for c in choferes if not c["habilitado"]),
             "por_vencer": sum(1 for c in choferes if c["habilitado"] and c["licencia_estado"] == "por_vencer"),
             "vencidas": sum(1 for c in choferes if c["habilitado"] and c["licencia_estado"] == "vencido"),
+            "archivados": n_arch,
         }
-        return jsonify({"ok": True, "choferes": choferes, "resumen": resumen, "config": _config(), "hoy": hoy.isoformat()})
+        return jsonify({"ok": True, "choferes": choferes, "resumen": resumen, "config": _config(), "hoy": hoy.isoformat(),
+                        "permisos": _niv(), "ver_archivados": bool(archivados)})
 
     @app.route("/flota/api/choferes/usuarios", methods=["GET"])
-    @_flota_gestion_required
+    @_flota_admin_required
     def flota_api_choferes_usuarios():
-        """Usuarios de ILUS que todavía no son chofer: de ahí se elige a quién dar de alta."""
+        """Usuarios de ILUS que todavía no son chofer: de ahí se elige a quién dar de alta. Trae lo que ya tiene su perfil (RUT, dirección)
+        para SUGERIRLO en el formulario; la persona decide qué queda (REGLA #32)."""
         try:
             filas = mysql_fetchall(
-                "SELECT id, nombre, username, phone, cargo FROM `" + _AUTH + "` WHERE active=1 AND id NOT IN "
+                "SELECT id, nombre, username, phone, cargo, rut, direccion, comuna FROM `" + _AUTH + "` WHERE active=1 AND id NOT IN "
                 "(SELECT usuario_id FROM flota_choferes) ORDER BY nombre LIMIT 1000") or []
         except Exception as e:
             print(f"[flota] usuarios para chofer: {type(e).__name__}: {e}", flush=True)
             return _error("No se pudo leer la lista de usuarios. Intenta de nuevo en un momento.", 500)
         return jsonify({"ok": True, "usuarios": [
             {"id": f["id"], "nombre": f.get("nombre") or f.get("username"), "username": f.get("username"),
-             "telefono": f.get("phone"), "cargo": f.get("cargo")} for f in filas]})
+             "telefono": f.get("phone"), "cargo": f.get("cargo"),
+             "rut": f.get("rut") or "", "direccion": ", ".join(x for x in (f.get("direccion"), f.get("comuna")) if x)} for f in filas]})
 
     @app.route("/flota/api/choferes", methods=["POST"])
-    @_flota_gestion_required
+    @_flota_admin_required
     def flota_api_chofer_crear():
         datos, errores = fr.validar_chofer(request.get_json(silent=True) or {})
         if errores:
@@ -578,9 +917,10 @@ def register_flota_routes(app, ctx):
             return _error("Ese usuario no existe o está desactivado.", 400, errores={"usuario_id": "Elige un usuario activo de ILUS."})
         try:
             mysql_execute(
-                "INSERT INTO flota_choferes (usuario_id, licencia_clases, licencia_vence, notas, created_by, updated_by) VALUES (%s,%s,%s,%s,%s,%s)",
-                (datos["usuario_id"], datos["licencia_clases"], datos["licencia_vence"], datos["notas"],
-                 current_username(), current_username()))
+                "INSERT INTO flota_choferes (usuario_id, rut, nombre_completo, direccion, licencia_clases, licencia_vence, notas, "
+                "created_by, updated_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (datos["usuario_id"], datos["rut"], datos["nombre_completo"], datos["direccion"], datos["licencia_clases"],
+                 datos["licencia_vence"], datos["notas"], current_username(), current_username()))
         except Exception as e:
             if _es_duplicado(e):
                 return _error(f"{u.get('nombre') or 'Ese usuario'} ya está en el repositorio de choferes.", 409,
@@ -591,10 +931,10 @@ def register_flota_routes(app, ctx):
         if not fila:
             return _error("El chofer se guardó pero no se pudo leer de vuelta. Recarga la pantalla.", 500)
         _clog(fila["id"], "creado", {"usuario": u.get("nombre"), "licencia_clases": datos["licencia_clases"]})
-        return jsonify({"ok": True, "chofer": _chofer_json(dict(fila), _hoy())})
+        return _chofer_respuesta(fila["id"])
 
     @app.route("/flota/api/choferes/<int:cid>", methods=["PUT"])
-    @_flota_gestion_required
+    @_flota_admin_required
     def flota_api_chofer_editar(cid):
         actual = _chofer_fila(cid)
         if not actual:
@@ -604,19 +944,22 @@ def register_flota_routes(app, ctx):
             return _error("Revisa los campos marcados.", 400, errores=errores)
         cambios = fr.cambios(dict(actual), datos, campos=fr.CHOFER_COLUMNAS)
         if not cambios:
-            return jsonify({"ok": True, "sin_cambios": True, "chofer": _chofer_json(dict(actual), _hoy())})
+            return jsonify({"ok": True, "sin_cambios": True,
+                            "chofer": _chofer_json(dict(actual), _hoy(), _archivos_activos("chofer").get(cid))})
         try:
             mysql_execute(
-                "UPDATE flota_choferes SET licencia_clases=%s, licencia_vence=%s, notas=%s, updated_by=%s WHERE id=%s",
-                (datos["licencia_clases"], datos["licencia_vence"], datos["notas"], current_username(), cid))
+                "UPDATE flota_choferes SET rut=%s, nombre_completo=%s, direccion=%s, licencia_clases=%s, licencia_vence=%s, notas=%s, "
+                "updated_by=%s WHERE id=%s",
+                (datos["rut"], datos["nombre_completo"], datos["direccion"], datos["licencia_clases"], datos["licencia_vence"],
+                 datos["notas"], current_username(), cid))
         except Exception as e:
             print(f"[flota] editar chofer: {type(e).__name__}: {e}", flush=True)
             return _error("No se pudo guardar los cambios. Intenta de nuevo.", 500)
         _clog(cid, "editado", {"cambios": cambios})
-        return jsonify({"ok": True, "chofer": _chofer_json(dict(_chofer_fila(cid) or actual), _hoy())})
+        return _chofer_respuesta(cid)
 
     @app.route("/flota/api/choferes/<int:cid>/inhabilitar", methods=["POST"])
-    @_flota_gestion_required
+    @_flota_admin_required
     def flota_api_chofer_inhabilitar(cid):
         if not _chofer_fila(cid):
             return _error("No encontré ese chofer.", 404)
@@ -629,52 +972,100 @@ def register_flota_routes(app, ctx):
         if not n:
             return _error("Ese chofer ya estaba inhabilitado.", 409)
         _clog(cid, "inhabilitado", {"motivo": motivo})
-        c = _chofer_json(dict(_chofer_fila(cid)), _hoy())
+        f = _chofer_fila(cid)
+        c = _chofer_json(dict(f), _hoy(), _archivos_activos("chofer").get(cid))
         return jsonify({"ok": True, "chofer": c, "avisos": _aviso_reservas(_reservas_abiertas("chofer", cid), c["nombre"])})
 
     @app.route("/flota/api/choferes/<int:cid>/habilitar", methods=["POST"])
-    @_flota_gestion_required
+    @_flota_admin_required
     def flota_api_chofer_habilitar(cid):
         previo = _chofer_fila(cid)
         if not previo:
             return _error("No encontré ese chofer.", 404)
+        if previo.get("archivado"):
+            return _error("Este chofer está archivado: primero desarchívalo.", 409)
         n = mysql_rowcount(
             "UPDATE flota_choferes SET habilitado=1, inhabilitado_motivo=NULL, inhabilitado_por=NULL, inhabilitado_at=NULL, updated_by=%s "
             "WHERE id=%s AND habilitado=0", (current_username(), cid))
         if not n:
             return _error("Ese chofer ya estaba habilitado.", 409)
         _clog(cid, "habilitado", {"motivo_anterior": previo.get("inhabilitado_motivo")})
-        c = _chofer_json(dict(_chofer_fila(cid)), _hoy())
+        f = _chofer_fila(cid)
+        c = _chofer_json(dict(f), _hoy(), _archivos_activos("chofer").get(cid))
         avisos = []
         if c["licencia_estado"] in ("vencido", "por_vencer"):
             avisos.append(f"Licencia de {c['nombre']}: {c['licencia_texto_dias'].lower()}.")
         return jsonify({"ok": True, "chofer": c, "avisos": avisos})
 
+    @app.route("/flota/api/choferes/<int:cid>/archivar", methods=["POST"])
+    @_flota_admin_required
+    def flota_api_chofer_archivar(cid):
+        c = _chofer_fila(cid)
+        if not c:
+            return _error("No encontré ese chofer.", 404)
+        motivo, err = fr.validar_motivo_archivo((request.get_json(silent=True) or {}).get("motivo"))
+        if err:
+            return _error(err, 400, errores={"motivo": err})
+        n_res = _reservas_abiertas("chofer", cid)
+        if n_res:
+            return _error(f"Tiene {n_res} reserva{'s' if n_res != 1 else ''} por delante: muévelas o cancélalas antes de archivarlo.", 409,
+                          error_codigo="TIENE_RESERVAS")
+        quien = current_username()
+        n = mysql_rowcount(
+            "UPDATE flota_choferes SET archivado=1, archivado_motivo=%s, archivado_por=%s, archivado_at=NOW(), habilitado=0, "
+            "inhabilitado_motivo=%s, inhabilitado_por=%s, inhabilitado_at=NOW(), updated_by=%s WHERE id=%s AND archivado=0",
+            (motivo, quien, "Archivado: " + motivo, quien, quien, cid))
+        if not n:
+            return _error("Ese chofer ya estaba archivado.", 409)
+        _clog(cid, "archivado", {"motivo": motivo})
+        return _chofer_respuesta(cid)
+
+    @app.route("/flota/api/choferes/<int:cid>/desarchivar", methods=["POST"])
+    @_flota_admin_required
+    def flota_api_chofer_desarchivar(cid):
+        if not _chofer_fila(cid):
+            return _error("No encontré ese chofer.", 404)
+        n = mysql_rowcount(
+            "UPDATE flota_choferes SET archivado=0, archivado_motivo=NULL, archivado_por=NULL, archivado_at=NULL, updated_by=%s "
+            "WHERE id=%s AND archivado=1", (current_username(), cid))
+        if not n:
+            return _error("Ese chofer no estaba archivado.", 409)
+        _clog(cid, "desarchivado", {})
+        return _chofer_respuesta(cid, avisos=["Volvió inhabilitado: usa «Habilitar» cuando quieras dejarlo disponible."])
+
+    @app.route("/flota/api/choferes/<int:cid>", methods=["DELETE"])
+    @_flota_admin_required
+    def flota_api_chofer_eliminar(cid):
+        """Borrado DEFINITIVO: solo si nunca tuvo reservas y escribiendo su nombre. Queda anotado ANTES de borrar (REGLA #5)."""
+        c = _chofer_fila(cid)
+        if not c:
+            return _error("No encontré ese chofer.", 404)
+        esperado = c.get("nombre_completo") or c.get("u_nombre") or ""
+        if not fr.coincide_confirmacion((request.get_json(silent=True) or {}).get("confirmacion"), esperado):
+            return _error("Para borrarlo definitivo escribe su nombre completo.", 400, errores={"confirmacion": "No coincide con el nombre."})
+        usadas = int((mysql_fetchone("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE chofer_id=%s", (cid,)) or {}).get("n") or 0)
+        if usadas:
+            return _error(f"Ya tuvo {usadas} reserva{'s' if usadas != 1 else ''}: no se puede borrar definitivo porque se perdería su historial. Archívalo.",
+                          409, error_codigo="TIENE_HISTORIAL")
+        try:
+            _clog(cid, "eliminado", {"datos": {k: c.get(k) for k in ("usuario_id", "u_nombre", "rut", "nombre_completo", "direccion",
+                                                                        "licencia_clases", "licencia_vence", "notas")}}, estricto=True)
+            mysql_execute("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() WHERE entidad='chofer' AND entidad_id=%s AND activo=1",
+                          (current_username(), cid))
+            mysql_execute("DELETE FROM flota_choferes WHERE id=%s", (cid,))
+        except Exception as e:
+            print(f"[flota] eliminar chofer: {type(e).__name__}: {e}", flush=True)
+            return _error("No se pudo borrar el chofer. No se borró nada.", 500)
+        return jsonify({"ok": True, "eliminado": True})
+
     @app.route("/flota/api/choferes/<int:cid>/historial", methods=["GET"])
-    @_flota_required
+    @_flota_gestion_required
     def flota_api_chofer_historial(cid):
         if not _chofer_fila(cid):
             return _error("No encontré ese chofer.", 404)
         filas = mysql_fetchall(
             "SELECT id, accion, detalle, usuario, created_at FROM flota_chofer_log WHERE chofer_id=%s ORDER BY id DESC LIMIT 200", (cid,)) or []
-        titulos = {"creado": "Chofer ingresado", "editado": "Datos modificados", "inhabilitado": "Inhabilitado", "habilitado": "Habilitado"}
-        eventos = []
-        for f in filas:
-            try:
-                det = json.loads(f.get("detalle") or "null") or {}
-            except Exception:
-                det = {}
-            if f["accion"] == "editado":
-                lineas = fr.lineas_de_cambios_chofer(det.get("cambios"))
-            elif f["accion"] == "inhabilitado":
-                lineas = ["Motivo: " + (det.get("motivo") or "(sin motivo)")]
-            elif f["accion"] == "habilitado":
-                lineas = (["Estaba inhabilitado por: " + det["motivo_anterior"]] if det.get("motivo_anterior") else [])
-            else:
-                lineas = []
-            eventos.append({"accion": f["accion"], "titulo": titulos.get(f["accion"], f["accion"]), "lineas": lineas,
-                            "usuario": f.get("usuario") or "", "fecha": _hora_chile(f.get("created_at"))})
-        return jsonify({"ok": True, "eventos": eventos})
+        return jsonify({"ok": True, "eventos": _eventos_historial(filas, chofer=True)})
 
     # ── Solicitudes ─────────────────────────────────────────────────────────
     def _sol_json(r):

@@ -46,6 +46,26 @@ def _proximo_dia_habil(minimo_dias=8):
     return d
 
 
+def _rut(cuerpo):
+    """Un RUT con su dígito verificador correcto (módulo 11)."""
+    suma, factor = 0, 2
+    for d in reversed(str(cuerpo)):
+        suma += int(d) * factor
+        factor = 2 if factor == 7 else factor + 1
+    r = 11 - (suma % 11)
+    return f"{cuerpo}-" + ("0" if r == 11 else ("K" if r == 10 else str(r)))
+
+
+NOMBRES_COMPLETOS = {1: "Ana María Pérez Soto", 2: "Humberto Soto Rivas", 4: "Daniela Mora Vega"}
+
+
+def _datos_chofer(uid, **k):
+    d = {"rut": _rut(10000000 + uid), "nombre_completo": NOMBRES_COMPLETOS.get(uid, f"Persona de Prueba {uid}"),
+         "direccion": "Av. Siempre Viva 742, Providencia", "licencia_clases": ["B"], "licencia_vence": FUTURO}
+    d.update(k)
+    return d
+
+
 DIA = _proximo_dia_habil()
 DIA_ISO = DIA.isoformat()
 AHORA = dt.datetime(2026, 11, 2, 15, 0)
@@ -207,14 +227,20 @@ class TestChoferYVehiculo(unittest.TestCase):
         self.assertEqual(R.avisos_vehiculo({}, dt.date(2026, 11, 5)), [])        # sin fechas no se inventa nada
 
     def test_validar_chofer(self):
-        d, e = R.validar_chofer({"usuario_id": "3", "licencia_clases": ["b", "A4"], "licencia_vence": "2027-01-31"})
+        base = {"rut": "76.996.964-0", "nombre_completo": "Ana María Pérez Soto", "direccion": "Av. Siempre Viva 742"}
+        d, e = R.validar_chofer(dict(base, usuario_id="3", licencia_clases=["b", "A4"], licencia_vence="2027-01-31"))
         self.assertEqual(e, {})
         self.assertEqual((d["usuario_id"], d["licencia_clases"], d["licencia_vence"]), (3, "A4,B", dt.date(2027, 1, 31)))
+        self.assertEqual((d["rut"], d["nombre_completo"]), ("76996964-0", "Ana María Pérez Soto"))
         _d, e = R.validar_chofer({})
-        for c in ("usuario_id", "licencia_clases", "licencia_vence"):
+        for c in ("usuario_id", "rut", "nombre_completo", "licencia_clases", "licencia_vence"):
             self.assertIn(c, e)
-        _d, e = R.validar_chofer({"licencia_clases": "B", "licencia_vence": "2027-01-31"}, con_usuario=False)
+        _d, e = R.validar_chofer(dict(base, licencia_clases="B", licencia_vence="2027-01-31"), con_usuario=False)
         self.assertEqual(e, {})
+        _d, e = R.validar_chofer(dict(base, rut="12.345.678-9", licencia_clases="B", licencia_vence="2027-01-31"), con_usuario=False)
+        self.assertIn("rut", e)                                                     # el dígito verificador no cuadra
+        _d, e = R.validar_chofer(dict(base, direccion="", licencia_clases="B", licencia_vence="2027-01-31"), con_usuario=False)
+        self.assertEqual(e, {})                                                     # la dirección es opcional (se avisa, no se traba)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -268,12 +294,15 @@ class Falsa(BaseFalsa):
                 return [self._chof_row(self.cho[p[0]])] if p[0] in self.cho else []
             if s.endswith("WHERE c.usuario_id=%s"):
                 return [self._chof_row(c) for c in self.cho.values() if c["usuario_id"] == p[0]]
-            if s.endswith("ORDER BY c.habilitado DESC, u.nombre LIMIT 500"):
-                return sorted((self._chof_row(c) for c in self.cho.values()), key=lambda c: (-c["habilitado"], c["u_nombre"] or ""))
+            if s.endswith("WHERE c.archivado=%s ORDER BY c.habilitado DESC, u.nombre LIMIT 500"):
+                return sorted((self._chof_row(c) for c in self.cho.values() if int(c.get("archivado") or 0) == p[0]),
+                              key=lambda c: (-c["habilitado"], c["u_nombre"] or ""))
+        if s == "SELECT COUNT(*) AS n FROM flota_choferes WHERE archivado=1":
+            return [{"n": sum(1 for c in self.cho.values() if c.get("archivado"))}]
         if s.startswith("SELECT id, nombre, active FROM `app_users` WHERE id=%s"):
             u = self.usr.get(p[0])
             return [{"id": u["id"], "nombre": u["nombre"], "active": u["active"]}] if u else []
-        if s.startswith("SELECT id, nombre, username, phone, cargo FROM `app_users` WHERE active=1 AND id NOT IN"):
+        if s.startswith("SELECT id, nombre, username, phone, cargo, rut, direccion, comuna FROM `app_users` WHERE active=1 AND id NOT IN"):
             ya = {c["usuario_id"] for c in self.cho.values()}
             return sorted((dict(u) for u in self.usr.values() if u["active"] and u["id"] not in ya), key=lambda u: u["nombre"])
         if s.startswith("SELECT s.*, v.patente AS v_patente"):
@@ -301,7 +330,10 @@ class Falsa(BaseFalsa):
             return [{"n": sum(1 for x in self.sol.values() if x["estado"] in R.ESTADOS_OCUPAN and x["inicio"] < p[0] and x["fin"] > p[1])}]
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE vehiculo_id=%s") or \
                 s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE chofer_id=%s"):
-            return [{"n": self.abiertas}]
+            if " AND fin >=" in s:
+                return [{"n": self.abiertas}]
+            campo = "vehiculo_id" if "WHERE vehiculo_id=%s" in s else "chofer_id"
+            return [{"n": sum(1 for x in self.sol.values() if x[campo] == p[0])}]
         if s.startswith("SELECT id, accion, detalle, usuario, created_at FROM flota_solicitud_log WHERE solicitud_id=%s"):
             return [dict(x) for x in sorted(self.slog, key=lambda x: -x["id"]) if x["solicitud_id"] == p[0]]
         if s.startswith("SELECT id, accion, detalle, usuario, created_at FROM flota_chofer_log WHERE chofer_id=%s"):
@@ -326,8 +358,10 @@ class Falsa(BaseFalsa):
                 e = Exception("(1062, \"Duplicate entry '1' for key 'uq_flota_chofer_usuario'\")")
                 e.args = (1062, "Duplicate entry")
                 raise e
-            c = {"id": self.sig_c, "usuario_id": p[0], "licencia_clases": p[1], "licencia_vence": p[2], "notas": p[3], "habilitado": 1,
-                 "inhabilitado_motivo": None, "inhabilitado_por": None, "inhabilitado_at": None, "created_by": p[4], "updated_by": p[5],
+            c = {"id": self.sig_c, "usuario_id": p[0], "rut": p[1], "nombre_completo": p[2], "direccion": p[3], "licencia_clases": p[4],
+                 "licencia_vence": p[5], "notas": p[6], "habilitado": 1, "archivado": 0, "archivado_motivo": None, "archivado_por": None,
+                 "archivado_at": None, "inhabilitado_motivo": None, "inhabilitado_por": None, "inhabilitado_at": None,
+                 "created_by": p[7], "updated_by": p[8],
                  "created_at": dt.datetime(2026, 11, 2, 15), "updated_at": dt.datetime(2026, 11, 2, 15)}
             self.cho[c["id"]] = c
             self.sig_c += 1
@@ -336,9 +370,27 @@ class Falsa(BaseFalsa):
             self.clog.append({"id": len(self.clog) + 1, "chofer_id": p[0], "accion": p[1], "detalle": p[2], "usuario": p[3],
                               "created_at": dt.datetime(2026, 11, 2, 18)})
             return 1, None
-        if s.startswith("UPDATE flota_choferes SET licencia_clases=%s"):
+        if s.startswith("UPDATE flota_choferes SET rut=%s"):
             c = self.cho[p[-1]]
-            c.update(licencia_clases=p[0], licencia_vence=p[1], notas=p[2], updated_by=p[3])
+            c.update(rut=p[0], nombre_completo=p[1], direccion=p[2], licencia_clases=p[3], licencia_vence=p[4], notas=p[5], updated_by=p[6])
+            return 1, None
+        if s.startswith("UPDATE flota_choferes SET archivado=1"):
+            motivo, por, inhab, _por2, _por3, cid = p
+            c = self.cho.get(cid)
+            if not c or c.get("archivado"):
+                return 0, None
+            c.update(archivado=1, archivado_motivo=motivo, archivado_por=por, archivado_at=dt.datetime(2026, 11, 2, 19, 30), habilitado=0,
+                     inhabilitado_motivo=inhab, inhabilitado_por=por, inhabilitado_at=dt.datetime(2026, 11, 2, 19, 30))
+            return 1, None
+        if s.startswith("UPDATE flota_choferes SET archivado=0"):
+            _por, cid = p
+            c = self.cho.get(cid)
+            if not c or not c.get("archivado"):
+                return 0, None
+            c.update(archivado=0, archivado_motivo=None, archivado_por=None, archivado_at=None)
+            return 1, None
+        if s.startswith("DELETE FROM flota_choferes WHERE id=%s"):
+            self.cho.pop(p[0], None)
             return 1, None
         if s.startswith("UPDATE flota_choferes SET habilitado=0"):
             motivo, por, _por2, cid = p
@@ -466,7 +518,7 @@ class _Cursor:
         return [dict(x) for x in self._r]
 
 
-def _app(base):
+def _app(base, bucket=None):
     from flask import Flask, g, redirect, request
 
     plantillas = tempfile.mkdtemp(prefix="flota_tpl_")
@@ -486,7 +538,8 @@ def _app(base):
     def _usuario():
         rol = request.headers.get("X-Rol")
         g.user = {"id": 1, "nombre": "Daniel Aguilar"} if rol else None
-        g.permissions = {"superadmin": rol == "superadmin", "retiros": rol in ("admin", "superadmin"), "mantenciones": rol is not None}
+        extra = {x.strip(): True for x in (request.headers.get("X-Flota") or "").split(",") if x.strip()}
+        g.permissions = {"superadmin": rol == "superadmin", "retiros": rol in ("admin", "superadmin"), "mantenciones": rol is not None, **extra}
 
     def login_required(view):
         from functools import wraps
@@ -500,7 +553,7 @@ def _app(base):
 
     ctx = {"mysql_fetchone": base.fetchone, "mysql_fetchall": base.fetchall, "mysql_execute": base.execute,
            "mysql_execute_returning_rowcount": base.rowcount, "get_mysql": base.conexion, "AUTH_TABLE": "app_users",
-           "login_required": login_required, "current_username": lambda: "Daniel Aguilar"}
+           "login_required": login_required, "current_username": lambda: "Daniel Aguilar", "_gcs_bucket": lambda: bucket}
     import flota_module
     flota_module.register_flota_routes(app, ctx)
     return app
@@ -531,7 +584,7 @@ class Base(unittest.TestCase):
         return r.get_json()["vehiculo"]["id"]
 
     def chofer(self, uid, **k):
-        d = {"usuario_id": uid, "licencia_clases": ["B"], "licencia_vence": FUTURO}
+        d = dict(_datos_chofer(uid), usuario_id=uid)
         d.update(k)
         r = self.c.post("/flota/api/choferes", json=d, headers=SUPER)
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
@@ -576,12 +629,12 @@ class TestChoferes(Base):
 
     def test_el_usuario_debe_existir_y_estar_activo(self):
         for uid in (3, 99):
-            r = self.c.post("/flota/api/choferes", json={"usuario_id": uid, "licencia_clases": ["B"], "licencia_vence": FUTURO}, headers=SUPER)
+            r = self.c.post("/flota/api/choferes", json=dict(_datos_chofer(uid), usuario_id=uid), headers=SUPER)
             self.assertEqual(r.status_code, 400, uid)
         self.assertEqual(len(self.base.cho), 2)
 
     def test_no_se_repite_el_mismo_usuario(self):
-        r = self.c.post("/flota/api/choferes", json={"usuario_id": 1, "licencia_clases": ["B"], "licencia_vence": FUTURO}, headers=SUPER)
+        r = self.c.post("/flota/api/choferes", json=dict(_datos_chofer(1), usuario_id=1), headers=SUPER)
         self.assertEqual(r.status_code, 409)
         self.assertIn("usuario_id", r.get_json()["errores"])
 
@@ -604,11 +657,11 @@ class TestChoferes(Base):
         self.assertFalse(c["disponible"])
 
     def test_editar_deja_lo_que_cambio(self):
-        r = self.c.put(f"/flota/api/choferes/{self.ana}", json={"licencia_clases": ["A4", "B"], "licencia_vence": FUTURO, "notas": "Profesional"}, headers=SUPER)
+        r = self.c.put(f"/flota/api/choferes/{self.ana}", json=_datos_chofer(1, licencia_clases=["A4", "B"], notas="Profesional"), headers=SUPER)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(self.base.cho[self.ana]["licencia_clases"], "A4,B")
         self.assertEqual(json.loads(self.base.clog[-1]["detalle"])["cambios"]["licencia_clases"]["despues"], "A4,B")
-        r = self.c.put(f"/flota/api/choferes/{self.ana}", json={"licencia_clases": ["A4", "B"], "licencia_vence": FUTURO, "notas": "Profesional"}, headers=SUPER)
+        r = self.c.put(f"/flota/api/choferes/{self.ana}", json=_datos_chofer(1, licencia_clases=["A4", "B"], notas="Profesional"), headers=SUPER)
         self.assertTrue(r.get_json()["sin_cambios"])
 
     def test_inhabilitar_pide_motivo_y_avisa_si_tenia_reservas(self):
@@ -908,9 +961,8 @@ class TestCableado(unittest.TestCase):
         for texto in (self.MODULO, self.REGLAS, self.HTML, self.JS):
             self.assertNotRegex(texto, r"(?i)\b(costo|precio|monto|valor_|factura|\bOC\b|proveedor)\b")
 
-    def test_arranque_barato_sin_alter_y_una_sentencia_por_tabla(self):
-        self.assertNotRegex(self.MODULO, r"ALTER\s+TABLE")
-        for t in ("flota_choferes", "flota_chofer_log", "flota_solicitudes", "flota_solicitud_log"):
+    def test_arranque_barato_una_sentencia_por_tabla(self):
+        for t in ("flota_choferes", "flota_chofer_log", "flota_solicitudes", "flota_solicitud_log", "flota_archivos"):
             self.assertEqual(len(re.findall(rf"CREATE TABLE IF NOT EXISTS {t} \(", self.MODULO)), 1, t)
 
     def test_las_bitacoras_solo_se_agregan(self):
@@ -918,9 +970,9 @@ class TestCableado(unittest.TestCase):
             self.assertNotRegex(self.MODULO, rf"UPDATE\s+{t}")
             self.assertNotRegex(self.MODULO, rf"DELETE\s+FROM\s+{t}")
 
-    def test_nada_se_borra(self):
-        self.assertNotRegex(self.MODULO, r"DELETE\s+FROM\s+flota_")
-        self.assertNotIn('methods=["DELETE"]', self.MODULO)
+    def test_solo_se_borran_vehiculos_y_choferes(self):
+        # Las bitácoras, las solicitudes y los archivos NUNCA se borran (los archivos quedan como no vigentes).
+        self.assertEqual(set(re.findall(r"DELETE\s+FROM\s+(\w+)", self.MODULO)), {"flota_vehiculos", "flota_choferes"})
 
     def test_ningun_sql_con_fstrings(self):
         for m in re.finditer(r"mysql_(?:execute|fetchone|fetchall|rowcount)\(\s*f[\"']", self.MODULO):
@@ -938,19 +990,28 @@ class TestCableado(unittest.TestCase):
         self.assertIn("conn.close()", cuerpo)
 
     def test_la_puerta_de_acceso_sigue_siendo_una_sola(self):
-        self.assertEqual(self.MODULO.count("def _flota_puede"), 1)
-        self.assertEqual(self.MODULO.count('.get("superadmin")'), 1)
-        j = self.MODULO.index("def _flota_gestiona")
-        self.assertIn("return _flota_puede()", self.MODULO[j:j + 400])
+        self.assertEqual(self.MODULO.count("def _niv("), 1)
+        self.assertEqual(self.MODULO.count("fr.niveles("), 1)
+        self.assertNotIn('.get("superadmin")', self.MODULO)
 
-    def test_las_acciones_de_la_gestion_llevan_su_puerta(self):
-        for ruta in ('"/flota/api/solicitudes/<int:sid>/confirmar"', '"/flota/api/solicitudes/<int:sid>/llave"',
-                     '"/flota/api/choferes", methods=["POST"]', '"/flota/api/choferes/<int:cid>", methods=["PUT"]',
-                     '"/flota/api/choferes/<int:cid>/inhabilitar"', '"/flota/api/choferes/<int:cid>/habilitar"'):
-            i = self.MODULO.index("@app.route(" + ruta)
-            self.assertIn("@_flota_gestion_required", self.MODULO[i:i + 160], ruta)
-        i = self.MODULO.index('@app.route("/flota/api/solicitudes/<int:sid>", methods=["PUT"])')
-        self.assertIn("@_flota_gestion_required", self.MODULO[i:i + 160])
+    def test_cada_ruta_lleva_la_puerta_que_le_corresponde(self):
+        pedir = ('"/flota/api/solicitudes", methods=["POST"]', '"/flota/api/solicitudes", methods=["GET"]', '"/flota/api/calendario"',
+                 '"/flota/api/choferes", methods=["GET"]', '"/flota/api/vehiculos", methods=["GET"]', '"/flota/api/solicitudes/<int:sid>", methods=["GET"]',
+                 '"/flota/api/solicitudes/<int:sid>/cancelar"', '"/flota/api/archivos/<int:aid>", methods=["GET"]')
+        gestion = ('"/flota/api/solicitudes/<int:sid>/confirmar"', '"/flota/api/solicitudes/<int:sid>/llave"',
+                   '"/flota/api/solicitudes/<int:sid>", methods=["PUT"]', '"/flota/api/vehiculos/<int:vid>/historial"',
+                   '"/flota/api/choferes/<int:cid>/historial"')
+        admin = ('"/flota/api/vehiculos", methods=["POST"]', '"/flota/api/vehiculos/<int:vid>", methods=["PUT"]',
+                 '"/flota/api/vehiculos/<int:vid>/inhabilitar"', '"/flota/api/vehiculos/<int:vid>/habilitar"',
+                 '"/flota/api/vehiculos/<int:vid>/archivar"', '"/flota/api/vehiculos/<int:vid>/desarchivar"', '"/flota/api/vehiculos/<int:vid>", methods=["DELETE"]',
+                 '"/flota/api/choferes", methods=["POST"]', '"/flota/api/choferes/usuarios"', '"/flota/api/choferes/<int:cid>", methods=["PUT"]',
+                 '"/flota/api/choferes/<int:cid>/inhabilitar"', '"/flota/api/choferes/<int:cid>/habilitar"', '"/flota/api/choferes/<int:cid>/archivar"',
+                 '"/flota/api/choferes/<int:cid>/desarchivar"', '"/flota/api/choferes/<int:cid>", methods=["DELETE"]',
+                 '"/flota/api/archivos", methods=["POST"]', '"/flota/api/archivos/<int:aid>/quitar"')
+        for grupo, puerta in ((pedir, "@_flota_required"), (gestion, "@_flota_gestion_required"), (admin, "@_flota_admin_required")):
+            for ruta in grupo:
+                i = self.MODULO.index("@app.route(" + ruta)
+                self.assertIn(puerta, self.MODULO[i:i + 200], ruta)
 
     def test_cada_transicion_es_atomica(self):
         for estado in ("solicitada", "confirmada"):
@@ -995,7 +1056,7 @@ class TestPantalla(unittest.TestCase):
 
     def test_los_chips_nuevos_no_chocan_con_los_de_vehiculos(self):
         # flota.js engancha TODO `.fl-chip`: si los chips nuevos usaran esa clase, cambiar un filtro movería los de la otra pestaña
-        self.assertRegex(self.js_veh, r"querySelectorAll\('\.fl-chip'\)")
+        self.assertRegex(self.js_veh, r"querySelectorAll\('#flPanelVehiculos \.fl-chip'\)")
         self.assertNotRegex(self.html.split("flPanelVehiculos")[0], r'class="fl-chip[ "]')
         self.assertNotRegex(self.html.split("flPanelChoferes")[1].split("flModalVeh")[0], r'class="fl-chip[ "]')
         self.assertNotIn(".fl-chip'", self.js)

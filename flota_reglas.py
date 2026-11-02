@@ -42,10 +42,12 @@ DIAS_ALERTA = 30      # mismo umbral de «por vencer» que ya usa Transporte (_t
 
 # Columnas editables de flota_vehiculos, en el orden en que se guardan.
 COLUMNAS = (
-    "patente", "tipo", "marca", "modelo", "anio", "color", "vin",
+    "patente", "patente_dv", "tipo", "marca", "modelo", "anio", "color", "vin", "numero_motor", "cilindrada",
+    "propietario", "propietario_rut",
     "capacidad_kg", "capacidad_m3", "combustible", "estanque_l", "km_actual",
     "licencia_clases",
     "revision_tecnica_vence", "permiso_circulacion_vence", "soap_vence", "seguro_vence",
+    "revision_tecnica_detalle", "permiso_circulacion_detalle", "soap_detalle", "seguro_detalle",
     "notas",
 )
 
@@ -55,6 +57,10 @@ ETIQUETAS = {
     "estanque_l": "Estanque (litros)", "km_actual": "Kilómetros", "licencia_clases": "Licencia que exige",
     "revision_tecnica_vence": "Revisión técnica vence", "permiso_circulacion_vence": "Permiso de circulación vence",
     "soap_vence": "SOAP vence", "seguro_vence": "Seguro vence", "notas": "Observaciones",
+    "patente_dv": "Dígito verificador de la patente", "numero_motor": "N° de motor", "cilindrada": "Cilindrada / motor",
+    "propietario": "Propietario registrado", "propietario_rut": "RUT del propietario",
+    "revision_tecnica_detalle": "Revisión técnica · detalle", "permiso_circulacion_detalle": "Permiso de circulación · detalle",
+    "soap_detalle": "SOAP · póliza o detalle", "seguro_detalle": "Seguro · póliza o detalle",
 }
 
 MOTIVO_MIN = 5
@@ -222,7 +228,8 @@ def peor_estado(documentos):
 
 # ── Validación del vehículo ────────────────────────────────────────────────
 _TEXTOS = {          # campo: (largo máximo)
-    "marca": 80, "modelo": 80, "color": 40, "combustible": 30,
+    "marca": 80, "modelo": 80, "color": 40, "combustible": 30, "propietario": 160, "cilindrada": 20,
+    "revision_tecnica_detalle": 160, "permiso_circulacion_detalle": 160, "soap_detalle": 160, "seguro_detalle": 160,
 }
 
 
@@ -241,12 +248,17 @@ def validar_vehiculo(payload, hoy=None):
     errores = {}
     datos = {}
 
-    patente = normalizar_patente(p.get("patente"))
+    # La patente puede venir con su dígito verificador («TVDZ88-5»): se guarda aparte, para que no parezca una patente de 7 caracteres.
+    patente, dv_en_patente = separar_patente(p.get("patente"))
+    dv = re.sub(r"[^0-9K]", "", str(p.get("patente_dv") or "").upper()) or dv_en_patente
     if not patente:
         errores["patente"] = "La patente es obligatoria."
     elif not patente_valida(patente):
         errores["patente"] = "La patente debe tener entre 5 y 7 letras y números (por ejemplo ABCD12 o AB1234)."
+    elif dv and not re.fullmatch(r"[0-9K]", dv):
+        errores["patente"] = "El dígito verificador es un número o la letra K (por ejemplo TVDZ88-5)."
     datos["patente"] = patente or None
+    datos["patente_dv"] = dv if dv and re.fullmatch(r"[0-9K]", dv) else None
 
     tipo = re.sub(r"\s+", " ", str(p.get("tipo") or "")).strip()
     if not tipo:
@@ -262,6 +274,14 @@ def validar_vehiculo(payload, hoy=None):
     if len(vin) > 40:
         errores["vin"] = "Máximo 40 caracteres."
     datos["vin"] = vin or None
+    motor = re.sub(r"[^A-Z0-9]", "", str(p.get("numero_motor") or "").upper())
+    if len(motor) > 40:
+        errores["numero_motor"] = "Máximo 40 caracteres."
+    datos["numero_motor"] = motor or None
+    rut_prop = str(p.get("propietario_rut") or "").strip()
+    if rut_prop and not rut_valido(rut_prop):
+        errores["propietario_rut"] = "El RUT no es válido (revisa el dígito verificador)."
+    datos["propietario_rut"] = normalizar_rut(rut_prop) if rut_prop and rut_valido(rut_prop) else None
 
     notas = str(p.get("notas") or "").strip()
     if len(notas) > 1000:
@@ -563,8 +583,9 @@ def avisos_vehiculo(fila_vehiculo, fecha_uso):
 
 
 # ── Choferes ───────────────────────────────────────────────────────────────
-CHOFER_COLUMNAS = ("licencia_clases", "licencia_vence", "notas")
-CHOFER_ETIQUETAS = {"licencia_clases": "Clases de licencia", "licencia_vence": "Licencia vence", "notas": "Observaciones"}
+CHOFER_COLUMNAS = ("rut", "nombre_completo", "direccion", "licencia_clases", "licencia_vence", "notas")
+CHOFER_ETIQUETAS = {"rut": "RUT", "nombre_completo": "Nombre completo", "direccion": "Dirección",
+                    "licencia_clases": "Clases de licencia", "licencia_vence": "Licencia vence", "notas": "Observaciones"}
 
 
 def validar_chofer(payload, con_usuario=True):
@@ -577,6 +598,23 @@ def validar_chofer(payload, con_usuario=True):
         if uid is None:
             errores["usuario_id"] = "Elige a qué usuario de ILUS corresponde este chofer."
         datos["usuario_id"] = uid
+    # RUT, nombre completo y dirección (Daniel, 02-nov-2026): lo que dice la licencia. El RUT debe existir (dígito verificador).
+    rut_txt = str(p.get("rut") or "").strip()
+    if not rut_txt:
+        errores["rut"] = "Indica el RUT del chofer."
+    elif not rut_valido(rut_txt):
+        errores["rut"] = "El RUT no es válido (revisa el dígito verificador)."
+    datos["rut"] = normalizar_rut(rut_txt) if rut_txt and rut_valido(rut_txt) else None
+    nombre = re.sub(r"\s+", " ", str(p.get("nombre_completo") or "")).strip()
+    if len(nombre) < 5:
+        errores["nombre_completo"] = "Escribe el nombre completo, como figura en la licencia."
+    elif len(nombre) > 190:
+        errores["nombre_completo"] = "Máximo 190 caracteres."
+    datos["nombre_completo"] = nombre or None
+    direccion = re.sub(r"\s+", " ", str(p.get("direccion") or "")).strip()
+    if len(direccion) > 300:
+        errores["direccion"] = "Máximo 300 caracteres."
+    datos["direccion"] = direccion or None
     clases = normalizar_clases(p.get("licencia_clases"))
     if not clases:
         errores["licencia_clases"] = "Elige al menos una clase de licencia (por ejemplo B)."
@@ -601,3 +639,171 @@ def lineas_de_cambios_chofer(cambios_):
     for c, v in (cambios_ or {}).items():
         out.append(f"{CHOFER_ETIQUETAS.get(c, c)}: {v.get('antes') or '(vacío)'} → {v.get('despues') or '(vacío)'}")
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  FASE 1c · DOCUMENTOS CON PDF, FOTO, DATOS DEL TITULAR Y DE LOS CHOFERES, PERMISOS
+#  Daniel (02-nov-2026): «más datos… una opción de dejar el PDF y que no todos tengan acceso a esto»; «todo eso (revisión técnica,
+#  permiso, SOAP, seguro) tiene que estar registrado y almacenado, para tener al día»; «déjalo habilitado por el front… nadie puede
+#  agregar vehículos ni choferes, solamente gestionar solicitudes»; «yo le dejaría una foto, haz la tabla bien inteligente y con
+#  calidad de información».
+# ═══════════════════════════════════════════════════════════════════════════
+TIPOS_ARCHIVO = {
+    "vehiculo": ("foto",) + tuple(c for c, _n in DOCUMENTOS),
+    "chofer": ("licencia",),
+}
+ARCHIVO_MAX_BYTES = {"imagen": 10 * 1024 * 1024, "pdf": 15 * 1024 * 1024}
+ETIQUETAS_ARCHIVO = {"foto": "Foto", "licencia": "Licencia de conducir", **{c: n for c, n in DOCUMENTOS}}
+
+
+def niveles(permisos):
+    """Qué puede hacer quien mira la pantalla, a partir de g.permissions. UNA sola función decide los cuatro niveles:
+    admin = agregar, editar, archivar y borrar vehículos y choferes y subir sus archivos (solo el superadministrador: sin llave);
+    gestionar = confirmar, entregar la llave, mover y cancelar solicitudes de cualquiera (flota_gestionar);
+    documentos = ver los PDF y el RUT y la dirección de los choferes (flota_documentos, aparte de pedir y de gestionar);
+    solicitar = entrar, ver la flota y pedir un vehículo (flota_solicitar; quien gestiona también entra)."""
+    p = permisos or {}
+    admin = bool(p.get("superadmin"))
+    gestionar = admin or bool(p.get("flota_gestionar"))
+    return {"admin": admin, "gestionar": gestionar,
+            "documentos": admin or bool(p.get("flota_documentos")),
+            "solicitar": gestionar or bool(p.get("flota_solicitar"))}
+
+
+# ── Patente con dígito verificador (TVDZ88-5) ──────────────────────────────
+_PAT_DV = re.compile(r"^([A-Z]{2,4}[\s.\-]*\d{2,4})\s*-\s*([0-9K])$")
+
+
+def separar_patente(raw):
+    """'TVDZ88-5' / 'PHVD.21-7' → ('TVDZ88', '5') / ('PHVD21', '7'). Sin dígito verificador queda ('AB1234', None). Los documentos chilenos
+    escriben la patente con su dígito (PHVD21-7); si se guardara pegado ('PHVD217') parecería una patente de 7 caracteres."""
+    up = str(raw or "").upper().strip()
+    m = _PAT_DV.match(up)
+    if m:
+        return normalizar_patente(m.group(1)), m.group(2)
+    return normalizar_patente(up), None
+
+
+def patente_completa(patente, dv):
+    return f"{patente}-{dv}" if patente and dv else (patente or "")
+
+
+# ── RUT ─────────────────────────────────────────────────────────────────────
+def normalizar_rut(raw):
+    """'12.345.678-5' / '123456785' → '12345678-5'. None si no tiene forma de RUT (7 u 8 dígitos y el verificador)."""
+    t = re.sub(r"[^0-9Kk]", "", str(raw or "")).upper()
+    if not re.fullmatch(r"\d{7,8}[0-9K]", t):
+        return None
+    return t[:-1] + "-" + t[-1]
+
+
+def rut_valido(raw):
+    """True si el RUT existe: tiene su forma y el dígito verificador cuadra (módulo 11)."""
+    n = normalizar_rut(raw)
+    if not n:
+        return False
+    cuerpo, dv = n.split("-")
+    suma, factor = 0, 2
+    for d in reversed(cuerpo):
+        suma += int(d) * factor
+        factor = 2 if factor == 7 else factor + 1
+    esperado = 11 - (suma % 11)
+    esperado = "0" if esperado == 11 else ("K" if esperado == 10 else str(esperado))
+    return dv == esperado
+
+
+def rut_formato(raw):
+    """12345678-5 → 12.345.678-5 (REGLA #7). Si no tiene forma de RUT, devuelve el texto tal cual."""
+    n = normalizar_rut(raw)
+    if not n:
+        return str(raw or "")
+    cuerpo, dv = n.split("-")
+    return f"{int(cuerpo):,}".replace(",", ".") + "-" + dv
+
+
+# ── Archivos (foto y PDF) ───────────────────────────────────────────────────
+def detectar_archivo(data):
+    """Qué es lo que llegó, mirando los primeros bytes (no el nombre ni lo que dice el navegador): ('pdf'|'imagen', content_type, extensión)
+    o None. Solo PDF, JPEG, PNG y WebP."""
+    b = bytes(data[:16]) if data else b""
+    if b.startswith(b"%PDF-"):
+        return "pdf", "application/pdf", ".pdf"
+    if b.startswith(b"\xff\xd8\xff"):
+        return "imagen", "image/jpeg", ".jpg"
+    if b.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "imagen", "image/png", ".png"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "imagen", "image/webp", ".webp"
+    return None
+
+
+def validar_archivo(entidad, tipo, data):
+    """(info, error) de un archivo que se quiere guardar. La foto de un vehículo es una imagen; los documentos del vehículo van en PDF; la
+    licencia de un chofer puede ser PDF o la foto del carnet. Sin tope absurdo: 10 MB la imagen, 15 MB el PDF."""
+    if tipo not in TIPOS_ARCHIVO.get(entidad, ()):
+        return None, "Ese tipo de archivo no corresponde."
+    if not data:
+        return None, "El archivo llegó vacío."
+    det = detectar_archivo(data)
+    if det is None:
+        return None, "Solo se aceptan PDF (y fotos JPG, PNG o WebP para la foto)."
+    clase, ct, ext = det
+    if tipo == "foto" and clase != "imagen":
+        return None, "La foto del vehículo debe ser una imagen (JPG, PNG o WebP)."
+    if tipo != "foto" and tipo != "licencia" and clase != "pdf":
+        return None, "Los documentos se guardan en PDF."
+    if len(data) > ARCHIVO_MAX_BYTES[clase]:
+        return None, f"El archivo pesa demasiado (máximo {ARCHIVO_MAX_BYTES[clase] // (1024 * 1024)} MB)."
+    return {"clase": clase, "content_type": ct, "extension": ext, "bytes": len(data)}, None
+
+
+def nombre_seguro(nombre, extension):
+    """Nombre de archivo para mostrar y descargar: sin rutas ni caracteres raros."""
+    base = re.sub(r"[^\w.\- ]+", "_", str(nombre or "").rsplit("/", 1)[-1].rsplit("\\", 1)[-1]).strip(" ._")[:80]
+    return base if base.lower().endswith(extension) else (base or "archivo") + extension
+
+
+# ── Calidad de la ficha ─────────────────────────────────────────────────────
+def calidad_ficha(fila, tiene_pdf, tiene_foto):
+    """Qué tan al día está la información de un vehículo: foto, titular, chasis, N° de motor y, por cada uno de los 4 documentos, la
+    fecha de vencimiento Y el PDF guardado. Devuelve {'pct', 'hechos', 'total', 'faltan': [texto…]}: lo que falta dicho en claro, para que
+    la tabla le diga a la persona qué completar y no solo un porcentaje."""
+    f = fila or {}
+    items = [("Foto del vehículo", bool(tiene_foto)),
+             ("Propietario registrado", bool(f.get("propietario"))),
+             ("N° de chasis (VIN)", bool(f.get("vin"))),
+             ("N° de motor", bool(f.get("numero_motor")))]
+    for clave, nombre in DOCUMENTOS:
+        items.append((f"{nombre}: fecha de vencimiento", bool(f.get(clave + "_vence"))))
+        items.append((f"{nombre}: PDF", bool((tiene_pdf or {}).get(clave))))
+    hechos = sum(1 for _n, ok in items if ok)
+    return {"pct": round(hechos * 100 / len(items)), "hechos": hechos, "total": len(items),
+            "faltan": [n for n, ok in items if not ok]}
+
+
+def proximo_vencimiento(documentos):
+    """El documento con fecha que vence antes (vencidos incluidos): {'nombre','vence_fmt','texto','estado'} o None. Para decir en la tabla
+    'Lo próximo: SOAP · 31/03/2027 (vence en 149 días)' sin obligar a abrir la ficha."""
+    con_fecha = [d for d in (documentos or []) if d.get("vence")]
+    if not con_fecha:
+        return None
+    d = min(con_fecha, key=lambda x: x["vence"])
+    return {"nombre": d["nombre"], "vence_fmt": d["vence_fmt"], "texto": d["texto"], "estado": d["estado"]}
+
+
+def coincide_confirmacion(escrito, esperado, es_patente=False):
+    """El borrado definitivo pide escribir la patente (o el nombre del chofer): sin mayúsculas, tildes ni signos de más."""
+    def n(t):
+        t = str(t or "")
+        if es_patente:
+            return separar_patente(t)[0]
+        t = re.sub(r"\s+", " ", t).strip().casefold()
+        for a, b in (("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u"), ("ñ", "n")):
+            t = t.replace(a, b)
+        return t
+    return bool(n(esperado)) and n(escrito) == n(esperado)
+
+
+def validar_motivo_archivo(texto):
+    """Archivar un vehículo o un chofer pide el motivo (queda en la bitácora)."""
+    return validar_motivo(texto)
