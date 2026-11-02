@@ -525,8 +525,8 @@ class TestDatosNuevos(Base2):
         self.assertEqual(r.status_code, 400)
         self.assertIn("RUT no es válido", r.get_json()["errores"]["rut"])
         r = self.c.post("/flota/api/choferes", json=dict(TS._datos_chofer(4), usuario_id=4, direccion=""), headers=SUPER)
-        self.assertEqual(r.status_code, 200)                                    # la dirección es opcional
-        self.assertIsNone(r.get_json()["chofer"]["direccion"])
+        self.assertEqual(r.status_code, 400)                                    # la dirección es obligatoria (Daniel, 02-nov-2026)
+        self.assertIn("direccion", r.get_json()["errores"])
 
     def test_los_usuarios_para_elegir_traen_lo_de_su_perfil_como_sugerencia(self):
         self.base.usr[4].update(rut="22.222.222-2", direccion="Los Alerces 123, Ñuñoa", direccion_lat=-33.45, direccion_lng=-70.6,

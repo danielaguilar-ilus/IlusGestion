@@ -242,7 +242,7 @@ class TestChoferYVehiculo(unittest.TestCase):
         _d, e = R.validar_chofer(dict(base, rut="12.345.678-9", licencia_clases="B", licencia_vence="2027-01-31"), con_usuario=False)
         self.assertIn("rut", e)                                                     # el dígito verificador no cuadra
         _d, e = R.validar_chofer(dict(base, direccion="", licencia_clases="B", licencia_vence="2027-01-31"), con_usuario=False)
-        self.assertEqual(e, {})                                                     # la dirección es opcional (se avisa, no se traba)
+        self.assertIn("direccion", e)                                               # la dirección es obligatoria (Daniel, 02-nov-2026)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
