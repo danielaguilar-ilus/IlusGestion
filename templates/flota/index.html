@@ -102,22 +102,60 @@
     </div>
   </div>
 
+  {# Agenda de la flota (Daniel, 02-nov-2026: «el calendario… fíjate el de Retiros… algo potente… la patente y la foto del vehículo»;
+     «tengo que tener claro cuándo voy a pedir… cuándo no puedo topar con Logística… el que más tiene problemas es el KIA»).
+     Mismo esqueleto que la Agenda interna de Retiros: cabecera oscura con los números de la semana y el próximo uso, a la izquierda el
+     mes para saltar de semana, la demanda de cada vehículo y su próximo hueco libre; a la derecha la semana por horas con una pista por
+     vehículo y cada reserva pintada con el color de su área. Tocar un hueco libre abre la solicitud ya llena (REGLA #32: la persona
+     decide). El mes de antes no se quitó: es el mes de la izquierda; el detalle de un día sigue al tocar su cabecera. #}
   <div id="flSolCalWrap" hidden>
-    <div class="fl-cal-cab">
-      <button type="button" class="fl-btn" id="flCalPrev" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></button>
-      <h5 class="fl-cal-titulo" id="flCalTitulo" aria-live="polite"></h5>
-      <button type="button" class="fl-btn" id="flCalSig" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>
-      <button type="button" class="fl-btn" id="flCalHoy">Hoy</button>
+    <div class="fla-hero">
+      <div class="fla-hero-ico" aria-hidden="true"><i class="bi bi-calendar2-week-fill"></i></div>
+      <div class="fla-hero-tit">
+        <div class="fla-hero-h">Agenda de la flota</div>
+        <div class="fla-hero-sub"><span class="fla-dot" aria-hidden="true"></span>Toca un hueco libre para pedir · toca una reserva para verla</div>
+      </div>
+      <div class="fla-stats" id="flaStats" aria-live="polite"></div>
+      <button type="button" class="fla-next vacio" id="flaNext" title="Abrir el próximo uso">
+        <span class="fla-next-ico" aria-hidden="true"><i class="bi bi-stopwatch"></i></span>
+        <span class="fla-next-txt"><span class="fla-next-l" id="flaNextL">Próximo uso</span><b class="fla-next-cd" id="flaNextCd">—</b><span class="fla-next-q" id="flaNextQ">Buscando…</span></span>
+      </button>
     </div>
-    <div class="fl-cal-info" id="flCalInfo"></div>
-    <div class="fl-cal" id="flCalGrid"></div>
-    <div class="fl-cal-leyenda" aria-label="Qué significa cada color">
-      <span class="fl-ley fl-ley--solicitada">Por confirmar</span>
-      <span class="fl-ley fl-ley--confirmada">Confirmada</span>
-      <span class="fl-ley fl-ley--llave_entregada">Llave entregada</span>
-      <span class="fl-ley fl-ley--nolab">Feriado o fin de semana</span>
+
+    <div class="fla-layout">
+      <aside class="fla-side">
+        <div class="fla-card">
+          <div class="fla-mes-cab">
+            <button type="button" class="fla-nav" id="flCalPrev" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></button>
+            <b class="fla-mes-t" id="flCalTitulo" aria-live="polite"></b>
+            <button type="button" class="fla-nav" id="flCalSig" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>
+          </div>
+          <div class="fla-mes" id="flCalGrid"></div>
+          <div class="fla-mes-info" id="flCalInfo"></div>
+        </div>
+        <div class="fla-card">
+          <div class="fla-card-h"><i class="bi bi-speedometer2"></i>Demanda de la semana</div>
+          <div id="flaDemanda"></div>
+        </div>
+        <div class="fla-card">
+          <div class="fla-card-h"><i class="bi bi-palette"></i>Colores</div>
+          <div class="fla-ley" id="flaLeyenda"></div>
+        </div>
+      </aside>
+
+      <div class="fla-main">
+        <div class="fla-toolbar">
+          <button type="button" class="fla-nav" id="flaSemPrev" aria-label="Semana anterior"><i class="bi bi-chevron-left"></i></button>
+          <button type="button" class="fla-nav fla-nav--hoy" id="flCalHoy"><i class="bi bi-calendar2-check"></i>Hoy</button>
+          <button type="button" class="fla-nav" id="flaSemSig" aria-label="Semana siguiente"><i class="bi bi-chevron-right"></i></button>
+          <b class="fla-rango" id="flaRango" aria-live="polite"></b>
+          <div class="fla-chips" id="flaVehChips" role="group" aria-label="Ver un vehículo"></div>
+        </div>
+        <div class="fla-chips fla-chips--area" id="flaAreaChips" role="group" aria-label="Ver un área"></div>
+        <div class="fla-semana" id="flaSemana"></div>
+        <div class="fla-lista" id="flCalAgenda"></div>
+      </div>
     </div>
-    <div class="fl-agenda" id="flCalAgenda"></div>
   </div>
 </div>
 
@@ -445,7 +483,7 @@
 
 {# ═══ Modal: nueva solicitud / mover una reserva (más de 5 campos → Bootstrap modal, REGLA #8) ═══ #}
 <div class="modal fade" id="flModalSol" tabindex="-1" aria-labelledby="flModalSolTitulo" aria-hidden="true" data-bs-backdrop="static">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content fl-modal">
       <div class="modal-header">
         <h5 class="modal-title" id="flModalSolTitulo">Nueva solicitud de vehículo</h5>
@@ -458,8 +496,25 @@
             <div class="fl-paso-n" aria-hidden="true">1</div>
             <div class="fl-paso-cont">
               <h6>¿Cuándo lo necesitas?</h6>
-              <p class="fl-ayuda">Declara el día y el horario en que lo usarás. Con eso los demás saben cuándo está ocupado.</p>
-              <div class="fl-grid fl-grid--3">
+              <p class="fl-ayuda">Elige el día y toca en la jornada el bloque donde partes y el bloque donde terminas. Lo rojo ya está pedido.</p>
+              {# Calendario propio del modal (Daniel, 02-nov-2026: «el calendario del modal tiene que ser potente, dinámico»): mismo
+                 esqueleto de dos columnas que el Paso 4 de /retiros/solicitar. Los campos de abajo siguen siendo la verdad del formulario. #}
+              <div class="fl-pk">
+                <div class="fl-pk-izq">
+                  <div class="fl-pk-cab">
+                    <button type="button" class="fl-pk-nav" id="flPkPrev" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></button>
+                    <b id="flPkMesT" aria-live="polite"></b>
+                    <button type="button" class="fl-pk-nav" id="flPkSig" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>
+                  </div>
+                  <div class="fl-pk-mes" id="flPkMes"></div>
+                  <div class="fl-pk-ley" aria-hidden="true"><span><i class="fl-pk-bar fl-pk-bar--libre" style="--p:1"></i>Libre</span><span><i class="fl-pk-bar fl-pk-bar--parcial" style="--p:1"></i>En parte</span><span><i class="fl-pk-bar fl-pk-bar--lleno" style="--p:1"></i>Lleno</span><span class="fl-pk-ley-n">Una barra por vehículo</span></div>
+                </div>
+                <div class="fl-pk-der">
+                  <div id="flPkBloques"></div>
+                  <div class="fl-pk-sel" id="flPkSel" aria-live="polite"></div>
+                </div>
+              </div>
+              <div class="fl-grid fl-grid--3 fl-pk-campos">
                 <div class="fl-campo" data-campo="fecha">
                   <label for="flSolFecha">Día <span class="fl-req">*</span></label>
                   <input type="date" id="flSolFecha" name="fecha">
@@ -501,9 +556,9 @@
             <div class="fl-paso-n" aria-hidden="true">3</div>
             <div class="fl-paso-cont">
               <h6>¿Quién retira la llave? <span class="fl-req">*</span></h6>
-              <p class="fl-ayuda">Debe ser un chofer del repositorio, con la licencia que exige el vehículo y vigente durante todo el uso.</p>
+              <p class="fl-ayuda">Un chofer del repositorio, con la licencia que exige el vehículo y vigente durante todo el uso.</p>
               <div class="fl-campo" data-campo="chofer_id">
-                <select id="flSolChofer" name="chofer_id" class="fl-select fl-select--lleno" aria-label="Chofer"></select>
+                <div class="fl-ccards" id="flSolChoferes" role="radiogroup" aria-label="Chofer que retira la llave"></div>
                 <div class="fl-msg" aria-live="polite"></div>
               </div>
             </div>
@@ -515,10 +570,10 @@
               <h6>¿Desde qué área y para qué?</h6>
               <div class="fl-grid">
                 <div class="fl-campo fl-campo--ancho" data-campo="area">
-                  <label for="flSolArea">Área que lo pide <span class="fl-req">*</span></label>
-                  <input type="text" id="flSolArea" name="area" maxlength="60" list="flSolAreasList" placeholder="Logística, Servicio Técnico…">
+                  <span class="fl-lbl" id="flSolAreaLbl">Área que lo pide <span class="fl-req">*</span></span>
+                  <div class="fl-acards" id="flSolAreasRapidas" role="radiogroup" aria-labelledby="flSolAreaLbl"></div>
+                  <input type="text" id="flSolArea" name="area" maxlength="60" list="flSolAreasList" placeholder="Escribe el área" aria-label="Otra área" hidden>
                   <datalist id="flSolAreasList"></datalist>
-                  <div class="fl-sugeridas" id="flSolAreasRapidas"></div>
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
                 <div class="fl-campo fl-campo--ancho" data-campo="motivo">

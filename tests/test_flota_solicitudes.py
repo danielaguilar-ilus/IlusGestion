@@ -913,7 +913,7 @@ class TestListaYCalendario(Base):
         d = self.c.get("/flota/api/solicitudes", headers=SUPER).get_json()
         self.assertEqual(len(d["solicitudes"]), 2)
         self.assertEqual((d["resumen"]["por_confirmar"], d["resumen"]["confirmadas"], d["resumen"]["llave_entregada"]), (1, 1, 0))
-        self.assertEqual(d["areas"], ["Logística", "Servicio Técnico"])
+        self.assertEqual(d["areas"], ["Logística", "Servicio Técnico", "Gerencia", "Marketing"])
         self.assertRegex(d["ahora_hhmm"], r"^\d{2}:\d{2}$")
 
     def test_pasadas_y_proximas(self):

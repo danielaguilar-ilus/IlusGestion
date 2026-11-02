@@ -380,7 +380,7 @@ ESTADOS = {
 }
 ESTADOS_OCUPAN = ("solicitada", "confirmada", "llave_entregada")     # los que bloquean el calendario del vehículo
 ESTADOS_EDITABLES = ("solicitada", "confirmada")                      # con la llave ya entregada no se mueve (se cancela con motivo)
-AREAS_SUGERIDAS = ("Logística", "Servicio Técnico")                   # solo sugerencia (REGLA #32): la persona escribe la suya si hace falta
+AREAS_SUGERIDAS = ("Logística", "Servicio Técnico", "Gerencia", "Marketing")   # tarjetas del formulario (Daniel, 02-nov-2026); «Otra área» deja escribir
 MAX_DIAS_USO = 7
 USO_MOTIVO_MIN, USO_MOTIVO_MAX = 5, 500
 CAMBIO_MOTIVO_MIN = 5
