@@ -529,9 +529,43 @@ class TestDatosNuevos(Base2):
         self.assertIsNone(r.get_json()["chofer"]["direccion"])
 
     def test_los_usuarios_para_elegir_traen_lo_de_su_perfil_como_sugerencia(self):
-        self.base.usr[4].update(rut="22.222.222-2", direccion="Los Alerces 123", comuna="Ñuñoa")
+        self.base.usr[4].update(rut="22.222.222-2", direccion="Los Alerces 123, Ñuñoa", direccion_lat=-33.45, direccion_lng=-70.6,
+                                direccion_place_id="ChIJalerces123")
         u = self.c.get("/flota/api/choferes/usuarios", headers=SUPER).get_json()["usuarios"][0]
         self.assertEqual((u["id"], u["rut"], u["direccion"]), (4, "22.222.222-2", "Los Alerces 123, Ñuñoa"))
+        self.assertEqual((u["direccion_lat"], u["direccion_place_id"]), (-33.45, "ChIJalerces123"))   # viaja con su ubicación de Google
+
+    def test_la_direccion_del_chofer_debe_venir_validada_por_google(self):
+        # Daniel: «la dirección debe estar validada por Google». Misma regla que Mi cuenta (usuarios_perfil.resolver_direccion).
+        sin_geo = dict(TS._datos_chofer(4), usuario_id=4, direccion_lat="", direccion_lng="", direccion_place_id="")
+        r = self.c.post("/flota/api/choferes", json=sin_geo, headers=SUPER)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Google", r.get_json()["errores"]["direccion"])
+        fuera = dict(TS._datos_chofer(4), usuario_id=4, direccion_lat="40.4", direccion_lng="-3.7")      # Madrid: no es Chile
+        self.assertEqual(self.c.post("/flota/api/choferes", json=fuera, headers=SUPER).status_code, 400)
+        r = self.c.post("/flota/api/choferes", json=dict(TS._datos_chofer(4), usuario_id=4), headers=SUPER)
+        self.assertEqual(r.status_code, 200)
+        cid = r.get_json()["chofer"]["id"]
+        self.assertEqual(self.base.cho[cid]["direccion_place_id"], "ChIJprueba_providencia_742")
+        self.assertTrue(r.get_json()["chofer"]["direccion_verificada"])
+        # editar sin tocar la dirección (sin coordenadas en el cuerpo) la deja como estaba, con su ubicación
+        r = self.c.put(f"/flota/api/choferes/{cid}", json=dict(TS._datos_chofer(4), direccion_lat="", direccion_lng="", direccion_place_id="",
+                                                                notas="Solo cambio la nota"), headers=SUPER)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(self.base.cho[cid]["direccion_place_id"], "ChIJprueba_providencia_742")
+        # cambiar el texto sin elegirlo de Google no se acepta
+        r = self.c.put(f"/flota/api/choferes/{cid}", json=dict(TS._datos_chofer(4), direccion="Otra calle 99", direccion_lat="",
+                                                                direccion_lng="", direccion_place_id=""), headers=SUPER)
+        self.assertEqual(r.status_code, 400)
+
+    def test_el_rut_se_formatea_como_rut_chileno_en_pantalla(self):
+        js_ch, js_veh, html = _leer("static", "flota_uso.js"), _leer("static", "flota.js"), _leer("templates", "flota", "index.html")
+        self.assertIn("ilus_persona_fields.js", html)            # la misma función de Mi cuenta
+        self.assertIn("rutFormatear", js_ch)
+        self.assertIn("rutFormatear", js_veh)
+        self.assertIn("ilusPlacesAutocomplete('flChDireccion'", js_ch)
+        for i in ("flChDirLat", "flChDirLng", "flChDirPid"):
+            self.assertIn(f'id="{i}"', html)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -625,8 +625,11 @@
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
                 <div class="fl-campo" data-campo="direccion">
-                  <label for="flChDireccion">Dirección</label>
-                  <input type="text" id="flChDireccion" name="direccion" maxlength="300" autocomplete="off" placeholder="Calle, número, comuna">
+                  <label for="flChDireccion">Dirección (validada con Google)</label>
+                  <input type="text" id="flChDireccion" name="direccion" maxlength="300" autocomplete="off" placeholder="Escribe y elige una sugerencia">
+                  <input type="hidden" id="flChDirLat" name="direccion_lat">
+                  <input type="hidden" id="flChDirLng" name="direccion_lng">
+                  <input type="hidden" id="flChDirPid" name="direccion_place_id">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
               </div>
@@ -680,6 +683,7 @@
 {% endblock %}
 {% block scripts %}
 <script>window.FLOTA_PERMISOS = {{ (flota_permisos or {}) | tojson }};</script>
+<script src="{{ url_for('static', filename='ilus_persona_fields.js') }}"></script>
 <script src="{{ url_for('static', filename='flota.js') }}"></script>
 <script src="{{ url_for('static', filename='flota_uso.js') }}"></script>
 {% endblock %}

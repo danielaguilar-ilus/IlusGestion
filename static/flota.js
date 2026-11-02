@@ -768,6 +768,14 @@
     form.addEventListener('input', function (e) {
       var c = e.target.name;
       if (c === 'patente' || c === 'numero_motor') e.target.value = e.target.value.toUpperCase();
+      if (c === 'propietario_rut' && window.ilusPersona) {          // RUT chileno mientras se escribe (12.345.678-5)
+        var P = window.ilusPersona, inp = e.target, pos = inp.selectionStart == null ? inp.value.length : inp.selectionStart;
+        var der = P.rutLimpiar(inp.value.slice(pos)).length;
+        inp.value = P.rutFormatear(inp.value);
+        var q = inp.value.length, n = 0;
+        while (q > 0 && n < der) { q--; if (/[0-9K]/.test(inp.value.charAt(q))) n++; }
+        try { inp.setSelectionRange(q, q); } catch (err) { /* sin selección */ }
+      }
       if (c) tocados[c] = true;
       evaluarLuego();
     });

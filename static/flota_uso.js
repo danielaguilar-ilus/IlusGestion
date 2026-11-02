@@ -816,13 +816,45 @@
     var e = 11 - (suma % 11);
     return dv === (e === 11 ? '0' : (e === 10 ? 'K' : String(e)));
   }
+  /* RUT chileno mientras se escribe (12.345.678-5): la misma función de Mi cuenta (static/ilus_persona_fields.js). */
+  function formatoRut(v) { return window.ilusPersona && window.ilusPersona.rutFormatear ? window.ilusPersona.rutFormatear(v) : v; }
+  function rutEnVivo(inp) {
+    if (!window.ilusPersona) return;
+    var P = window.ilusPersona, pos = inp.selectionStart == null ? inp.value.length : inp.selectionStart;
+    var aLaDerecha = P.rutLimpiar(inp.value.slice(pos)).length;
+    inp.value = P.rutFormatear(inp.value);
+    var p = inp.value.length, cuenta = 0;
+    while (p > 0 && cuenta < aLaDerecha) { p--; if (/[0-9K]/.test(inp.value.charAt(p))) cuenta++; }
+    try { inp.setSelectionRange(p, p); } catch (e) { /* algunos campos no aceptan selección */ }
+  }
+  /* Dirección: solo vale la elegida de la lista de Google (coordenadas + place_id). Si se vuelve a escribir, se pierde la validación. */
+  var dirValidada = null;
+  function geoCh(lat, lng, pid) { $('flChDirLat').value = lat || ''; $('flChDirLng').value = lng || ''; $('flChDirPid').value = pid || ''; }
+  var googleListo = false;
+  function iniciarGoogleCh() {
+    if (googleListo || typeof window.ilusPlacesAutocomplete !== 'function') return;
+    googleListo = true;
+    window.ilusPlacesAutocomplete('flChDireccion', {
+      country: 'cl', types: ['address'],
+      onPlaceSelected: function (pl) {
+        geoCh(pl.lat, pl.lng, pl.place_id);
+        dirValidada = { valor: $('flChDireccion').value, lat: pl.lat, lng: pl.lng, pid: pl.place_id };
+        S.chTocados.direccion = true;
+        evaluarChLuego();
+      }
+    });
+  }
   function reglasCh() {
     var r = {};
     r.usuario_id = S.editCh ? res('ok', '') : (vCh('usuario_id') ? res('ok', '') : res('bad', 'Elige a qué usuario de ILUS corresponde este chofer.'));
     r.nombre_completo = vCh('nombre_completo').trim().length >= 5 ? res('ok', '') : res('bad', 'Escribe el nombre completo, como figura en la licencia.');
     var rut = vCh('rut').trim();
-    r.rut = !rut ? res('bad', 'Indica el RUT del chofer.') : (rutValido(rut) ? res('ok', 'RUT válido.') : res('bad', 'El RUT no es válido (revisa el dígito verificador).'));
-    r.direccion = vCh('direccion').trim() ? res('ok', '') : res('warn', 'Sin dirección: conviene registrarla.');
+    r.rut = !rut ? res('bad', 'Indica el RUT del chofer (por ejemplo 12.345.678-5).') : (rutValido(rut) ? res('ok', 'RUT válido: ' + formatoRut(rut) + '.') : res('bad', 'El RUT no es válido (revisa el dígito verificador).'));
+    var dir = vCh('direccion').trim();
+    if (!dir) r.direccion = res('warn', 'Opcional, pero conviene registrarla: escríbela y elige una sugerencia de Google.');
+    else if (vCh('direccion_place_id')) r.direccion = res('ok', 'Dirección verificada con Google Maps.');
+    else if (S.editCh && dir === (S.editCh.direccion || '').trim()) r.direccion = res('warn', 'Guardada sin validar: vuelve a elegirla de la lista de Google.');
+    else r.direccion = res('bad', 'Elige la dirección de la lista de sugerencias de Google para validarla.');
     r.licencia_clases = clasesCh().length ? res('ok', 'Licencia clase ' + clasesCh().join(' y ') + '.') : res('bad', 'Elige al menos una clase de licencia (por ejemplo B).');
     var v = vCh('licencia_vence');
     if (!v) r.licencia_vence = res('bad', 'Indica cuándo vence la licencia: sin esa fecha no se puede comprobar que esté vigente.');
@@ -915,6 +947,9 @@
     f.elements.nombre_completo.value = c ? (c.nombre_completo || c.nombre || '') : '';
     f.elements.rut.value = c ? (c.rut_fmt || '') : '';
     f.elements.direccion.value = c ? (c.direccion || '') : '';
+    geoCh(c && c.direccion_lat, c && c.direccion_lng, c && c.direccion_place_id);
+    dirValidada = c && c.direccion_place_id ? { valor: c.direccion || '', lat: c.direccion_lat, lng: c.direccion_lng, pid: c.direccion_place_id } : null;
+    iniciarGoogleCh();
     f.elements.licencia_vence.value = c && c.licencia_vence ? c.licencia_vence : '';
     f.elements.notas.value = c && c.notas ? c.notas : '';
     $('flChArchivo').value = '';
@@ -942,7 +977,14 @@
     var f = $('flFormCh');
     if (!vCh('nombre_completo').trim()) f.elements.nombre_completo.value = u.nombre || '';
     if (!vCh('rut').trim() && u.rut) f.elements.rut.value = u.rut;
-    if (!vCh('direccion').trim() && u.direccion) f.elements.direccion.value = u.direccion;
+    if (!vCh('direccion').trim() && u.direccion) {
+      f.elements.direccion.value = u.direccion;
+      // Si en su perfil ya está validada con Google, se sugiere con su ubicación; si no, hay que elegirla de la lista.
+      geoCh(u.direccion_lat, u.direccion_lng, u.direccion_place_id);
+      dirValidada = u.direccion_place_id ? { valor: u.direccion, lat: u.direccion_lat, lng: u.direccion_lng, pid: u.direccion_place_id } : null;
+    }
+    if (vCh('rut')) f.elements.rut.value = formatoRut(vCh('rut'));
+    evaluarChLuego();
   }
   function guardarCh() {
     if (S.guardandoCh) return;
@@ -967,6 +1009,7 @@
       var editando = S.editCh;
       var archivo = $('flChArchivo').files && $('flChArchivo').files[0];
       var body = { rut: vCh('rut'), nombre_completo: vCh('nombre_completo'), direccion: vCh('direccion'),
+        direccion_lat: vCh('direccion_lat'), direccion_lng: vCh('direccion_lng'), direccion_place_id: vCh('direccion_place_id'),
         licencia_clases: clasesCh(), licencia_vence: vCh('licencia_vence'), notas: vCh('notas') };
       if (!editando) body.usuario_id = vCh('usuario_id');
       S.guardandoCh = true;
@@ -1204,7 +1247,16 @@
     $('flChAnterior').addEventListener('click', function () { if (S.chPag > 1) { S.chPag--; pintarChoferes(); } });
     $('flChSiguiente').addEventListener('click', function () { S.chPag++; pintarChoferes(); });
     var fc = $('flFormCh');
-    fc.addEventListener('input', function (e) { if (e.target.name) S.chTocados[e.target.name] = true; evaluarChLuego(); });
+    fc.addEventListener('input', function (e) {
+      if (e.target.name) S.chTocados[e.target.name] = true;
+      if (e.target.name === 'rut') rutEnVivo(e.target);
+      if (e.target.name === 'direccion') {
+        if (dirValidada && e.target.value === dirValidada.valor) geoCh(dirValidada.lat, dirValidada.lng, dirValidada.pid);
+        else geoCh('', '', '');
+      }
+      evaluarChLuego();
+    });
+    $('flChDireccion').addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });   // Enter elige la sugerencia, no envía
     fc.addEventListener('change', function (e) {
       if (e.target.type === 'checkbox') S.chTocados.licencia_clases = true;
       if (e.target.name) S.chTocados[e.target.name] = true;
