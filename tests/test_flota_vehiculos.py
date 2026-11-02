@@ -538,6 +538,16 @@ class TestRutas(unittest.TestCase):
         self.assertIn("Color: (vacío) → Blanco", ev[0]["lineas"])
         self.assertRegex(ev[0]["fecha"], r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}$")
 
+    def test_editar_con_motivo_declarado_queda_en_el_historial(self):
+        # Daniel, 02-nov-2026: «deja una actividad declarada»
+        _, d = self.crear()
+        vid = d["vehiculo"]["id"]
+        r = self.c.put(f"/flota/api/vehiculos/{vid}", json=dict(_veh(capacidad_kg=1660), motivo_cambio="  Ficha técnica   de fábrica "),
+                       headers=SUPER)
+        self.assertEqual(r.status_code, 200)
+        ev = self.c.get(f"/flota/api/vehiculos/{vid}/historial", headers=SUPER).get_json()["eventos"]
+        self.assertEqual(ev[0]["lineas"][0], "Motivo: Ficha técnica de fábrica")
+
     def test_editar_sin_cambios_no_escribe(self):
         _, d = self.crear()
         antes = len(self.base.log)
