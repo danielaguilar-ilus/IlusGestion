@@ -497,9 +497,12 @@ def register_flota_routes(app, ctx):
         actual = _fila(vid)
         if not actual:
             return _error("No encontré ese vehículo.", 404)
-        datos, errores = fr.validar_vehiculo(request.get_json(silent=True) or {}, _hoy())
+        payload = request.get_json(silent=True) or {}
+        datos, errores = fr.validar_vehiculo(payload, _hoy())
         if errores:
             return _error("Revisa los campos marcados.", 400, errores=errores)
+        # Motivo del cambio (Daniel, 02-nov-2026: «deja una actividad declarada»): opcional, queda en el historial con quién y cuándo.
+        motivo = re.sub(r"\s+", " ", str(payload.get("motivo_cambio") or "")).strip()[:300] or None
         cambios = fr.cambios(dict(actual), datos)
         if not cambios:
             return jsonify({"ok": True, "sin_cambios": True,
@@ -515,7 +518,7 @@ def register_flota_routes(app, ctx):
                               errores={"patente": "Esta patente ya está registrada."})
             print(f"[flota] editar: {type(e).__name__}: {e}", flush=True)
             return _error("No se pudo guardar los cambios. Intenta de nuevo.", 500)
-        _log(vid, "editado", {"cambios": cambios})
+        _log(vid, "editado", {"cambios": cambios, "motivo": motivo} if motivo else {"cambios": cambios})
         return _vehiculo_respuesta(vid)
 
     @app.route("/flota/api/vehiculos/<int:vid>/inhabilitar", methods=["POST"])
@@ -645,6 +648,8 @@ def register_flota_routes(app, ctx):
             acc = f["accion"]
             if acc == "editado":
                 lineas = fr.lineas_de_cambios_chofer(det.get("cambios")) if chofer else fr.lineas_de_cambios(det.get("cambios"))
+                if det.get("motivo"):
+                    lineas = ["Motivo: " + det["motivo"]] + list(lineas)
             elif acc in ("inhabilitado", "archivado"):
                 lineas = ["Motivo: " + (det.get("motivo") or "(sin motivo)")]
             elif acc == "habilitado":

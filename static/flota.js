@@ -607,6 +607,7 @@
   function abrirForm(v) {
     S.editando = v || null; S.intento = false; tocados = {};
     $('flModalVehTitulo').textContent = v ? 'Editar vehículo ' + v.patente_completa : 'Agregar vehículo';
+    $('flMotivoCambioCampo').hidden = !v;
     $('flGuardar').innerHTML = '<i class="bi bi-check2-circle me-1"></i>' + (v ? 'Guardar cambios' : 'Guardar vehículo');
     poblarListas();
     var f = $('flForm');
@@ -629,6 +630,7 @@
     var d = {};
     TEXTOS.forEach(function (c) { d[c] = valor(c); });
     d.licencia_clases = clasesSel();
+    if (S.editando) d.motivo_cambio = valor('motivo_cambio');
     return d;
   }
 
