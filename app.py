@@ -166979,6 +166979,16 @@ try:
 except Exception as _catalogo_reg_err:
     print(f"[ILUS][WARN] register_catalogo_routes: {_catalogo_reg_err}")
 
+# Modulo FLOTA / «Solicitudes de vehículo» (Daniel 2026-11-02): registro de los vehículos propios, habilitar / inhabilitar y, en las fases
+# siguientes, choferes, reservas con calendario, mantención y GPS. Prefijo de tablas flota_. HOY SOLO LO VE EL SUPERADMIN (flota_module._flota_puede).
+# Las tablas se crean dentro del register, en app_context (idempotente, funciona aun con ILUS_SKIP_MIGRATIONS=1).
+try:
+    from flota_module import register_flota_routes
+    register_flota_routes(app, globals())
+    print("[ILUS] Modulo Flota (Solicitudes de vehiculo) registrado.")
+except Exception as _flota_reg_err:
+    print(f"[ILUS][WARN] register_flota_routes: {_flota_reg_err}")
+
 
 try:
     from transporte_pod import register_pod_routes
