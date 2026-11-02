@@ -117544,7 +117544,9 @@ def ot2_api_quitar_equipo(vid, mid):
     bloqueo = _ot_anexo_firmado_bloqueo(vid)
     if bloqueo:
         return _ot2_err(bloqueo, "ANEXO_FIRMADO", http=409)
-    maq = mysql_fetchone("SELECT id, nombre, sku, numero_serie FROM mant_maquinas WHERE id=%s", (mid,)) or {}
+    # 2-nov (Aarón: «Quitar de la OT» daba «Error interno del servidor»): la columna se llama `serie`; aquí se pedía otra (que no existe en
+    # mant_maquinas) y MySQL rechazaba la consulta antes de borrar nada.
+    maq = mysql_fetchone("SELECT id, nombre, sku, serie FROM mant_maquinas WHERE id=%s", (mid,)) or {}
     t = mysql_fetchone(
         "SELECT COUNT(*) AS n, COALESCE(SUM(completada=1),0) AS hechas "
         "  FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id=%s", (vid, mid)) or {}
@@ -117575,7 +117577,7 @@ def ot2_api_quitar_equipo(vid, mid):
     try:
         _mant_log("visita", vid, "equipo_quitado",
                   f"{quien} quitó el producto «{nombre}»"
-                  + (f" (S/N {maq.get('numero_serie')})" if maq.get("numero_serie") else "")
+                  + (f" (S/N {maq.get('serie')})" if maq.get("serie") else "")
                   + (f" · SKU {maq.get('sku')}" if maq.get("sku") else "")
                   + f" de la OT, con sus {int(t.get('n') or 0)} tarea(s) sin responder. El anexo aún no estaba firmado.")
     except Exception as e:

@@ -47,6 +47,19 @@ class TestRutaQuitar(unittest.TestCase):
     def test_queda_en_la_bitacora_antes_de_borrar(self):
         self.assertLess(self.f.index('"equipo_quitado"'), self.f.index("DELETE FROM mant_visita_tareas"))
 
+    def test_las_columnas_de_mant_maquinas_existen(self):
+        """2-nov (Aarón): la ruta pedía `numero_serie`, que NO existe en mant_maquinas (la columna es `serie`): MySQL fallaba y el botón
+        respondía «Error interno del servidor». Las pruebas de texto no lo vieron; esta compara contra el CREATE TABLE real."""
+        i = APP.index("CREATE TABLE IF NOT EXISTS mant_maquinas (")
+        tabla = APP[i:APP.index(") ENGINE", i)]
+        columnas = {l.split()[0] for l in tabla.splitlines()[1:] if l.strip() and l.split()[0].isidentifier()}
+        import re
+        sel = re.search(r'mysql_fetchone\("SELECT ([^"]+) FROM mant_maquinas WHERE id=%s", \(mid,\)\)', self.f)
+        self.assertIsNotNone(sel, "la consulta del equipo")
+        pedidas = {c.strip() for c in sel.group(1).split(",")}
+        self.assertEqual(pedidas - columnas, set(), "toda columna pedida existe en mant_maquinas")
+        self.assertNotIn("numero_serie", self.f)
+
     def test_el_bloqueo_mira_solo_anexos_firmados(self):
         i = APP.index("def _ot_anexo_firmado_bloqueo(vid):")
         h = APP[i:i + 1200]
