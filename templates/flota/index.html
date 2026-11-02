@@ -151,19 +151,11 @@
   </label>
 </div>
 
-<div class="fl-tabla-wrap">
-  <table class="fl-tabla fl-tabla--veh" id="flTabla">
-    <thead>
-      <tr>
-        <th>Vehículo</th>
-        <th>Documentos</th>
-        <th>Calidad de la ficha</th>
-        <th>Estado</th>
-        <th class="fl-th-acc">Acciones</th>
-      </tr>
-    </thead>
-    <tbody id="flCuerpo"></tbody>
-  </table>
+<div class="fl-tabla-wrap fl-vlista-wrap">
+  {# Una TARJETA por vehículo (Daniel, 02-nov-2026): foto grande, datos a la derecha y franja de documentos. #}
+  <div class="fl-vlista" id="flTabla" role="list" aria-label="Vehículos">
+    <div id="flCuerpo"></div>
+  </div>
   <div class="fl-vacio" id="flVacio" hidden></div>
   <div class="fl-pie" id="flPie">
     <div class="fl-pie-info" id="flPieInfo" aria-live="polite"></div>

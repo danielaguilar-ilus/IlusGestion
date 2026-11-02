@@ -245,22 +245,35 @@
         '<span class="fl-motivo">' + esc(v.inhabilitado_motivo || '') + (v.inhabilitado_por ? ' · ' + esc(v.inhabilitado_por) : '') +
         (v.inhabilitado_fmt ? ' · ' + esc(v.inhabilitado_fmt) : '') + '</span>';
   }
+  function bloqueDoc(d) {
+    var linea = d.estado === 'sin_fecha' ? 'Sin fecha registrada' : d.vence_fmt;
+    var sub = d.estado === 'sin_fecha' ? '' : d.texto;
+    var pdf = d.tiene_pdf ? '<span class="fl-vd-pdf fl-vd-pdf--ok"><i class="bi bi-file-earmark-check"></i>PDF guardado</span>'
+      : '<span class="fl-vd-pdf"><i class="bi bi-file-earmark-x"></i>Sin PDF</span>';
+    return '<div class="fl-vd fl-vd--' + esc(d.estado) + '"><span class="fl-vd-n">' + esc(d.nombre) + '</span>' +
+      '<span class="fl-vd-f"><i class="fl-pto fl-pto--doc-' + esc(d.estado) + '"></i>' + esc(linea) + '</span>' +
+      (sub ? '<span class="fl-vd-t">' + esc(sub) + '</span>' : '') + pdf + '</div>';
+  }
   function filaVeh(v) {
-    var detalle = [];
-    detalle.push(v.km_actual == null ? 'Sin kilometraje' : num(v.km_actual) + ' km');
-    detalle.push('Licencia ' + v.licencia_texto.replace(/^Clase/, 'clase'));
-    var acc = '<button type="button" class="fl-btn" data-acc="ficha"><i class="bi bi-card-checklist"></i>Ficha</button>';
+    var linea2 = [];
+    if (v.color) linea2.push('Color ' + String(v.color).toLowerCase());
+    linea2.push('Licencia ' + v.licencia_texto.replace(/^Clase/, 'clase'));
+    linea2.push(v.km_actual == null ? 'Sin kilometraje registrado' : num(v.km_actual) + ' km');
+    var acc = '<button type="button" class="fl-btn fl-btn--primario" data-acc="ficha"><i class="bi bi-card-checklist"></i>Ver ficha</button>';
     if (PERM.admin) acc += '<button type="button" class="fl-btn" data-acc="editar"><i class="bi bi-pencil"></i>Editar</button>';
     if (PERM.gestionar) acc += '<button type="button" class="fl-btn" data-acc="historial"><i class="bi bi-clock-history"></i>Historial</button>';
-    return '<tr class="' + (v.habilitado && !v.archivado ? '' : 'inhab') + '" data-id="' + v.id + '">' +
-      '<td class="fl-td-veh2"><div class="fl-veh"><div class="fl-foto">' + fotoHtml(v) + '</div><div class="fl-veh-t">' +
-      '<b class="fl-veh-titulo">' + esc(tituloVeh(v)) + '</b><span class="fl-veh-meta">' + esc(lineaMeta(v)) + '</span>' +
-      (v.propietario ? '<span class="fl-veh-prop">Propietario registrado: ' + esc(v.propietario) + '</span>' : '') +
-      '<span class="fl-veh-km">' + esc(detalle.join(' · ')) + '</span></div></div></td>' +
-      '<td class="fl-td-docs" data-label="Documentos">' + celdaDocs(v) + '</td>' +
-      '<td data-label="Calidad de la ficha">' + celdaCalidad(v) + '</td>' +
-      '<td data-label="Estado">' + celdaEstado(v) + '</td>' +
-      '<td data-label="Acciones"><div class="fl-acc">' + acc + '</div></td></tr>';
+    var meta = [v.anio ? 'Año ' + v.anio : null, [v.tipo, adjCombustible(v.combustible)].filter(Boolean).join(' '),
+      v.cilindrada ? 'Motor ' + v.cilindrada : null].filter(Boolean).join(' · ');
+    var cal = v.calidad ? '<div class="fl-vtar-cal">' + celdaCalidad(v) + '</div>' : '';
+    return '<article class="fl-vtar' + (v.habilitado && !v.archivado ? '' : ' inhab') + '" role="listitem" data-id="' + v.id + '">' +
+      '<div class="fl-vtar-top"><div class="fl-vtar-foto">' + fotoHtml(v, true) + (v.foto_referencial ? '<span class="fl-vtar-ref">Foto referencial</span>' : '') + '</div>' +
+      '<div class="fl-vtar-info"><h3 class="fl-vtar-tit">' + esc(tituloVeh(v)) + '</h3>' +
+      (meta ? '<p class="fl-vtar-meta">' + esc(meta) + '</p>' : '') +
+      '<p class="fl-vtar-l2">' + esc(linea2.join(' · ')) + '</p>' +
+      (v.propietario ? '<p class="fl-vtar-prop">Propietario registrado: <b>' + esc(v.propietario) + '</b></p>' : '') +
+      '<div class="fl-vtar-pie"><div class="fl-vtar-estado">' + celdaEstado(v) + '</div>' + cal + '<div class="fl-acc">' + acc + '</div></div>' +
+      '</div></div>' +
+      '<div class="fl-vtar-docs" aria-label="Documentos">' + v.documentos.map(bloqueDoc).join('') + '</div></article>';
   }
   function pintarLista() {
     var lista = filtrados();
@@ -720,7 +733,7 @@
     $('flCuerpo').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-acc]');
       if (!b) return;
-      var v = buscar(b.closest('tr').getAttribute('data-id'));
+      var v = buscar(b.closest('[data-id]').getAttribute('data-id'));
       if (v) accionFila(b.getAttribute('data-acc'), v);
     });
     $('flCuerpo').addEventListener('error', function (ev) {          // foto que no carga: vuelve el ícono

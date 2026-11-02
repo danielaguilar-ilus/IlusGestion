@@ -366,6 +366,8 @@ def register_flota_routes(app, ctx):
             "licencia_clases": clases, "licencia_texto": ("Clase " + " o ".join(clases)) if clases else "Sin definir",
             "documentos": docs, "docs_estado": fr.peor_estado(docs), "proximo_vencimiento": fr.proximo_vencimiento(docs),
             "foto_id": foto["id"] if foto else None,
+            # Una foto del MODELO (no del vehículo) se sube con un nombre que empieza con «referencial»: la tarjeta lo dice.
+            "foto_referencial": bool(foto and str(foto.get("nombre_original") or "").lower().startswith("referencial")),
             "notas": row.get("notas"), "habilitado": bool(row.get("habilitado")),
             "inhabilitado_motivo": row.get("inhabilitado_motivo"), "inhabilitado_por": row.get("inhabilitado_por"),
             "inhabilitado_fmt": _hora_chile(row.get("inhabilitado_at")),

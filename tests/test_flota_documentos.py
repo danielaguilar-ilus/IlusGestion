@@ -635,7 +635,15 @@ class TestPantallaFase1c(unittest.TestCase):
         self.assertIn("foto_id", self.js)
         self.assertIn("calidad", self.js)
         self.assertIn("Propietario registrado", self.js)
-        self.assertIn("Calidad de la ficha", self.html)
+        self.assertIn("Calidad de la ficha", self.js)
+
+    def test_cada_vehiculo_es_una_tarjeta_grande_con_franja_de_documentos(self):
+        # Daniel eligió «tarjeta grande por vehículo»: foto grande, datos a la derecha y los 4 documentos en una franja
+        self.assertIn('class="fl-vlista"', self.html)
+        self.assertNotIn('<table class="fl-tabla fl-tabla--veh"', self.html)
+        for t in ("fl-vtar", "fl-vtar-foto", "fl-vtar-docs", "bloqueDoc", "Foto referencial"):
+            self.assertIn(t, self.js)
+        self.assertIn(".fl-vtar-docs{display:grid;grid-template-columns:repeat(4", self.css)
 
     def test_el_js_esconde_lo_que_no_corresponde_pero_el_servidor_manda(self):
         for k in ("PERM.admin", "PERM.documentos", "PERM.gestionar"):
