@@ -1978,6 +1978,11 @@ def serve_archivo(key):
     import mimetypes
     import hashlib as _hl
 
+    # 🔒 2026-11-02: los PDF y fotos de la flota (documentos de los vehículos, licencias de los choferes) viven bajo "flota_privado/" y
+    # SOLO se abren por /flota/api/archivos/<id>, que pide sesión y el permiso correspondiente. Por acá nunca, aunque alguien tenga la clave.
+    if key.startswith("flota_privado/"):
+        return ("", 404)
+
     _vid_sensible = _foto_key_vid_sensible(key)
     if _vid_sensible is not None:
         _autorizado = False
@@ -5032,6 +5037,13 @@ PERMS_KEYS = (
     # en True y Daniel no es responsable de nada por serlo; la lista de candidatos sale de ot_responsable.es_candidato (permiso
     # EXPLÍCITO, activo y fuera de la familia técnico). Dormido por completo mientras nadie lo tenga encendido.
     "mant_ot_responsable",
+    # flota_* — «Solicitudes de vehículo» (aditivo 2026-11-02). Daniel: «déjalo habilitado por el front para poder dejarle las
+    # asignaciones a cada uno… nadie puede agregar vehículos y nadie puede agregar choferes, solamente puede gestionar solicitudes».
+    # Nacen APAGADAS para todos los roles y personas (el módulo solo lo ve el superadministrador hasta que él las encienda, por rol en
+    # Roles → Solicitudes de vehículo o por persona en «Permisos individuales»). Agregar, editar, archivar y borrar vehículos y
+    # choferes NO tiene llave: es solo del superadministrador. flota_documentos es aparte a propósito: ver los PDF y el RUT y la
+    # dirección de los choferes no va con pedir ni con gestionar solicitudes.
+    "flota_solicitar", "flota_gestionar", "flota_documentos",
     # mant_ot_autoriza_aviso — «Recibe avisos de autorizaciones de OT» (aditivo 2026-10-23). Daniel: «a Felipe, al ser superadmin, le
     # llegan esos mensajes; si él tiene mis mismas credenciales no va a autorizar: sácale eso por el front». Tipo BLOQUEO: nace
     # concedido (los superadmins siguen recibiéndolos) y se apaga por persona en «Permisos individuales». Solo decide a quién llega la
@@ -5135,6 +5147,7 @@ def _build_perms_from_matrix(role):
     adm = matrix.get("admin", {})
     tk  = matrix.get("tickets", {})
     cat = matrix.get("catalogo", {})
+    flo = matrix.get("flota", {})
 
     # Flags de módulo (gates de sidebar)
     # Flag coarse "etiquetas" — simétrico al fix de transporte (caso usuaria
@@ -5274,6 +5287,10 @@ def _build_perms_from_matrix(role):
     base["tr_cambiar_estado"] = bool(tra.get("cambiar_estado"))
     base["tr_exportar_base"] = bool(tra.get("exportar_base"))
     base["cotiz_eliminar_item"] = bool(man.get("cotizaciones_eliminar_item"))
+    # 🚚 2026-11-02: «Solicitudes de vehículo». Las tres nacen APAGADAS (no son de tipo bloqueo): se encienden a propósito. Ver PERMS_KEYS.
+    base["flota_solicitar"] = bool(flo.get("solicitar"))
+    base["flota_gestionar"] = bool(flo.get("gestionar"))
+    base["flota_documentos"] = bool(flo.get("documentos"))
 
     base["superadmin"] = False
     return base
@@ -14402,6 +14419,10 @@ PERMISSIONS_MATRIX = {
     # decide quién más (aparte de superadmin/admin) puede tocarlos desde acá.
     "catalogo":       {"label":"Catálogo de Productos", "icon":"bi-box-seam",
                        "acciones":["eliminar", "descargar_manual", "clasificacion"]},
+    # Solicitudes de vehículo (flota propia): aditivo 2026-11-02. Ningún rol tiene filas → nace en False para TODOS salvo superadmin.
+    # Agregar, editar y borrar vehículos y choferes NO está acá: es solo del superadministrador.
+    "flota":          {"label":"Solicitudes de vehículo", "icon":"bi-truck-front",
+                       "acciones":["solicitar", "gestionar", "documentos"]},
 }
 
 # Metadata UI de cada acción — Daniel 2026-06-03: la matriz se reorganiza en
@@ -14530,6 +14551,15 @@ PERMISSIONS_META = {
         "descargar_manual": {"label": "Descargar manuales (PDF)", "tipo": "bloqueo", "icon": "bi-download"},
         "clasificacion": {"label": "Editar clasificación de productos (categorías y plan de mantención)",
                            "tipo": "bloqueo", "icon": "bi-diagram-3"},
+    },
+    # 🚚 2026-11-02 (Daniel: «déjalo habilitado por el front para dejarle las asignaciones a cada uno»). Las tres nacen apagadas.
+    "flota": {
+        "solicitar":  {"label": "Ver la flota y pedir un vehículo (día, horario, chofer y motivo)",
+                       "tipo": "submodulo", "icon": "bi-calendar-plus"},
+        "gestionar":  {"label": "Gestionar solicitudes (confirmar, entregar la llave, mover y cancelar las de cualquiera)",
+                       "tipo": "submodulo", "icon": "bi-key"},
+        "documentos": {"label": "Ver los PDF de los documentos y el RUT y la dirección de los choferes",
+                       "tipo": "bloqueo", "icon": "bi-file-earmark-lock"},
     },
 }
 

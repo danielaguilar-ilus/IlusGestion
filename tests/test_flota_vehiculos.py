@@ -210,18 +210,28 @@ class _Duplicado(Exception):
 
 
 class BaseFalsa:
-    """Imita, con las MISMAS sentencias que usa flota_module, las dos tablas de flota. Cualquier SQL que no conozca falla la prueba."""
+    """Imita, con las MISMAS sentencias que usa flota_module, las tablas de vehículos y de archivos. Cualquier SQL que no conozca falla la prueba."""
 
-    COLS = ("patente tipo marca modelo anio color vin capacidad_kg capacidad_m3 combustible estanque_l km_actual licencia_clases "
-            "revision_tecnica_vence permiso_circulacion_vence soap_vence seguro_vence notas").split()
+    COLS = ("patente patente_dv tipo marca modelo anio color vin numero_motor cilindrada propietario propietario_rut capacidad_kg capacidad_m3 "
+            "combustible estanque_l km_actual licencia_clases revision_tecnica_vence permiso_circulacion_vence soap_vence seguro_vence "
+            "revision_tecnica_detalle permiso_circulacion_detalle soap_detalle seguro_detalle notas").split()
 
     def __init__(self):
         self.veh, self.log, self.sql, self.sig = {}, [], [], 1
+        self.arch, self.sig_a = {}, 1          # flota_archivos: id -> fila
+        self.abiertas = 0                      # reservas por delante que dirá la cuenta de «tiene reservas pendientes»
 
     def _dup(self):
         e = _Duplicado("(1062, \"Duplicate entry 'X' for key 'uq_flota_patente'\")")
         e.args = (1062, "Duplicate entry")
         return e
+
+    def _select_archivos(self, s, p):
+        if s.startswith("SELECT id, entidad_id, tipo, nombre_original, content_type, bytes, subido_por, subido_at FROM flota_archivos"):
+            return [dict(a) for a in sorted(self.arch.values(), key=lambda a: a["id"]) if a["entidad"] == p[0] and a["activo"]]
+        if s.startswith("SELECT * FROM flota_archivos WHERE id=%s"):
+            return [dict(self.arch[p[0]])] if p[0] in self.arch else []
+        return None
 
     def fetchone(self, q, p=None):
         s = " ".join(q.split())
@@ -230,15 +240,24 @@ class BaseFalsa:
             return dict(self.veh[p[0]]) if p[0] in self.veh else None
         if s == "SELECT * FROM flota_vehiculos WHERE patente=%s":
             return next((dict(v) for v in self.veh.values() if v["patente"] == p[0]), None)
+        if s == "SELECT COUNT(*) AS n FROM flota_vehiculos WHERE archivado=1":
+            return {"n": sum(1 for v in self.veh.values() if v.get("archivado"))}
+        a = self._select_archivos(s, p)
+        if a is not None:
+            return a[0] if a else None
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE vehiculo_id=%s"):
-            return {"n": 0}          # reservas por delante (fase 1b): acá no hay solicitudes
+            return {"n": self.abiertas if " AND fin >=" in s else 0}      # reservas por delante (fase 1b): acá no hay solicitudes
         raise AssertionError("fetchone no previsto: " + s[:90])
 
     def fetchall(self, q, p=None):
         s = " ".join(q.split())
         p = p or ()
-        if s.startswith("SELECT * FROM flota_vehiculos ORDER BY habilitado DESC"):
-            return sorted((dict(v) for v in self.veh.values()), key=lambda v: (-v["habilitado"], v["tipo"], v["patente"]))
+        if s.startswith("SELECT * FROM flota_vehiculos WHERE archivado=%s ORDER BY habilitado DESC"):
+            return sorted((dict(v) for v in self.veh.values() if int(v.get("archivado") or 0) == p[0]),
+                          key=lambda v: (-v["habilitado"], v["tipo"], v["patente"]))
+        a = self._select_archivos(s, p)
+        if a is not None:
+            return a
         if s.startswith("SELECT id, accion, detalle, usuario, created_at FROM flota_vehiculo_log WHERE vehiculo_id=%s"):
             return [dict(x) for x in sorted(self.log, key=lambda x: -x["id"]) if x["vehiculo_id"] == p[0]]
         raise AssertionError("fetchall no previsto: " + s[:90])
@@ -247,7 +266,7 @@ class BaseFalsa:
         s = " ".join(q.split())
         p = p or ()
         self.sql.append(s)
-        if s.startswith("CREATE TABLE IF NOT EXISTS"):
+        if s.startswith("CREATE TABLE IF NOT EXISTS") or s.startswith("ALTER TABLE"):
             return
         if s.startswith("INSERT INTO flota_vehiculos ("):
             cols = [c.strip() for c in s[s.index("(") + 1:s.index(")")].split(",")]
@@ -255,7 +274,8 @@ class BaseFalsa:
             if any(v["patente"] == vals["patente"] for v in self.veh.values()):
                 raise self._dup()
             fila = {c: None for c in self.COLS}
-            fila.update(habilitado=1, inhabilitado_motivo=None, inhabilitado_por=None, inhabilitado_at=None,
+            fila.update(habilitado=1, inhabilitado_motivo=None, inhabilitado_por=None, inhabilitado_at=None, archivado=0,
+                        archivado_motivo=None, archivado_por=None, archivado_at=None,
                         created_at=dt.datetime(2026, 11, 2, 15, 0), updated_at=dt.datetime(2026, 11, 2, 15, 0))
             fila.update(vals)
             fila["id"] = self.sig
@@ -273,6 +293,29 @@ class BaseFalsa:
             if any(v["id"] != vid and v["patente"] == nuevos["patente"] for v in self.veh.values()):
                 raise self._dup()
             self.veh[vid].update(nuevos)
+            return
+        if s.startswith("DELETE FROM flota_vehiculos WHERE id=%s"):
+            self.veh.pop(p[0], None)
+            return
+        if s.startswith("INSERT INTO flota_archivos ("):
+            ent, eid, tipo, nombre, ct, nbytes, clave, sha, por = p
+            self.arch[self.sig_a] = {"id": self.sig_a, "entidad": ent, "entidad_id": eid, "tipo": tipo, "nombre_original": nombre,
+                                     "content_type": ct, "bytes": nbytes, "gcs_key": clave, "sha256": sha, "activo": 1, "subido_por": por,
+                                     "subido_at": dt.datetime(2026, 11, 2, 19, 5), "quitado_por": None, "quitado_at": None}
+            self.sig_a += 1
+            return
+        if s.startswith("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() WHERE entidad=%s AND entidad_id=%s AND tipo=%s AND activo=1"):
+            por, ent, eid, tipo = p
+            for a in self.arch.values():
+                if (a["entidad"], a["entidad_id"], a["tipo"]) == (ent, eid, tipo) and a["activo"]:
+                    a.update(activo=0, quitado_por=por)
+            return
+        m = re.match(r"UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW\(\) WHERE entidad='(vehiculo|chofer)' AND entidad_id=%s AND activo=1", s)
+        if m:
+            por, eid = p
+            for a in self.arch.values():
+                if a["entidad"] == m.group(1) and a["entidad_id"] == eid and a["activo"]:
+                    a.update(activo=0, quitado_por=por)
             return
         raise AssertionError("execute no previsto: " + s[:90])
 
@@ -294,10 +337,53 @@ class BaseFalsa:
                 return 0
             v.update(habilitado=1, inhabilitado_motivo=None, inhabilitado_por=None, inhabilitado_at=None)
             return 1
+        if s.startswith("UPDATE flota_vehiculos SET archivado=1"):
+            motivo, por, inhab, _por2, _por3, vid = p
+            v = self.veh.get(vid)
+            if not v or v.get("archivado"):
+                return 0
+            v.update(archivado=1, archivado_motivo=motivo, archivado_por=por, archivado_at=dt.datetime(2026, 11, 2, 19, 30), habilitado=0,
+                     inhabilitado_motivo=inhab, inhabilitado_por=por, inhabilitado_at=dt.datetime(2026, 11, 2, 19, 30))
+            return 1
+        if s.startswith("UPDATE flota_vehiculos SET archivado=0"):
+            _por, vid = p
+            v = self.veh.get(vid)
+            if not v or not v.get("archivado"):
+                return 0
+            v.update(archivado=0, archivado_motivo=None, archivado_por=None, archivado_at=None)
+            return 1
+        if s.startswith("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() WHERE id=%s AND activo=1"):
+            por, aid = p
+            a = self.arch.get(aid)
+            if not a or not a["activo"]:
+                return 0
+            a.update(activo=0, quitado_por=por)
+            return 1
         raise AssertionError("rowcount no previsto: " + s[:90])
 
 
-def _app_de_prueba(base):
+class BucketFalso:
+    """GCS de mentira: guarda los bytes en memoria bajo su clave."""
+
+    def __init__(self):
+        self.objetos = {}
+
+    def blob(self, clave):
+        return _BlobFalso(self, clave)
+
+
+class _BlobFalso:
+    def __init__(self, bucket, clave):
+        self.bucket, self.clave, self.cache_control = bucket, clave, None
+
+    def upload_from_string(self, data, content_type=None):
+        self.bucket.objetos[self.clave] = (bytes(data), content_type)
+
+    def download_as_bytes(self):
+        return self.bucket.objetos[self.clave][0]
+
+
+def _app_de_prueba(base, bucket=None):
     from flask import Flask, g, redirect, request
 
     plantillas = tempfile.mkdtemp(prefix="flota_tpl_")
@@ -318,7 +404,9 @@ def _app_de_prueba(base):
     def _usuario():
         rol = request.headers.get("X-Rol")
         g.user = {"id": 1, "nombre": "Daniel Aguilar"} if rol else None
-        g.permissions = {"superadmin": rol == "superadmin", "retiros": rol in ("admin", "superadmin"), "mantenciones": rol is not None}
+        # X-Flota: las llaves de la flota que tiene quien mira, por ejemplo «flota_solicitar,flota_documentos»
+        extra = {x.strip(): True for x in (request.headers.get("X-Flota") or "").split(",") if x.strip()}
+        g.permissions = {"superadmin": rol == "superadmin", "retiros": rol in ("admin", "superadmin"), "mantenciones": rol is not None, **extra}
 
     def login_required(view):
         from functools import wraps
@@ -332,7 +420,7 @@ def _app_de_prueba(base):
 
     ctx = {"mysql_fetchone": base.fetchone, "mysql_fetchall": base.fetchall, "mysql_execute": base.execute,
            "mysql_execute_returning_rowcount": base.rowcount, "login_required": login_required,
-           "current_username": lambda: "Daniel Aguilar"}
+           "current_username": lambda: "Daniel Aguilar", "_gcs_bucket": lambda: bucket}
     import flota_module
     flota_module.register_flota_routes(app, ctx)
     return app
@@ -377,9 +465,9 @@ class TestRutas(unittest.TestCase):
             kw = {"json": _veh()} if metodo in ("post", "put") else {}
             r = getattr(self.c, metodo)(url, headers=OTRO, **kw)
             self.assertEqual(r.status_code, 403, url)
-            self.assertEqual(r.get_json()["error_codigo"], "SIN_PERMISO_FLOTA")
+            self.assertTrue(r.get_json()["error_codigo"].startswith("SIN_PERMISO_"))
         self.assertEqual(self.base.veh, {})
-        self.assertEqual([s for s in self.base.sql if not s.startswith("CREATE")], [])
+        self.assertEqual([s for s in self.base.sql if not s.startswith(("CREATE", "ALTER"))], [])
 
     # ── Alta ──
     def test_alta_habilita_y_deja_bitacora(self):
@@ -516,9 +604,28 @@ class TestRutas(unittest.TestCase):
             self.assertEqual(self.c.post(f"/flota/api/vehiculos/99/{suf}", json={"motivo": "motivo largo"}, headers=SUPER).status_code, 404)
         self.assertEqual(self.c.get("/flota/api/vehiculos/99/historial", headers=SUPER).status_code, 404)
 
-    def test_no_se_puede_borrar(self):
+    def test_borrar_definitivo_pide_la_patente_y_queda_anotado_antes(self):
         _, d = self.crear()
-        self.assertEqual(self.c.delete(f"/flota/api/vehiculos/{d['vehiculo']['id']}", headers=SUPER).status_code, 405)
+        vid = d["vehiculo"]["id"]
+        url = f"/flota/api/vehiculos/{vid}"
+        # sin confirmar, o con otra patente, no se borra nada
+        self.assertEqual(self.c.delete(url, json={}, headers=SUPER).status_code, 400)
+        self.assertEqual(self.c.delete(url, json={"confirmacion": "XXXX99"}, headers=SUPER).status_code, 400)
+        self.assertIn(vid, self.base.veh)
+        # quien gestiona o documenta, pero no es superadmin, tampoco puede
+        todo = {"X-Rol": "admin", "X-Flota": "flota_solicitar,flota_gestionar,flota_documentos"}
+        self.assertEqual(self.c.delete(url, json={"confirmacion": "ABCD12"}, headers=todo).status_code, 403)
+        self.assertIn(vid, self.base.veh)
+        # escribiendo la patente (con o sin guion) se borra, y la bitácora tiene sus datos
+        r = self.c.delete(url, json={"confirmacion": "abcd-12"}, headers=SUPER)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertNotIn(vid, self.base.veh)
+        ult = self.base.log[-1]
+        self.assertEqual(ult["accion"], "eliminado")
+        self.assertEqual(json.loads(ult["detalle"])["datos"]["patente"], "ABCD12")
+        i_log = max(i for i, q in enumerate(self.base.sql) if q.startswith("INSERT INTO flota_vehiculo_log"))
+        i_del = max(i for i, q in enumerate(self.base.sql) if q.startswith("DELETE FROM flota_vehiculos"))
+        self.assertLess(i_log, i_del)                                    # REGLA #5: anotar ANTES de borrar
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -541,17 +648,28 @@ class TestCableado(unittest.TestCase):
         j = self.MODULO.index("with app.app_context():")
         self.assertIn("_ensure_flota_tables()", self.MODULO[j:j + 200])
 
-    def test_arranque_barato_una_sentencia_por_ddl_y_sin_alter(self):
-        self.assertNotRegex(self.MODULO, r"ALTER\s+TABLE")
-        self.assertEqual(len(re.findall(r"CREATE TABLE IF NOT EXISTS flota_", self.MODULO)), 6)     # 2 de vehículos + 4 de la fase 1b
+    def test_arranque_barato_una_sentencia_por_ddl(self):
+        # REGLA #18: una sentencia por DDL; los ALTER son de UNA columna, solo ADD COLUMN y solo sobre tablas flota_*
+        self.assertEqual(len(re.findall(r"CREATE TABLE IF NOT EXISTS flota_", self.MODULO)), 7)     # 2 de vehículos + 4 de la fase 1b + archivos
+        altas = re.findall(r'"(ALTER TABLE [^"]+)"', self.MODULO)
+        self.assertGreaterEqual(len(altas), 15)
+        for a in altas:
+            self.assertRegex(a, r"^ALTER TABLE flota_(vehiculos|choferes) ADD COLUMN \w+ [A-Z0-9(),' ]+$", a)
+            self.assertNotIn(",", a.split("ADD COLUMN", 1)[0])
+            self.assertEqual(a.count("ADD COLUMN"), 1)
 
     def test_la_bitacora_solo_se_agrega(self):
         self.assertNotRegex(self.MODULO, r"UPDATE\s+flota_vehiculo_log")
         self.assertNotRegex(self.MODULO, r"DELETE\s+FROM\s+flota_vehiculo_log")
 
-    def test_nada_se_borra(self):
-        self.assertNotRegex(self.MODULO, r"DELETE\s+FROM\s+flota_vehiculos")
-        self.assertNotIn('methods=["DELETE"]', self.MODULO)
+    def test_borrar_es_solo_del_superadmin_y_solo_de_vehiculos_y_choferes(self):
+        # Daniel (02-nov-2026): «que yo pueda editar y borrar». Borrar definitivo existe, pero solo para vehículos y choferes, con puerta de
+        # administración; las bitácoras, las solicitudes y los archivos NUNCA se borran.
+        borrados = set(re.findall(r"DELETE\s+FROM\s+(\w+)", self.MODULO))
+        self.assertEqual(borrados, {"flota_vehiculos", "flota_choferes"})
+        self.assertEqual(self.MODULO.count('methods=["DELETE"]'), 2)
+        for m in re.finditer(r'methods=\["DELETE"\]\)\s*\n\s*@(\w+)', self.MODULO):
+            self.assertEqual(m.group(1), "_flota_admin_required")
 
     def test_sin_precios_ni_costos(self):
         # Daniel: «no vamos a manejar los precios de los costos»
@@ -573,8 +691,11 @@ class TestCableado(unittest.TestCase):
         self.assertEqual(base.count('href="/flota"'), 1)
 
     def test_la_puerta_de_acceso_es_una_sola(self):
-        self.assertEqual(self.MODULO.count("def _flota_puede"), 1)
-        self.assertEqual(self.MODULO.count('.get("superadmin")'), 1)
+        # los cuatro niveles salen de UNA función (flota_reglas.niveles); el módulo no vuelve a mirar «superadmin» por su cuenta
+        self.assertEqual(self.MODULO.count("def _niv("), 1)
+        self.assertEqual(self.MODULO.count("fr.niveles("), 1)
+        self.assertNotIn('.get("superadmin")', self.MODULO)
+        self.assertEqual(self.REGLAS.count('.get("superadmin")'), 1)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -591,7 +712,7 @@ class TestPantalla(unittest.TestCase):
         self.assertIn("Solicitudes de vehículo", self.html)
         self.assertIn("flota.css", self.html)
         self.assertIn("flota.js", self.html)
-        self.assertIn("Vista previa", self.html)          # se ve que es solo para el superadmin
+        self.assertIn("Solo tú administras esto", self.html)          # el superadmin ve que agregar, editar y borrar es solo suyo
 
     def test_todo_id_que_usa_el_js_existe(self):
         usados = set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", self.js))
@@ -600,8 +721,9 @@ class TestPantalla(unittest.TestCase):
             self.assertIn(f'id="{i}"', self.html, f"el JS usa #{i} y la plantilla no lo tiene")
 
     def test_todo_campo_del_formulario_existe(self):
-        for c in ("patente tipo marca modelo anio color vin capacidad_kg capacidad_m3 combustible estanque_l km_actual "
-                  "revision_tecnica_vence permiso_circulacion_vence soap_vence seguro_vence notas").split():
+        for c in ("patente tipo marca modelo anio color vin numero_motor cilindrada propietario propietario_rut capacidad_kg capacidad_m3 "
+                  "combustible estanque_l km_actual revision_tecnica_vence permiso_circulacion_vence soap_vence seguro_vence "
+                  "revision_tecnica_detalle permiso_circulacion_detalle soap_detalle seguro_detalle notas").split():
             self.assertIn(f'name="{c}"', self.html, c)
             self.assertIn(f'data-campo="{c}"', self.html, c)
         self.assertIn('data-campo="licencia_clases"', self.html)

@@ -22,10 +22,12 @@
   </div>
 </div>
 
+{% if flota_permisos and flota_permisos.admin %}
 <div class="fl-preview" role="note">
-  <i class="bi bi-eye"></i>
-  <span><b>Vista previa.</b> Esta sección solo la ves tú (superadministrador). Todavía no aparece para ningún otro usuario.</span>
+  <i class="bi bi-shield-lock"></i>
+  <span><b>Solo tú administras esto.</b> Agregar, editar, archivar y borrar vehículos y choferes es solo del superadministrador. Los demás entran únicamente si les das un permiso en Roles → «Solicitudes de vehículo»: pedir, gestionar solicitudes o ver documentos.</span>
 </div>
+{% endif %}
 
 <nav class="fl-tabs" role="tablist" aria-label="Secciones de la flota">
   <button type="button" class="fl-tab on" role="tab" data-tab="solicitudes" aria-selected="true"><i class="bi bi-calendar-week"></i>Solicitudes</button>
@@ -120,33 +122,42 @@
 </div>
 
 <div class="fl-panel" id="flPanelVehiculos" data-panel="vehiculos" hidden>
-<section class="fl-kpis" aria-label="Resumen de la flota">
+<section class="fl-kpis fl-kpis--5" aria-label="Resumen de la flota">
   <div class="fl-kpi fl-kpi--ok"><span class="fl-kpi-n" id="flKpiHabilitados">–</span><span class="fl-kpi-l">Habilitados</span></div>
   <div class="fl-kpi"><span class="fl-kpi-n" id="flKpiInhabilitados">–</span><span class="fl-kpi-l">Inhabilitados</span></div>
   <div class="fl-kpi fl-kpi--warn"><span class="fl-kpi-n" id="flKpiPorVencer">–</span><span class="fl-kpi-l">Con documentos por vencer</span></div>
   <div class="fl-kpi fl-kpi--bad"><span class="fl-kpi-n" id="flKpiVencidos">–</span><span class="fl-kpi-l">Con documentos vencidos</span></div>
+  <div class="fl-kpi fl-kpi--info" id="flKpiIncompletosCaja"><span class="fl-kpi-n" id="flKpiIncompletos">–</span><span class="fl-kpi-l">Con la ficha incompleta</span></div>
 </section>
 
 <div class="fl-toolbar">
   <div class="fl-buscar">
     <i class="bi bi-search"></i>
-    <input type="search" id="flBuscar" placeholder="Buscar patente, tipo o marca" aria-label="Buscar vehículo" autocomplete="off">
+    <input type="search" id="flBuscar" placeholder="Buscar patente, marca, modelo, propietario o motor" aria-label="Buscar vehículo" autocomplete="off">
   </div>
   <div class="fl-chips" role="group" aria-label="Filtrar por estado">
     <button type="button" class="fl-chip on" data-estado="todos">Todos</button>
-    <button type="button" class="fl-chip" data-estado="habilitados">Habilitados</button>
+    <button type="button" class="fl-chip" data-estado="alertas">Con alertas</button>
+    <button type="button" class="fl-chip" data-estado="incompletos" id="flChipIncompletos">Incompletos</button>
     <button type="button" class="fl-chip" data-estado="inhabilitados">Inhabilitados</button>
+    <button type="button" class="fl-chip" data-estado="archivados" id="flChipArchivados" hidden>Archivados</button>
   </div>
+  <label class="fl-orden">Ordenar por
+    <select id="flOrden" class="fl-select" aria-label="Ordenar vehículos">
+      <option value="prioridad">Lo más urgente primero</option>
+      <option value="patente">Patente</option>
+      <option value="vencimiento">Próximo vencimiento</option>
+    </select>
+  </label>
 </div>
 
 <div class="fl-tabla-wrap">
-  <table class="fl-tabla" id="flTabla">
+  <table class="fl-tabla fl-tabla--veh" id="flTabla">
     <thead>
       <tr>
         <th>Vehículo</th>
-        <th>Licencia</th>
-        <th>Kilómetros</th>
         <th>Documentos</th>
+        <th>Calidad de la ficha</th>
         <th>Estado</th>
         <th class="fl-th-acc">Acciones</th>
       </tr>
@@ -182,12 +193,13 @@
   <div class="fl-toolbar">
     <div class="fl-buscar">
       <i class="bi bi-search"></i>
-      <input type="search" id="flChBuscar" placeholder="Buscar nombre, usuario o clase de licencia" aria-label="Buscar chofer" autocomplete="off">
+      <input type="search" id="flChBuscar" placeholder="Buscar nombre, RUT, usuario o clase de licencia" aria-label="Buscar chofer" autocomplete="off">
     </div>
     <div class="fl-chips" role="group" aria-label="Filtrar choferes por estado">
       <button type="button" class="fl-fchip on" data-chest="todos">Todos</button>
       <button type="button" class="fl-fchip" data-chest="habilitados">Habilitados</button>
       <button type="button" class="fl-fchip" data-chest="inhabilitados">Inhabilitados</button>
+      <button type="button" class="fl-fchip" data-chest="archivados" id="flChChipArchivados" hidden>Archivados</button>
     </div>
   </div>
 
@@ -238,7 +250,7 @@
               <div class="fl-grid">
                 <div class="fl-campo" data-campo="patente">
                   <label for="flPatente">Patente <span class="fl-req">*</span></label>
-                  <input type="text" id="flPatente" name="patente" maxlength="10" inputmode="text" autocapitalize="characters" placeholder="Ej: ABCD-12">
+                  <input type="text" id="flPatente" name="patente" maxlength="10" inputmode="text" autocapitalize="characters" placeholder="Ej: TVDZ88-5 (con su dígito)">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
                 <div class="fl-campo" data-campo="tipo">
@@ -270,6 +282,26 @@
                 <div class="fl-campo fl-campo--ancho" data-campo="vin">
                   <label for="flVin">N° de chasis (VIN)</label>
                   <input type="text" id="flVin" name="vin" maxlength="40" autocapitalize="characters">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="numero_motor">
+                  <label for="flMotor">N° de motor</label>
+                  <input type="text" id="flMotor" name="numero_motor" maxlength="40" autocapitalize="characters">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="cilindrada">
+                  <label for="flCilindrada">Cilindrada / motor</label>
+                  <input type="text" id="flCilindrada" name="cilindrada" maxlength="20" placeholder="Ej: 1.2 L">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="propietario">
+                  <label for="flPropietario">Propietario registrado</label>
+                  <input type="text" id="flPropietario" name="propietario" maxlength="160" placeholder="Como figura en el permiso de circulación">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="propietario_rut">
+                  <label for="flPropietarioRut">RUT del propietario</label>
+                  <input type="text" id="flPropietarioRut" name="propietario_rut" maxlength="14" placeholder="76.996.964-0">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
               </div>
@@ -327,11 +359,16 @@
             <div class="fl-paso-n" aria-hidden="true">4</div>
             <div class="fl-paso-cont">
               <h6>Documentos y observaciones</h6>
-              <p class="fl-ayuda">Con estas fechas el sistema te avisará antes de que venzan.</p>
+              <p class="fl-ayuda">Con estas fechas el sistema te avisará antes de que venzan. El PDF de cada documento se sube desde la ficha del vehículo.</p>
               <div class="fl-grid">
                 <div class="fl-campo" data-campo="revision_tecnica_vence">
                   <label for="flDocRevision">Revisión técnica vence</label>
                   <input type="date" id="flDocRevision" name="revision_tecnica_vence">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="revision_tecnica_detalle">
+                  <label for="flDetRevision">Revisión técnica · N° o detalle</label>
+                  <input type="text" id="flDetRevision" name="revision_tecnica_detalle" maxlength="160" placeholder="N° de certificado o planta">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
                 <div class="fl-campo" data-campo="permiso_circulacion_vence">
@@ -339,14 +376,29 @@
                   <input type="date" id="flDocPermiso" name="permiso_circulacion_vence">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
+                <div class="fl-campo" data-campo="permiso_circulacion_detalle">
+                  <label for="flDetPermiso">Permiso de circulación · N° o detalle</label>
+                  <input type="text" id="flDetPermiso" name="permiso_circulacion_detalle" maxlength="160" placeholder="N° de certificado o planta">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
                 <div class="fl-campo" data-campo="soap_vence">
                   <label for="flDocSoap">SOAP vence</label>
                   <input type="date" id="flDocSoap" name="soap_vence">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
+                <div class="fl-campo" data-campo="soap_detalle">
+                  <label for="flDetSoap">SOAP · N° o detalle</label>
+                  <input type="text" id="flDetSoap" name="soap_detalle" maxlength="160" placeholder="Póliza o aseguradora">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
                 <div class="fl-campo" data-campo="seguro_vence">
                   <label for="flDocSeguro">Seguro vence</label>
                   <input type="date" id="flDocSeguro" name="seguro_vence">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="seguro_detalle">
+                  <label for="flDetSeguro">Seguro · N° o detalle</label>
+                  <input type="text" id="flDetSeguro" name="seguro_detalle" maxlength="160" placeholder="Póliza o aseguradora">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
                 <div class="fl-campo fl-campo--ancho" data-campo="notas">
@@ -382,6 +434,22 @@
     </div>
   </div>
 </div>
+
+{# ═══ Modal: ficha de un vehículo (datos, documentos con su PDF, calidad y gestión) ═══ #}
+<div class="modal fade" id="flModalFicha" tabindex="-1" aria-labelledby="flModalFichaTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content fl-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="flModalFichaTitulo">Ficha del vehículo</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body"><div id="flFichaCuerpo"></div></div>
+      <div class="modal-footer fl-ficha-acc" id="flFichaAcc"></div>
+    </div>
+  </div>
+</div>
+<input type="file" id="flArchivoInput" class="d-none" tabindex="-1" aria-hidden="true">
+
 
 {# ═══ Modal: nueva solicitud / mover una reserva (más de 5 campos → Bootstrap modal, REGLA #8) ═══ #}
 <div class="modal fade" id="flModalSol" tabindex="-1" aria-labelledby="flModalSolTitulo" aria-hidden="true" data-bs-backdrop="static">
@@ -539,12 +607,29 @@
             <div class="fl-paso-n" aria-hidden="true">1</div>
             <div class="fl-paso-cont">
               <h6>¿Quién es? <span class="fl-req">*</span></h6>
-              <p class="fl-ayuda">Cada chofer es un usuario de ILUS: su nombre y su teléfono salen de su perfil.</p>
+              <p class="fl-ayuda">Cada chofer es un usuario de ILUS. Al elegirlo te sugerimos el RUT y la dirección que ya tiene en su perfil; puedes corregirlos.</p>
               <div class="fl-campo" data-campo="usuario_id">
                 <select id="flChUsuario" name="usuario_id" class="fl-select fl-select--lleno" aria-label="Usuario de ILUS"></select>
                 <div class="fl-msg" aria-live="polite"></div>
               </div>
               <div class="fl-chofer-fijo" id="flChFijo" hidden></div>
+              <div class="fl-grid fl-grid--sep">
+                <div class="fl-campo fl-campo--ancho" data-campo="nombre_completo">
+                  <label for="flChNombre">Nombre completo (como figura en la licencia) <span class="fl-req">*</span></label>
+                  <input type="text" id="flChNombre" name="nombre_completo" maxlength="190" autocomplete="off">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="rut">
+                  <label for="flChRut">RUT <span class="fl-req">*</span></label>
+                  <input type="text" id="flChRut" name="rut" maxlength="14" inputmode="text" placeholder="12.345.678-5" autocomplete="off">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="direccion">
+                  <label for="flChDireccion">Dirección</label>
+                  <input type="text" id="flChDireccion" name="direccion" maxlength="300" autocomplete="off" placeholder="Calle, número, comuna">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -560,6 +645,12 @@
                 <label for="flChVence">La licencia vence <span class="fl-req">*</span></label>
                 <input type="date" id="flChVence" name="licencia_vence">
                 <div class="fl-msg" aria-live="polite"></div>
+              </div>
+              <div class="fl-subir" id="flChSubirCaja">
+                <label class="fl-subir-t" for="flChArchivo">Licencia en PDF (opcional)</label>
+                <div id="flChArchivoActual" class="fl-subir-actual"></div>
+                <input type="file" id="flChArchivo" accept="application/pdf,image/jpeg,image/png,image/webp">
+                <div class="fl-msg" id="flChArchivoMsg" aria-live="polite"></div>
               </div>
             </div>
           </section>
@@ -577,17 +668,18 @@
 
         </form>
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer fl-ficha-acc">
         <div class="fl-pie-form" id="flChPieForm" aria-live="polite"></div>
+        <div class="fl-gestion" id="flChGestion"></div>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-danger" id="flChGuardar"><i class="bi bi-check2-circle me-1"></i>Guardar chofer</button>
       </div>
     </div>
   </div>
 </div>
-
 {% endblock %}
 {% block scripts %}
+<script>window.FLOTA_PERMISOS = {{ (flota_permisos or {}) | tojson }};</script>
 <script src="{{ url_for('static', filename='flota.js') }}"></script>
 <script src="{{ url_for('static', filename='flota_uso.js') }}"></script>
 {% endblock %}

@@ -1,4 +1,5 @@
-/* Solicitudes de vehículo · Flota (Fase 1b): solicitudes en lista y calendario, repositorio de choferes y las tres pestañas.
+/* Solicitudes de vehículo · Flota (Fases 1b y 1c): solicitudes en lista y calendario, repositorio de choferes (RUT, nombre completo,
+   dirección y PDF de la licencia) y las tres pestañas. Quién ve qué lo decide el servidor; acá solo se esconden los botones que no corresponden.
    Reglas del proyecto que cumple: sin alert/confirm/prompt nativos (REGLA #1: ilusConfirm / ilusPrompt / ilusToast), tablas con pie
    «Mostrando A–B de N» (REGLA #4.3), formulario por tarjetas cuyo círculo pasa de rojo a verde mientras se escribe (REGLAS #15 y #42),
    nombres y horarios completos sin cortar, y celular primero (REGLA #3: la tabla se vuelve tarjetas y el calendario una agenda por día).
@@ -11,6 +12,7 @@
   var DIAS = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
   var ICONOS = { solicitada: 'bi-hourglass-split', confirmada: 'bi-check-circle-fill', llave_entregada: 'bi-key-fill', cancelada: 'bi-x-circle' };
   var OCUPAN = ['solicitada', 'confirmada', 'llave_entregada'];
+  var PERM = window.FLOTA_PERMISOS || {};
   var S = {
     tab: 'solicitudes', hoy: null, ahora: '00:00',
     config: { areas: [], clases: [], clase_sugerida: 'B', dias_alerta: 30, max_dias_uso: 7 },
@@ -18,7 +20,7 @@
     sol: [], solVista: 'proximas', solEstado: 'todas', solQ: '', solVeh: '', solPag: 1, solPor: 25, ocup: [],
     vista: 'lista', mes: null, cal: null, diaSel: null, det: null,
     editSol: null, solIntento: false, solTocados: {}, guardandoSol: false,
-    chQ: '', chEstado: 'todos', chPag: 1, chPor: 25, editCh: null, chIntento: false, chTocados: {}, guardandoCh: false
+    chQ: '', chEstado: 'todos', chPag: 1, chPor: 25, editCh: null, chIntento: false, chTocados: {}, guardandoCh: false, verArchCh: false, usuariosCh: []
   };
 
   function $(id) { return document.getElementById(id); }
@@ -109,8 +111,8 @@
       p.hidden = p.getAttribute('data-panel') !== t;
     });
     $('flBtnSolicitud').hidden = t !== 'solicitudes';
-    $('flBtnNuevo').hidden = t !== 'vehiculos';
-    $('flBtnChofer').hidden = t !== 'choferes';
+    $('flBtnNuevo').hidden = t !== 'vehiculos' || !PERM.admin;        // agregar vehículos y choferes: solo el superadministrador
+    $('flBtnChofer').hidden = t !== 'choferes' || !PERM.admin;
     try { history.replaceState(null, '', '#' + t); } catch (e) { /* sin historial: no importa */ }
     if (t === 'solicitudes' && S.vista === 'calendario') cargarCal();
   }
@@ -126,10 +128,15 @@
     });
   }
   function cargarChof() {
-    return api(API + '/choferes').then(function (d) {
+    return api(API + '/choferes' + (S.verArchCh ? '?archivados=1' : '')).then(function (d) {
       if (!d.ok) { pintarChVacio('No se pudo leer el repositorio de choferes', d.error || 'Intenta de nuevo en un momento.'); return; }
       S.chof = d.choferes || [];
       S.resumenCh = d.resumen || {};
+      if (d.permisos) PERM = d.permisos;
+      var cac = $('flChChipArchivados');
+      cac.hidden = !PERM.admin;
+      cac.textContent = 'Archivados' + (S.resumenCh.archivados ? ' (' + S.resumenCh.archivados + ')' : '');
+      $('flBtnChofer').hidden = S.tab !== 'choferes' || !PERM.admin;
       if (d.config) S.config = d.config;
       S.hoy = S.hoy || d.hoy;
       var r = S.resumenCh;
@@ -735,7 +742,7 @@
       if (S.chEstado === 'habilitados' && !c.habilitado) return false;
       if (S.chEstado === 'inhabilitados' && c.habilitado) return false;
       if (!q) return true;
-      return norm([c.nombre, c.username, c.licencia_texto, c.cargo].join(' ')).indexOf(q) >= 0;
+      return norm([c.nombre, c.nombre_completo, c.rut, c.username, c.licencia_texto, c.cargo].join(' ')).indexOf(q) >= 0;
     });
   }
   function pintarChVacio(titulo, texto) {
@@ -746,23 +753,40 @@
     $('flChPie').style.display = 'none';
   }
   function filaCh(c) {
-    var estado = c.habilitado
-      ? '<span class="fl-estado fl-estado--on"><i class="bi bi-check-circle-fill"></i>Habilitado</span>'
-      : '<span class="fl-estado fl-estado--off"><i class="bi bi-slash-circle"></i>Inhabilitado</span><span class="fl-motivo">' + esc(c.inhabilitado_motivo || '') +
+    var estado;
+    if (c.archivado) {
+      estado = '<span class="fl-estado fl-estado--off"><i class="bi bi-archive"></i>Archivado</span><span class="fl-motivo">' + esc(c.archivado_motivo || '') +
+        (c.archivado_por ? ' · ' + esc(c.archivado_por) : '') + (c.archivado_fmt ? ' · ' + esc(c.archivado_fmt) : '') + '</span>';
+    } else if (c.habilitado) {
+      estado = '<span class="fl-estado fl-estado--on"><i class="bi bi-check-circle-fill"></i>Habilitado</span>';
+    } else {
+      estado = '<span class="fl-estado fl-estado--off"><i class="bi bi-slash-circle"></i>Inhabilitado</span><span class="fl-motivo">' + esc(c.inhabilitado_motivo || '') +
         (c.inhabilitado_por ? ' · ' + esc(c.inhabilitado_por) : '') + (c.inhabilitado_fmt ? ' · ' + esc(c.inhabilitado_fmt) : '') + '</span>';
+    }
     var lic = '<div class="fl-doc fl-doc--' + (c.licencia_estado === 'sin_fecha' ? 'sin_fecha' : esc(c.licencia_estado)) + '"><b>' + esc(c.licencia_texto) + '</b><span>' +
       (c.licencia_vence_fmt ? esc(c.licencia_vence_fmt) + ' · ' : '') + esc(c.licencia_texto_dias) + '</span></div>';
-    var cambiar = c.habilitado
-      ? '<button type="button" class="fl-btn fl-btn--peligro" data-acc="inhabilitar"><i class="bi bi-slash-circle"></i>Inhabilitar</button>'
-      : '<button type="button" class="fl-btn fl-btn--ok" data-acc="habilitar"><i class="bi bi-check-circle"></i>Habilitar</button>';
-    return '<tr class="' + (c.habilitado ? '' : 'inhab') + '" data-id="' + c.id + '">' +
-      '<td class="fl-td-veh"><span class="fl-nombre">' + esc(c.nombre) + '</span>' +
-      (c.cargo ? '<span class="fl-sub">' + esc(c.cargo) + '</span>' : '') + (c.telefono ? '<span class="fl-sub">' + esc(c.telefono) + '</span>' : '') +
+    if (PERM.documentos) {
+      lic += c.licencia_archivo
+        ? '<a class="fl-pdf" href="/flota/api/archivos/' + c.licencia_archivo.id + '" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf"></i>Ver licencia</a>'
+        : '<span class="fl-sin-pdf"><i class="bi bi-file-earmark-x"></i>Sin PDF de la licencia</span>';
+    }
+    var personales = '';
+    if (PERM.documentos) {
+      personales = (c.rut_fmt ? '<span class="fl-sub">RUT ' + esc(c.rut_fmt) + '</span>' : '<span class="fl-sub fl-sub--bad">RUT sin registrar</span>') +
+        (c.direccion ? '<span class="fl-sub">' + esc(c.direccion) + '</span>' : '<span class="fl-sub fl-t-mute">Dirección sin registrar</span>');
+    }
+    var nombre = PERM.documentos && c.nombre_completo ? c.nombre_completo : c.nombre;
+    var acc = '';
+    if (PERM.admin) acc += '<button type="button" class="fl-btn" data-acc="editar"><i class="bi bi-pencil"></i>Editar</button>';
+    if (PERM.gestionar) acc += '<button type="button" class="fl-btn" data-acc="historial"><i class="bi bi-clock-history"></i>Historial</button>';
+    return '<tr class="' + (c.habilitado && !c.archivado ? '' : 'inhab') + '" data-id="' + c.id + '">' +
+      '<td class="fl-td-veh"><span class="fl-nombre">' + esc(nombre) + '</span>' +
+      (PERM.documentos && c.nombre_completo && c.nombre_completo !== c.nombre ? '<span class="fl-sub">Usuario ILUS: ' + esc(c.nombre) + '</span>' : '') +
+      (c.cargo ? '<span class="fl-sub">' + esc(c.cargo) + '</span>' : '') + (c.telefono ? '<span class="fl-sub">' + esc(c.telefono) + '</span>' : '') + personales +
       (c.usuario_activo ? '' : '<span class="fl-sub fl-sub--bad">Su usuario de ILUS está desactivado</span>') + '</td>' +
       '<td class="fl-td-docs" data-label="Licencia">' + lic + '</td>' +
       '<td data-label="Estado">' + estado + '</td>' +
-      '<td data-label="Acciones"><div class="fl-acc"><button type="button" class="fl-btn" data-acc="editar"><i class="bi bi-pencil"></i>Editar</button>' +
-      '<button type="button" class="fl-btn" data-acc="historial"><i class="bi bi-clock-history"></i>Historial</button>' + cambiar + '</div></td></tr>';
+      '<td data-label="Acciones"><div class="fl-acc">' + acc + '</div></td></tr>';
   }
   function pintarChoferes() {
     var lista = chFiltrados();
@@ -783,10 +807,22 @@
   function campoCh(c) { return document.querySelector('#flFormCh .fl-campo[data-campo="' + c + '"]'); }
   function vCh(c) { var el = $('flFormCh').elements[c]; return el && el.value != null ? String(el.value) : ''; }
   function clasesCh() { return Array.prototype.slice.call(document.querySelectorAll('#flChClases input:checked')).map(function (i) { return i.value; }); }
-  var NOMBRES_CH = { usuario_id: 'el usuario', licencia_clases: 'la clase de licencia', licencia_vence: 'el vencimiento de la licencia' };
+  var NOMBRES_CH = { usuario_id: 'el usuario', nombre_completo: 'el nombre completo', rut: 'el RUT', licencia_clases: 'la clase de licencia', licencia_vence: 'el vencimiento de la licencia' };
+  function rutValido(t) {
+    var r = String(t || '').replace(/[^0-9kK]/g, '').toUpperCase();
+    if (!/^\d{7,8}[0-9K]$/.test(r)) return false;
+    var cuerpo = r.slice(0, -1), dv = r.slice(-1), suma = 0, f = 2;
+    for (var i = cuerpo.length - 1; i >= 0; i--) { suma += parseInt(cuerpo.charAt(i), 10) * f; f = f === 7 ? 2 : f + 1; }
+    var e = 11 - (suma % 11);
+    return dv === (e === 11 ? '0' : (e === 10 ? 'K' : String(e)));
+  }
   function reglasCh() {
     var r = {};
     r.usuario_id = S.editCh ? res('ok', '') : (vCh('usuario_id') ? res('ok', '') : res('bad', 'Elige a qué usuario de ILUS corresponde este chofer.'));
+    r.nombre_completo = vCh('nombre_completo').trim().length >= 5 ? res('ok', '') : res('bad', 'Escribe el nombre completo, como figura en la licencia.');
+    var rut = vCh('rut').trim();
+    r.rut = !rut ? res('bad', 'Indica el RUT del chofer.') : (rutValido(rut) ? res('ok', 'RUT válido.') : res('bad', 'El RUT no es válido (revisa el dígito verificador).'));
+    r.direccion = vCh('direccion').trim() ? res('ok', '') : res('warn', 'Sin dirección: conviene registrarla.');
     r.licencia_clases = clasesCh().length ? res('ok', 'Licencia clase ' + clasesCh().join(' y ') + '.') : res('bad', 'Elige al menos una clase de licencia (por ejemplo B).');
     var v = vCh('licencia_vence');
     if (!v) r.licencia_vence = res('bad', 'Indica cuándo vence la licencia: sin esa fecha no se puede comprobar que esté vigente.');
@@ -818,7 +854,7 @@
       el.classList.remove('ok', 'bad', 'warn');
       el.classList.add(e.indexOf('bad') >= 0 ? 'bad' : (e.indexOf('warn') >= 0 ? 'warn' : 'ok'));
     }
-    paso(1, ['usuario_id']); paso(2, ['licencia_clases', 'licencia_vence']);
+    paso(1, ['usuario_id', 'nombre_completo', 'rut', 'direccion']); paso(2, ['licencia_clases', 'licencia_vence']);
     var p3 = document.querySelector('#flFormCh .fl-paso[data-paso="3"]');
     if (p3) { p3.classList.remove('bad', 'warn'); p3.classList.add('ok'); }
     var faltan = Object.keys(r).filter(function (c) { return r[c].estado === 'bad'; });
@@ -835,6 +871,35 @@
         '<span><b>Clase ' + esc(c.codigo) + '</b><span>' + esc(c.nombre) + '</span></span></label>';
     }).join('');
   }
+  function subirArchivoCh(id, archivo) {
+    var fd = new FormData();
+    fd.append('entidad', 'chofer'); fd.append('entidad_id', id); fd.append('tipo', 'licencia'); fd.append('archivo', archivo);
+    return fetch('/flota/api/archivos', { method: 'POST', body: fd, credentials: 'same-origin', headers: { Accept: 'application/json' } }).then(function (r) {
+      return r.json().catch(function () { return { ok: false, error: 'El servidor respondió algo inesperado.' }; })
+        .then(function (d) { d.status = r.status; return d; });
+    }).catch(function () { return { ok: false, status: 0, error: 'No hay conexión con el servidor. Revisa tu internet e intenta de nuevo.' }; });
+  }
+  function pintarArchivoActualCh(c) {
+    var a = c && c.licencia_archivo;
+    $('flChArchivoActual').innerHTML = a
+      ? '<a class="fl-pdf" href="/flota/api/archivos/' + a.id + '" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf"></i>Ver la licencia guardada</a>' +
+        '<span class="fl-sub">' + esc(a.nombre || '') + ' · subida por ' + esc(a.subido_por || '—') + ' · ' + esc(a.subido_fmt || '') + '</span>' +
+        '<button type="button" class="fl-btn fl-btn--chico fl-btn--peligro" data-gcc="quitar-lic" data-aid="' + a.id + '"><i class="bi bi-x-lg"></i>Quitar</button>'
+      : (c ? '<span class="fl-sin-pdf"><i class="bi bi-file-earmark-x"></i>Todavía no hay PDF de la licencia</span>' : '');
+  }
+  function pintarGestionCh(c) {
+    var b = [];
+    if (c && PERM.admin) {
+      if (!c.archivado) b.push(c.habilitado
+        ? '<button type="button" class="btn btn-outline-danger" data-gcc="inhabilitar"><i class="bi bi-slash-circle me-1"></i>Inhabilitar</button>'
+        : '<button type="button" class="btn btn-outline-success" data-gcc="habilitar"><i class="bi bi-check-circle me-1"></i>Habilitar</button>');
+      b.push(c.archivado
+        ? '<button type="button" class="btn btn-outline-secondary" data-gcc="desarchivar"><i class="bi bi-box-arrow-up me-1"></i>Desarchivar</button>'
+        : '<button type="button" class="btn btn-outline-secondary" data-gcc="archivar"><i class="bi bi-archive me-1"></i>Archivar</button>');
+      b.push('<button type="button" class="btn btn-outline-danger" data-gcc="eliminar"><i class="bi bi-trash me-1"></i>Borrar definitivo</button>');
+    }
+    $('flChGestion').innerHTML = b.join('');
+  }
   function abrirChofer(c) {
     S.editCh = c || null; S.chIntento = false; S.chTocados = {};
     $('flModalChoferTitulo').textContent = c ? 'Editar chofer ' + c.nombre : 'Agregar chofer';
@@ -847,20 +912,37 @@
     $('flChFijo').innerHTML = c ? '<b>' + esc(c.nombre) + '</b>' + (c.cargo ? '<span class="fl-sub">' + esc(c.cargo) + '</span>' : '') + (c.telefono ? '<span class="fl-sub">' + esc(c.telefono) + '</span>' : '') : '';
     $('flChUsuario').innerHTML = '<option value="">Cargando usuarios…</option>';
     pintarClasesCh(c ? c.licencia_clases : [S.config.clase_sugerida || 'B']);
+    f.elements.nombre_completo.value = c ? (c.nombre_completo || c.nombre || '') : '';
+    f.elements.rut.value = c ? (c.rut_fmt || '') : '';
+    f.elements.direccion.value = c ? (c.direccion || '') : '';
     f.elements.licencia_vence.value = c && c.licencia_vence ? c.licencia_vence : '';
     f.elements.notas.value = c && c.notas ? c.notas : '';
+    $('flChArchivo').value = '';
+    $('flChArchivoMsg').textContent = '';
+    pintarArchivoActualCh(c);
+    pintarGestionCh(c);
     abrirModal('flModalChofer');
     evaluarCh();
     if (!c) {
       api(API + '/choferes/usuarios').then(function (d) {
         if (!d.ok) { $('flChUsuario').innerHTML = '<option value="">No se pudo leer la lista de usuarios</option>'; toast(d.error || 'No se pudo leer la lista de usuarios.', 'error'); return; }
-        $('flChUsuario').innerHTML = '<option value="">Elige un usuario de ILUS…</option>' + (d.usuarios || []).map(function (u) {
+        S.usuariosCh = d.usuarios || [];
+        $('flChUsuario').innerHTML = '<option value="">Elige un usuario de ILUS…</option>' + S.usuariosCh.map(function (u) {
           return '<option value="' + u.id + '">' + esc(u.nombre + (u.cargo ? ' · ' + u.cargo : '') + (u.username ? ' (' + u.username + ')' : '')) + '</option>';
         }).join('');
-        if (!(d.usuarios || []).length) $('flChUsuario').innerHTML = '<option value="">Todos los usuarios activos ya son choferes</option>';
+        if (!S.usuariosCh.length) $('flChUsuario').innerHTML = '<option value="">Todos los usuarios activos ya son choferes</option>';
         evaluarCh();
       });
     }
+  }
+  /* Al elegir al usuario se SUGIERE lo que ya tiene su perfil; la persona corrige lo que haga falta (REGLA #32). */
+  function sugerirDesdePerfil() {
+    var u = (S.usuariosCh || []).filter(function (x) { return String(x.id) === vCh('usuario_id'); })[0];
+    if (!u) return;
+    var f = $('flFormCh');
+    if (!vCh('nombre_completo').trim()) f.elements.nombre_completo.value = u.nombre || '';
+    if (!vCh('rut').trim() && u.rut) f.elements.rut.value = u.rut;
+    if (!vCh('direccion').trim() && u.direccion) f.elements.direccion.value = u.direccion;
   }
   function guardarCh() {
     if (S.guardandoCh) return;
@@ -883,13 +965,15 @@
     seguir.then(function (ok) {
       if (!ok) return;
       var editando = S.editCh;
-      var body = { licencia_clases: clasesCh(), licencia_vence: vCh('licencia_vence'), notas: vCh('notas') };
+      var archivo = $('flChArchivo').files && $('flChArchivo').files[0];
+      var body = { rut: vCh('rut'), nombre_completo: vCh('nombre_completo'), direccion: vCh('direccion'),
+        licencia_clases: clasesCh(), licencia_vence: vCh('licencia_vence'), notas: vCh('notas') };
       if (!editando) body.usuario_id = vCh('usuario_id');
       S.guardandoCh = true;
       $('flChGuardar').disabled = true;
       api(editando ? API + '/choferes/' + editando.id : API + '/choferes', { method: editando ? 'PUT' : 'POST', body: body }).then(function (r) {
-        S.guardandoCh = false; $('flChGuardar').disabled = false;
         if (!r.ok) {
+          S.guardandoCh = false; $('flChGuardar').disabled = false;
           Object.keys(r.errores || {}).forEach(function (c) {
             var el = campoCh(c);
             if (!el) return;
@@ -899,9 +983,19 @@
           toast(r.error || 'No se pudo guardar el chofer.', 'error');
           return;
         }
-        cerrarModal('flModalChofer');
-        toast(r.sin_cambios ? 'No había cambios que guardar.' : (editando ? 'Chofer actualizado.' : 'Chofer agregado y habilitado.'), 'success');
-        cargarChof();
+        var id = (r.chofer && r.chofer.id) || (editando && editando.id);
+        var terminar = function () {
+          S.guardandoCh = false; $('flChGuardar').disabled = false;
+          cerrarModal('flModalChofer');
+          toast(r.sin_cambios && !archivo ? 'No había cambios que guardar.' : (editando ? 'Chofer actualizado.' : 'Chofer agregado y habilitado.'), 'success');
+          cargarChof();
+        };
+        if (archivo && id) {
+          subirArchivoCh(id, archivo).then(function (u) {
+            if (!u.ok) toast('El chofer se guardó, pero la licencia no: ' + (u.error || 'no se pudo subir el archivo.'), 'warning');
+            terminar();
+          });
+        } else terminar();
       });
     });
   }
@@ -916,6 +1010,7 @@
         if (!d.ok) { toast(d.error || 'No se pudo inhabilitar.', 'error'); return; }
         toast(c.nombre + ' quedó inhabilitado como chofer.', 'success');
         (d.avisos || []).forEach(function (a) { toast(a, 'warning'); });
+        cerrarModal('flModalChofer');
         cargarChof();
       });
     });
@@ -930,6 +1025,61 @@
         if (!d.ok) { toast(d.error || 'No se pudo habilitar.', 'error'); return; }
         toast(c.nombre + ' quedó habilitado.', 'success');
         (d.avisos || []).forEach(function (a) { toast(a, 'warning'); });
+        cerrarModal('flModalChofer');
+        cargarChof();
+      });
+    });
+  }
+  function archivarCh(c) {
+    window.ilusPrompt({
+      title: 'Archivar a ' + c.nombre,
+      message: 'Sale de las listas pero conserva sus datos, su licencia y el historial de sus reservas. Puedes desarchivarlo cuando quieras.',
+      placeholder: 'Motivo (dejó la empresa, cambio de funciones…)', okLabel: 'Archivar', type: 'warning', multiline: true, required: true, minLength: 5
+    }).then(function (motivo) {
+      if (motivo == null) return;
+      api(API + '/choferes/' + c.id + '/archivar', { method: 'POST', body: { motivo: motivo } }).then(function (d) {
+        if (!d.ok) { toast(d.error || 'No se pudo archivar.', 'error'); return; }
+        toast(c.nombre + ' quedó archivado.', 'success');
+        cerrarModal('flModalChofer');
+        cargarChof();
+      });
+    });
+  }
+  function desarchivarCh(c) {
+    api(API + '/choferes/' + c.id + '/desarchivar', { method: 'POST', body: {} }).then(function (d) {
+      if (!d.ok) { toast(d.error || 'No se pudo desarchivar.', 'error'); return; }
+      toast(c.nombre + ' salió del archivo.', 'success');
+      (d.avisos || []).forEach(function (a) { toast(a, 'warning'); });
+      cerrarModal('flModalChofer');
+      cargarChof();
+    });
+  }
+  function eliminarCh(c) {
+    var esperado = c.nombre_completo || c.nombre;
+    window.ilusPrompt({
+      title: 'Borrar definitivo a ' + c.nombre,
+      message: 'Se borra para siempre y no se puede deshacer. Solo se puede si nunca tuvo reservas; si no, archívalo. Para confirmar escribe su nombre completo.',
+      placeholder: esperado, okLabel: 'Borrar definitivo', type: 'danger', required: true
+    }).then(function (txt) {
+      if (txt == null) return;
+      api(API + '/choferes/' + c.id, { method: 'DELETE', body: { confirmacion: txt } }).then(function (d) {
+        if (!d.ok) { toast(d.error || 'No se pudo borrar.', 'error'); return; }
+        toast(c.nombre + ' se borró definitivamente.', 'success');
+        cerrarModal('flModalChofer');
+        cargarChof();
+      });
+    });
+  }
+  function quitarLicencia(aid) {
+    window.ilusConfirm({
+      title: 'Quitar la licencia guardada', message: '¿Dejar de usar este archivo? El original queda guardado en el historial; después puedes subir otro.',
+      okLabel: 'Quitar', cancelLabel: 'Volver', danger: true
+    }).then(function (ok) {
+      if (!ok) return;
+      api('/flota/api/archivos/' + aid + '/quitar', { method: 'POST', body: {} }).then(function (d) {
+        if (!d.ok) { toast(d.error || 'No se pudo quitar el archivo.', 'error'); return; }
+        toast('Archivo quitado.', 'success');
+        if (S.editCh && d.chofer) { S.editCh = d.chofer; pintarArchivoActualCh(d.chofer); }
         cargarChof();
       });
     });
@@ -1039,15 +1189,17 @@
       var a = b.getAttribute('data-acc');
       if (a === 'editar') abrirChofer(c);
       else if (a === 'historial') historialCh(c);
-      else if (a === 'inhabilitar') inhabilitarCh(c);
-      else if (a === 'habilitar') habilitarCh(c);
     });
     var tc;
     $('flChBuscar').addEventListener('input', function (e) {
       clearTimeout(tc);
       tc = setTimeout(function () { S.chQ = e.target.value; S.chPag = 1; pintarChoferes(); }, 150);
     });
-    chips('.fl-fchip[data-chest]', 'data-chest', function (v) { S.chEstado = v; S.chPag = 1; pintarChoferes(); });
+    chips('.fl-fchip[data-chest]', 'data-chest', function (v) {
+      var ver = v === 'archivados';
+      S.chEstado = ver ? 'todos' : v; S.chPag = 1;
+      if (ver !== S.verArchCh) { S.verArchCh = ver; cargarChof(); } else pintarChoferes();
+    });
     $('flChPorPagina').addEventListener('change', function (e) { S.chPor = parseInt(e.target.value, 10) || 25; S.chPag = 1; pintarChoferes(); });
     $('flChAnterior').addEventListener('click', function () { if (S.chPag > 1) { S.chPag--; pintarChoferes(); } });
     $('flChSiguiente').addEventListener('click', function () { S.chPag++; pintarChoferes(); });
@@ -1060,6 +1212,30 @@
     });
     fc.addEventListener('submit', function (e) { e.preventDefault(); guardarCh(); });
     $('flChGuardar').addEventListener('click', guardarCh);
+    $('flChUsuario').addEventListener('change', sugerirDesdePerfil);
+    $('flChGestion').addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-gcc]');
+      var c = S.editCh;
+      if (!b || !c) return;
+      var a = b.getAttribute('data-gcc');
+      if (a === 'inhabilitar') inhabilitarCh(c);
+      else if (a === 'habilitar') habilitarCh(c);
+      else if (a === 'archivar') archivarCh(c);
+      else if (a === 'desarchivar') desarchivarCh(c);
+      else if (a === 'eliminar') eliminarCh(c);
+    });
+    $('flChArchivoActual').addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-gcc="quitar-lic"]');
+      if (b) quitarLicencia(b.getAttribute('data-aid'));
+    });
+    $('flChArchivo').addEventListener('change', function (ev) {
+      var f = ev.target.files && ev.target.files[0], msg = $('flChArchivoMsg');
+      if (!f) { msg.textContent = ''; return; }
+      var ok = f.type === 'application/pdf' || /\.pdf$/i.test(f.name) || /^image\/(jpeg|png|webp)$/.test(f.type);
+      if (!ok) { ev.target.value = ''; msg.textContent = 'Sube un PDF (o la foto del carnet en JPG, PNG o WebP).'; return; }
+      if (f.size > 15 * 1024 * 1024) { ev.target.value = ''; msg.textContent = 'El archivo pesa demasiado (máximo 15 MB).'; return; }
+      msg.textContent = 'Se guardará al presionar «Guardar chofer»: ' + f.name;
+    });
 
     var h = (location.hash || '').replace('#', '');
     Promise.all([cargarVeh(), cargarChof(), cargarSol()]).then(function () { irTab(h || 'solicitudes'); });
