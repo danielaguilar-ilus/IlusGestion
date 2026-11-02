@@ -264,7 +264,7 @@
 
 {# ═══ Modal: agregar / editar vehículo (más de 5 campos → Bootstrap modal, REGLA #8) ═══ #}
 <div class="modal fade" id="flModalVeh" tabindex="-1" aria-labelledby="flModalVehTitulo" aria-hidden="true" data-bs-backdrop="static">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content fl-modal">
       <div class="modal-header">
         <h5 class="modal-title" id="flModalVehTitulo">Agregar vehículo</h5>
@@ -357,6 +357,7 @@
                   <label for="flCombustible">Combustible</label>
                   <input type="text" id="flCombustible" name="combustible" maxlength="30" list="flCombustiblesList">
                   <datalist id="flCombustiblesList"></datalist>
+                  <div class="fl-sugeridas" id="flCombRapidos" role="group" aria-label="Combustible"></div>
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
                 <div class="fl-campo" data-campo="estanque_l">
@@ -389,7 +390,7 @@
             <div class="fl-paso-n" aria-hidden="true">4</div>
             <div class="fl-paso-cont">
               <h6>Documentos y observaciones</h6>
-              <p class="fl-ayuda">Con estas fechas el sistema te avisará antes de que venzan. El PDF de cada documento se sube desde la ficha del vehículo.</p>
+              <p class="fl-ayuda">Con estas fechas el sistema te avisará antes de que venzan. El PDF de cada documento se ve y se sube aquí mismo; los anteriores quedan en el repositorio de la ficha.</p>
               <div class="fl-grid">
                 <div class="fl-campo" data-campo="revision_tecnica_vence">
                   <label for="flDocRevision">Revisión técnica vence</label>
@@ -401,6 +402,7 @@
                   <input type="text" id="flDetRevision" name="revision_tecnica_detalle" maxlength="160" placeholder="N° de certificado o planta">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
+                <div class="fl-campo--ancho fl-docpdf" data-docpdf="revision_tecnica"></div>
                 <div class="fl-campo" data-campo="permiso_circulacion_vence">
                   <label for="flDocPermiso">Permiso de circulación vence</label>
                   <input type="date" id="flDocPermiso" name="permiso_circulacion_vence">
@@ -411,6 +413,7 @@
                   <input type="text" id="flDetPermiso" name="permiso_circulacion_detalle" maxlength="160" placeholder="N° de certificado o planta">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
+                <div class="fl-campo--ancho fl-docpdf" data-docpdf="permiso_circulacion"></div>
                 <div class="fl-campo" data-campo="soap_vence">
                   <label for="flDocSoap">SOAP vence</label>
                   <input type="date" id="flDocSoap" name="soap_vence">
@@ -421,6 +424,7 @@
                   <input type="text" id="flDetSoap" name="soap_detalle" maxlength="160" placeholder="Póliza o aseguradora">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
+                <div class="fl-campo--ancho fl-docpdf" data-docpdf="soap"></div>
                 <div class="fl-campo" data-campo="seguro_vence">
                   <label for="flDocSeguro">Seguro vence</label>
                   <input type="date" id="flDocSeguro" name="seguro_vence">
@@ -431,6 +435,7 @@
                   <input type="text" id="flDetSeguro" name="seguro_detalle" maxlength="160" placeholder="Póliza o aseguradora">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
+                <div class="fl-campo--ancho fl-docpdf" data-docpdf="seguro"></div>
                 <div class="fl-campo fl-campo--ancho" data-campo="notas">
                   <label for="flNotas">Observaciones</label>
                   <textarea id="flNotas" name="notas" rows="2" maxlength="1000" placeholder="Cualquier dato útil sobre este vehículo"></textarea>
@@ -453,7 +458,7 @@
 
 {# ═══ Modal: historial de un vehículo ═══ #}
 <div class="modal fade" id="flModalHist" tabindex="-1" aria-labelledby="flModalHistTitulo" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-scrollable">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content fl-modal">
       <div class="modal-header">
         <h5 class="modal-title" id="flModalHistTitulo">Historial</h5>
@@ -610,7 +615,7 @@
 
 {# ═══ Modal: detalle de una solicitud (con su bitácora y las acciones de la gestión) ═══ #}
 <div class="modal fade" id="flModalSolDet" tabindex="-1" aria-labelledby="flModalSolDetTitulo" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content fl-modal">
       <div class="modal-header">
         <h5 class="modal-title" id="flModalSolDetTitulo">Solicitud</h5>
@@ -624,7 +629,7 @@
 
 {# ═══ Modal: un día del calendario (quién tiene cada vehículo y de qué hora a qué hora) ═══ #}
 <div class="modal fade" id="flModalDia" tabindex="-1" aria-labelledby="flModalDiaTitulo" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content fl-modal">
       <div class="modal-header">
         <h5 class="modal-title" id="flModalDiaTitulo">Día</h5>
@@ -641,7 +646,7 @@
 
 {# ═══ Modal: agregar / editar chofer ═══ #}
 <div class="modal fade" id="flModalChofer" tabindex="-1" aria-labelledby="flModalChoferTitulo" aria-hidden="true" data-bs-backdrop="static">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content fl-modal">
       <div class="modal-header">
         <h5 class="modal-title" id="flModalChoferTitulo">Agregar chofer</h5>
@@ -654,7 +659,11 @@
             <div class="fl-paso-n" aria-hidden="true">1</div>
             <div class="fl-paso-cont">
               <h6>¿Quién es? <span class="fl-req">*</span></h6>
-              <p class="fl-ayuda">Cada chofer es un usuario de ILUS. Al elegirlo te sugerimos el RUT y la dirección que ya tiene en su perfil; puedes corregirlos.</p>
+              <div class="fl-chtipo" id="flChTipo" role="radiogroup" aria-label="Tipo de chofer">
+                <button type="button" class="fl-chtipo-b on" data-chtipo="usuario" role="radio" aria-checked="true"><i class="bi bi-person-badge"></i><span><b>Usuario de ILUS</b><span>Tiene cuenta en el sistema</span></span></button>
+                <button type="button" class="fl-chtipo-b" data-chtipo="externo" role="radio" aria-checked="false"><i class="bi bi-person-walking"></i><span><b>Chofer externo</b><span>No tiene usuario: se registra aquí</span></span></button>
+              </div>
+              <p class="fl-ayuda" id="flChAyudaTipo">Al elegir al usuario te sugerimos el RUT y la dirección que ya tiene en su perfil; puedes corregirlos.</p>
               <div class="fl-campo" data-campo="usuario_id">
                 <select id="flChUsuario" name="usuario_id" class="fl-select fl-select--lleno" aria-label="Usuario de ILUS"></select>
                 <div class="fl-msg" aria-live="polite"></div>
@@ -664,6 +673,11 @@
                 <div class="fl-campo fl-campo--ancho" data-campo="nombre_completo">
                   <label for="flChNombre">Nombre completo (como figura en la licencia) <span class="fl-req">*</span></label>
                   <input type="text" id="flChNombre" name="nombre_completo" maxlength="190" autocomplete="off">
+                  <div class="fl-msg" aria-live="polite"></div>
+                </div>
+                <div class="fl-campo" data-campo="telefono" id="flChTelCampo" hidden>
+                  <label for="flChTelefono">Teléfono <span class="fl-req">*</span></label>
+                  <input type="tel" id="flChTelefono" name="telefono" maxlength="20" inputmode="tel" placeholder="+56 9 1234 5678" autocomplete="off">
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
                 <div class="fl-campo" data-campo="rut">

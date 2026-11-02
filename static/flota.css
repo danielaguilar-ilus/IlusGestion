@@ -578,9 +578,12 @@
 .fla-horas{position:relative;border-right:1px solid #f3f4f6}
 .fla-horas span{position:absolute;right:6px;transform:translateY(-50%);font-size:.62rem;font-weight:700;color:#9ca3af;font-variant-numeric:tabular-nums}
 .fla-horas span:first-child{transform:none}
+/* Bloques de media hora, como la agenda de Retiros (Daniel, 02-nov-2026): línea llena cada hora y punteada cada 30 min. */
 .fla-col{position:relative;display:grid;grid-template-columns:repeat(var(--fla-pistas),minmax(0,1fr));gap:2px;padding:0 2px;border-left:1px solid #f3f4f6;
-  background-image:linear-gradient(#f3f4f6 1px,transparent 1px);background-size:100% 40px}
-.fla-col.nolab{background-color:#fafafa;background-image:linear-gradient(#efefef 1px,transparent 1px),repeating-linear-gradient(135deg,transparent 0 8px,rgba(0,0,0,.025) 8px 16px);background-size:100% 40px,auto}
+  background-image:linear-gradient(#e5e7eb 1px,transparent 1px),linear-gradient(transparent 20px,#f3f4f6 20px,#f3f4f6 21px,transparent 21px);background-size:100% 40px,100% 40px;background-position:0 0,0 0;background-repeat:repeat,repeat}
+.fla-col.nolab{background-color:#fafafa}
+.fla-pista::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:6px}
+.fla-fantasma{height:20px}
 .fla-col.hoy{background-color:#fffafa}
 .fla-pista{position:relative;cursor:copy;border-radius:6px;transition:background .15s}
 .fla-pista:hover{background:rgba(22,163,74,.06)}
@@ -758,3 +761,37 @@
   .fla-dot,.fl-pk-s.ancla,.fl-pk-spin{animation:none}
   .fla-b,.fl-pk-dia,.fl-ccard,.fl-acard{transition:none}
 }
+
+/* Foto del vehículo en la tarjeta de «¿Qué vehículo?» */
+.fl-vcard-foto{width:96px;height:70px;object-fit:cover;border-radius:10px;background:#f3f4f6;flex:0 0 auto;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.fl-vcard-foto--sin{display:grid;place-items:center;color:#9ca3af;font-size:1.4rem}
+.fl-vcard.on .fl-vcard-foto{box-shadow:0 0 0 2px #dc2626}
+/* PDF de cada documento dentro del formulario y repositorio */
+.fl-docpdf{grid-column:1/-1;margin:-4px 0 6px}
+.fl-docpdf:empty{display:none}
+.fl-docpdf-c{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fafafa;border:1px dashed #d1d5db;border-radius:12px;padding:8px 12px;font-size:.84rem}
+.fl-docpdf-c .fl-sub{margin:0}
+.fl-docpdf-c .fl-mini-acc{margin-left:auto}
+.fl-repo{margin:0 0 14px}
+.fl-sug.on{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+/* Tipo de chofer: usuario de ILUS o externo */
+.fl-chtipo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0 0 8px}
+.fl-chtipo-b{display:flex;align-items:center;gap:10px;text-align:left;border:1.5px solid #e5e7eb;border-radius:14px;padding:10px 12px;background:#fff;min-height:58px;cursor:pointer}
+.fl-chtipo-b i{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:#f3f4f6;font-size:1.1rem;flex:0 0 auto}
+.fl-chtipo-b > span{display:flex;flex-direction:column;font-size:.86rem}
+.fl-chtipo-b > span span{font-size:.74rem;color:#6b7280}
+.fl-chtipo-b.on{border-color:#dc2626;box-shadow:0 0 0 3px #fee2e2;background:#fffafa}
+.fl-chtipo-b.on i{background:#dc2626;color:#fff}
+@media (max-width: 480px){.fl-chtipo{grid-template-columns:1fr}.fl-vcard-foto{width:76px;height:56px}}
+
+/* Modales grandes y con poco desplazamiento (Daniel, 02-nov-2026: «me gustan los modales grandes, no tan delgados, y que no se le dé
+   mucho scroll»): en pantallas anchas los formularios de vehículo y chofer reparten sus campos en 3 columnas; en Documentos cada fila
+   queda «vence · detalle · PDF». */
+@media (min-width: 1200px){
+  #flModalVeh .fl-grid,#flModalChofer .fl-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  #flModalVeh .fl-docpdf{grid-column:auto;margin:22px 0 0;align-self:start}
+  #flModalVeh .fl-docpdf-c{padding:6px 10px;min-height:44px}
+  #flModalVeh .fl-docpdf-c .fl-sub{flex:1 1 100%}
+  .fl-modal .modal-body{padding:18px 22px}
+}
+.fl-externo{display:inline-flex;align-items:center;gap:5px;margin-top:3px;font-size:.72rem;font-weight:800;color:#92400e;background:#fff8e1;border-radius:50px;padding:2px 9px}

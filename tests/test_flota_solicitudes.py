@@ -271,6 +271,8 @@ class Falsa(BaseFalsa):
 
     # ── filas unidas
     def _chof_row(self, c):
+        if c["usuario_id"] is None:          # chofer externo: COALESCE con su propia fila, «activo» = 1
+            return dict(c, u_nombre=c.get("nombre_completo"), u_username=None, u_phone=c.get("telefono"), u_cargo=None, u_activo=1)
         u = self.usr.get(c["usuario_id"], {})
         return dict(c, u_nombre=u.get("nombre"), u_username=u.get("username"), u_phone=u.get("phone"), u_cargo=u.get("cargo"), u_activo=u.get("active"))
 
@@ -279,7 +281,7 @@ class Falsa(BaseFalsa):
         c = self.cho.get(s["chofer_id"])
         u = self.usr.get(c["usuario_id"], {}) if c else {}
         return dict(s, v_patente=v["patente"], v_tipo=v["tipo"], v_marca=v["marca"], v_modelo=v["modelo"],
-                    chofer_nombre=u.get("nombre"), chofer_phone=u.get("phone"))
+                    chofer_nombre=u.get("nombre") or (c or {}).get("nombre_completo"), chofer_phone=u.get("phone") or (c or {}).get("telefono"))
 
     def _ocupa_row(self, s):
         return {k: s[k] for k in ("id", "numero", "estado", "inicio", "fin", "area", "solicitante_nombre", "sello_at", "vehiculo_id", "chofer_id")} | \
@@ -291,12 +293,20 @@ class Falsa(BaseFalsa):
             return [dict(self.veh[p[0]])] if p[0] in self.veh else []
         if s.startswith("SELECT * FROM flota_solicitudes WHERE id=%s FOR UPDATE"):
             return [dict(self.sol[p[0]])] if p[0] in self.sol else []
-        if s.startswith("SELECT c.*, u.nombre AS u_nombre"):
+        if s.startswith("SELECT IS_NULLABLE FROM information_schema.COLUMNS"):
+            return [{"IS_NULLABLE": "YES"}]
+        if s.startswith("SELECT id, nombre_completo FROM flota_choferes WHERE rut=%s"):
+            return [{"id": c["id"], "nombre_completo": c.get("nombre_completo")} for c in self.cho.values() if c.get("rut") == p[0]][:1]
+        if s.startswith("SELECT id, tipo, nombre_original, content_type, bytes, subido_por, subido_at, activo, quitado_por, quitado_at FROM flota_archivos"):
+            return [dict(a) for a in sorted(self.arch.values(), key=lambda a: -a["id"]) if a["entidad"] == "vehiculo" and a["entidad_id"] == p[0]]
+        if s.startswith("SELECT c.*, COALESCE(u.nombre, c.nombre_completo) AS u_nombre"):
+            if s.endswith("WHERE c.usuario_id IS NULL AND c.rut=%s ORDER BY c.id DESC LIMIT 1"):
+                return [self._chof_row(c) for c in sorted(self.cho.values(), key=lambda c: -c["id"]) if c["usuario_id"] is None and c.get("rut") == p[0]][:1]
             if s.endswith("WHERE c.id=%s"):
                 return [self._chof_row(self.cho[p[0]])] if p[0] in self.cho else []
             if s.endswith("WHERE c.usuario_id=%s"):
                 return [self._chof_row(c) for c in self.cho.values() if c["usuario_id"] == p[0]]
-            if s.endswith("WHERE c.archivado=%s ORDER BY c.habilitado DESC, u.nombre LIMIT 500"):
+            if s.endswith("WHERE c.archivado=%s ORDER BY c.habilitado DESC, COALESCE(u.nombre, c.nombre_completo) LIMIT 500"):
                 return sorted((self._chof_row(c) for c in self.cho.values() if int(c.get("archivado") or 0) == p[0]),
                               key=lambda c: (-c["habilitado"], c["u_nombre"] or ""))
         if s == "SELECT COUNT(*) AS n FROM flota_choferes WHERE archivado=1":
@@ -305,7 +315,8 @@ class Falsa(BaseFalsa):
             u = self.usr.get(p[0])
             return [{"id": u["id"], "nombre": u["nombre"], "active": u["active"]}] if u else []
         if s.startswith("SELECT id, nombre, username, phone, cargo, rut, direccion, direccion_lat, direccion_lng, direccion_place_id FROM `app_users` WHERE active=1 AND id NOT IN"):
-            ya = {c["usuario_id"] for c in self.cho.values()}
+            assert "WHERE usuario_id IS NOT NULL" in s          # sin esto, un NULL en el NOT IN vacía la lista
+            ya = {c["usuario_id"] for c in self.cho.values() if c["usuario_id"] is not None}
             return sorted((dict(u) for u in self.usr.values() if u["active"] and u["id"] not in ya), key=lambda u: u["nombre"])
         if s.startswith("SELECT s.*, v.patente AS v_patente"):
             filas = list(self.sol.values())
@@ -355,6 +366,19 @@ class Falsa(BaseFalsa):
     # ── escrituras (comunes a la conexión de la transacción y a mysql_execute)
     def escribir(self, s, p):
         """(rowcount, lastrowid) o None si no es de la fase 1b."""
+        if s.startswith("INSERT INTO flota_choferes (usuario_id, telefono,"):
+            c = {"id": self.sig_c, "usuario_id": None, "telefono": p[0], "rut": p[1], "nombre_completo": p[2], "direccion": p[3],
+                 "direccion_lat": p[4], "direccion_lng": p[5], "direccion_place_id": p[6], "licencia_clases": p[7],
+                 "licencia_vence": p[8], "notas": p[9], "habilitado": 1, "archivado": 0, "archivado_motivo": None, "archivado_por": None,
+                 "archivado_at": None, "inhabilitado_motivo": None, "inhabilitado_por": None, "inhabilitado_at": None,
+                 "created_by": p[10], "updated_by": p[11],
+                 "created_at": dt.datetime(2026, 11, 2, 15), "updated_at": dt.datetime(2026, 11, 2, 15)}
+            self.cho[c["id"]] = c
+            self.sig_c += 1
+            return 1, c["id"]
+        if s.startswith("UPDATE flota_choferes SET telefono=%s"):
+            self.cho[p[2]].update(telefono=p[0], updated_by=p[1])
+            return 1, None
         if s.startswith("INSERT INTO flota_choferes"):
             if any(c["usuario_id"] == p[0] for c in self.cho.values()):
                 e = Exception("(1062, \"Duplicate entry '1' for key 'uq_flota_chofer_usuario'\")")

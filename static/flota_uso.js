@@ -949,6 +949,7 @@
       var dis = !v.habilitado;
       return '<label class="fl-vcard' + (dis ? ' off' : '') + '"><input type="radio" name="vehiculo_id" value="' + v.id + '"' +
         (String(selId) === String(v.id) ? ' checked' : '') + (dis ? ' disabled' : '') + '>' +
+        vehFoto(v, 'fl-vcard-foto') +            // la foto del vehículo al elegirlo (Daniel, 02-nov-2026)
         '<span class="fl-vcard-c"><span class="fl-pat">' + esc(v.patente_fmt) + '</span><b class="fl-vcard-t">' + esc(v.titulo || v.tipo) + '</b>' +
         '<span class="fl-vcard-s">Licencia: ' + esc(v.licencia_texto) + (dis ? ' · Inhabilitado' : '') + '</span>' +
         '<span class="fl-vcard-disp" data-veh="' + v.id + '"></span></span></label>';
@@ -1322,6 +1323,7 @@
     if (PERM.gestionar) acc += '<button type="button" class="fl-btn" data-acc="historial"><i class="bi bi-clock-history"></i>Historial</button>';
     return '<tr class="' + (c.habilitado && !c.archivado ? '' : 'inhab') + '" data-id="' + c.id + '">' +
       '<td class="fl-td-veh"><span class="fl-nombre">' + esc(nombre) + '</span>' +
+      (c.externo ? '<span class="fl-externo"><i class="bi bi-person-walking"></i>Chofer externo · sin usuario de ILUS</span>' : '') +
       (PERM.documentos && c.nombre_completo && c.nombre_completo !== c.nombre ? '<span class="fl-sub">Usuario ILUS: ' + esc(c.nombre) + '</span>' : '') +
       (c.cargo ? '<span class="fl-sub">' + esc(c.cargo) + '</span>' : '') + (c.telefono ? '<span class="fl-sub">' + esc(c.telefono) + '</span>' : '') + personales +
       (c.usuario_activo ? '' : '<span class="fl-sub fl-sub--bad">Su usuario de ILUS está desactivado</span>') + '</td>' +
@@ -1348,7 +1350,7 @@
   function campoCh(c) { return document.querySelector('#flFormCh .fl-campo[data-campo="' + c + '"]'); }
   function vCh(c) { var el = $('flFormCh').elements[c]; return el && el.value != null ? String(el.value) : ''; }
   function clasesCh() { return Array.prototype.slice.call(document.querySelectorAll('#flChClases input:checked')).map(function (i) { return i.value; }); }
-  var NOMBRES_CH = { usuario_id: 'el usuario', nombre_completo: 'el nombre completo', rut: 'el RUT', direccion: 'la dirección validada con Google',
+  var NOMBRES_CH = { usuario_id: 'el usuario', telefono: 'el teléfono', nombre_completo: 'el nombre completo', rut: 'el RUT', direccion: 'la dirección validada con Google',
     licencia_clases: 'la clase de licencia', licencia_vence: 'el vencimiento de la licencia' };
   function rutValido(t) {
     var r = String(t || '').replace(/[^0-9kK]/g, '').toUpperCase();
@@ -1388,7 +1390,11 @@
   }
   function reglasCh() {
     var r = {};
-    r.usuario_id = S.editCh ? res('ok', '') : (vCh('usuario_id') ? res('ok', '') : res('bad', 'Elige a qué usuario de ILUS corresponde este chofer.'));
+    var ext = esExternoCh();
+    r.usuario_id = S.editCh || ext ? res('ok', '') : (vCh('usuario_id') ? res('ok', '') : res('bad', 'Elige a qué usuario de ILUS corresponde este chofer.'));
+    var tel = vCh('telefono').replace(/\D/g, '');
+    r.telefono = !ext ? res('ok', '') : (!tel ? res('bad', 'Indica un teléfono para coordinar la entrega de la llave.')
+      : (tel.length < 8 || tel.length > 15 ? res('bad', 'El teléfono debe tener entre 8 y 15 dígitos (por ejemplo +56 9 1234 5678).') : res('ok', '')));
     r.nombre_completo = vCh('nombre_completo').trim().length >= 5 ? res('ok', '') : res('bad', 'Escribe el nombre completo, como figura en la licencia.');
     var rut = vCh('rut').trim();
     r.rut = !rut ? res('bad', 'Indica el RUT del chofer (por ejemplo 12.345.678-5).') : (rutValido(rut) ? res('ok', 'RUT válido: ' + formatoRut(rut) + '.') : res('bad', 'El RUT no es válido (revisa el dígito verificador).'));
@@ -1428,7 +1434,7 @@
       el.classList.remove('ok', 'bad', 'warn');
       el.classList.add(e.indexOf('bad') >= 0 ? 'bad' : (e.indexOf('warn') >= 0 ? 'warn' : 'ok'));
     }
-    paso(1, ['usuario_id', 'nombre_completo', 'rut', 'direccion']); paso(2, ['licencia_clases', 'licencia_vence']);
+    paso(1, ['usuario_id', 'telefono', 'nombre_completo', 'rut', 'direccion']); paso(2, ['licencia_clases', 'licencia_vence']);
     var p3 = document.querySelector('#flFormCh .fl-paso[data-paso="3"]');
     if (p3) { p3.classList.remove('bad', 'warn'); p3.classList.add('ok'); }
     var faltan = Object.keys(r).filter(function (c) { return r[c].estado === 'bad'; });
@@ -1474,16 +1480,35 @@
     }
     $('flChGestion').innerHTML = b.join('');
   }
+  /* Usuario de ILUS o chofer EXTERNO (Daniel, 02-nov-2026: «un chofer que no esté dentro del sistema y que se lleve el camión»). */
+  var tipoCh = 'usuario';
+  function esExternoCh() { return S.editCh ? !!S.editCh.externo : tipoCh === 'externo'; }
+  function aplicarTipoCh() {
+    var ext = esExternoCh();
+    Array.prototype.forEach.call(document.querySelectorAll('#flChTipo [data-chtipo]'), function (b) {
+      var on = b.getAttribute('data-chtipo') === (ext ? 'externo' : 'usuario');
+      b.classList.toggle('on', on); b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    $('flChTipo').hidden = !!S.editCh;
+    campoCh('usuario_id').hidden = !!S.editCh || ext;
+    $('flChTelCampo').hidden = !ext;
+    $('flChAyudaTipo').textContent = S.editCh ? '' : (ext
+      ? 'Para alguien sin cuenta en ILUS: escribe sus datos como figuran en la licencia y un teléfono para coordinar la llave.'
+      : 'Al elegir al usuario te sugerimos el RUT y la dirección que ya tiene en su perfil; puedes corregirlos.');
+    evaluarChLuego();
+  }
   function abrirChofer(c) {
     S.editCh = c || null; S.chIntento = false; S.chTocados = {};
     $('flModalChoferTitulo').textContent = c ? 'Editar chofer ' + c.nombre : 'Agregar chofer';
     $('flChGuardar').innerHTML = '<i class="bi bi-check2-circle me-1"></i>' + (c ? 'Guardar cambios' : 'Guardar chofer');
     var f = $('flFormCh');
     f.reset();
-    var campoUsuario = campoCh('usuario_id');
-    campoUsuario.hidden = !!c;
+    tipoCh = 'usuario';
     $('flChFijo').hidden = !c;
-    $('flChFijo').innerHTML = c ? '<b>' + esc(c.nombre) + '</b>' + (c.cargo ? '<span class="fl-sub">' + esc(c.cargo) + '</span>' : '') + (c.telefono ? '<span class="fl-sub">' + esc(c.telefono) + '</span>' : '') : '';
+    $('flChFijo').innerHTML = c ? '<b>' + esc(c.nombre) + '</b>' + (c.externo ? '<span class="fl-sub">Chofer externo (sin usuario de ILUS)</span>' : '') +
+      (c.cargo ? '<span class="fl-sub">' + esc(c.cargo) + '</span>' : '') + (c.telefono && !c.externo ? '<span class="fl-sub">' + esc(c.telefono) + '</span>' : '') : '';
+    f.elements.telefono.value = c && c.externo ? (c.telefono || '') : '';
+    aplicarTipoCh();
     $('flChUsuario').innerHTML = '<option value="">Cargando usuarios…</option>';
     pintarClasesCh(c ? c.licencia_clases : [S.config.clase_sugerida || 'B']);
     f.elements.nombre_completo.value = c ? (c.nombre_completo || c.nombre || '') : '';
@@ -1553,7 +1578,9 @@
       var body = { rut: vCh('rut'), nombre_completo: vCh('nombre_completo'), direccion: vCh('direccion'),
         direccion_lat: vCh('direccion_lat'), direccion_lng: vCh('direccion_lng'), direccion_place_id: vCh('direccion_place_id'),
         licencia_clases: clasesCh(), licencia_vence: vCh('licencia_vence'), notas: vCh('notas') };
-      if (!editando) body.usuario_id = vCh('usuario_id');
+      if (esExternoCh()) body.telefono = vCh('telefono');
+      if (!editando && esExternoCh()) body.externo = true;
+      else if (!editando) body.usuario_id = vCh('usuario_id');
       S.guardandoCh = true;
       $('flChGuardar').disabled = true;
       api(editando ? API + '/choferes/' + editando.id : API + '/choferes', { method: editando ? 'PUT' : 'POST', body: body }).then(function (r) {
@@ -1874,6 +1901,13 @@
     fc.addEventListener('submit', function (e) { e.preventDefault(); guardarCh(); });
     $('flChGuardar').addEventListener('click', guardarCh);
     $('flChUsuario').addEventListener('change', sugerirDesdePerfil);
+    $('flChTipo').addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-chtipo]');
+      if (!b || S.editCh) return;
+      tipoCh = b.getAttribute('data-chtipo');
+      aplicarTipoCh();
+      if (tipoCh === 'externo') $('flChNombre').focus();
+    });
     $('flChGestion').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-gcc]');
       var c = S.editCh;

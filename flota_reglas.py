@@ -31,7 +31,7 @@ ORDEN_CLASES = tuple(LICENCIA_CLASES)
 
 # Sugerencias para el front: la persona puede escribir cualquier otro valor.
 TIPOS_SUGERIDOS = ("Furgón", "Camión", "Camioneta", "Auto")
-COMBUSTIBLES_SUGERIDOS = ("Diésel", "Bencina", "Eléctrico", "Híbrido", "Gas")
+COMBUSTIBLES_SUGERIDOS = ("Bencina", "Diésel", "Híbrido", "Eléctrico", "Gas")   # botones del formulario (Daniel, 02-nov-2026)
 
 # Documentos con vencimiento de cada vehículo: (clave, nombre). La columna de la base es «<clave>_vence».
 DOCUMENTOS = (
@@ -590,11 +590,29 @@ CHOFER_ETIQUETAS = {"rut": "RUT", "nombre_completo": "Nombre completo", "direcci
                     "licencia_clases": "Clases de licencia", "licencia_vence": "Licencia vence", "notas": "Observaciones"}
 
 
-def validar_chofer(payload, con_usuario=True, direccion_actual=None):
-    """Normaliza el alta o la edición de un chofer. Devuelve (datos, errores). Cada chofer es un usuario de ILUS (Daniel: «cada chofer
-    tiene su usuario»): el nombre y el teléfono salen de su perfil, acá solo se guarda lo propio de conducir."""
+def validar_telefono(t):
+    """Teléfono de un chofer externo: se guardan + y dígitos; entre 8 y 15 dígitos. Devuelve (telefono, error)."""
+    txt = str(t or "").strip()
+    digitos = re.sub(r"\D", "", txt)
+    if not digitos:
+        return None, "Indica un teléfono para coordinar la entrega de la llave."
+    if not 8 <= len(digitos) <= 15:
+        return None, "El teléfono debe tener entre 8 y 15 dígitos (por ejemplo +56 9 1234 5678)."
+    return ("+" if txt.startswith("+") else "") + digitos, None
+
+
+def validar_chofer(payload, con_usuario=True, direccion_actual=None, externo=False):
+    """Normaliza el alta o la edición de un chofer. Devuelve (datos, errores). Un chofer es un usuario de ILUS (su nombre y teléfono salen
+    del perfil) o, desde el 02-nov-2026, un chofer EXTERNO sin usuario (Daniel: «un chofer que no esté dentro del sistema y que se lleve
+    el camión»): entonces su nombre es el nombre completo y el teléfono se guarda acá (obligatorio)."""
     p = payload or {}
     errores, datos = {}, {}
+    if externo:
+        con_usuario = False
+        tel, err_tel = validar_telefono(p.get("telefono"))
+        if err_tel:
+            errores["telefono"] = err_tel
+        datos["telefono"] = tel
     if con_usuario:
         uid = _id(p.get("usuario_id"))
         if uid is None:
