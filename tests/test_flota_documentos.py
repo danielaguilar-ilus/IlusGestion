@@ -661,3 +661,81 @@ class TestPantallaFase1c(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestChoferExternoYRepositorio(unittest.TestCase):
+    """02-nov-2026 (Daniel): «un chofer que no esté dentro del sistema y que se lleve el camión» y «necesito un repositorio con los
+    documentos». El externo no tiene usuario de ILUS: su nombre y teléfono son propios; reserva con las mismas reglas de licencia."""
+
+    def setUp(self):
+        self.bucket = BucketFalso()
+        self.base = TS.Falsa()
+        self.app = TS._app(self.base, self.bucket)
+        self.c = self.app.test_client()
+
+    def _externo(self, **extra):
+        d = dict(TS._datos_chofer(9), externo=True, nombre_completo="Pedro Ignacio Lagos Fuentes", rut="11.111.111-1",
+                 telefono="+56 9 8765 4321")
+        d.pop("usuario_id", None)
+        d.update(extra)
+        return self.c.post("/flota/api/choferes", json=d, headers=SUPER)
+
+    def test_alta_de_un_chofer_externo(self):
+        r = self._externo()
+        self.assertEqual(r.status_code, 200, r.get_json())
+        ch = r.get_json()["chofer"]
+        self.assertTrue(ch["externo"])
+        self.assertIsNone(ch["usuario_id"])
+        self.assertEqual(ch["nombre"], "Pedro Ignacio Lagos Fuentes")
+        self.assertEqual(ch["telefono"], "+56987654321")
+        self.assertTrue(ch["usuario_activo"])
+        self.assertTrue(ch["disponible"])
+
+    def test_externo_exige_telefono_y_no_repite_rut(self):
+        r = self._externo(telefono="")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("telefono", r.get_json()["errores"])
+        self.assertEqual(self._externo().status_code, 200)
+        r = self._externo(nombre_completo="Otra Persona Distinta")
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("rut", r.get_json()["errores"])
+
+    def test_un_externo_puede_retirar_la_llave(self):
+        cid = self._externo().get_json()["chofer"]["id"]
+        vid = self.c.post("/flota/api/vehiculos", json={"patente": "PHVD21-7", "tipo": "Camión", "licencia_clases": ["B"]},
+                          headers=SUPER).get_json()["vehiculo"]["id"]
+        dia = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+        r = self.c.post("/flota/api/solicitudes", json={"vehiculo_id": vid, "chofer_id": cid, "area": "Logística", "motivo": "Reparto zona sur",
+                        "fecha": dia, "hora_desde": "09:00", "hora_hasta": "12:00"}, headers=SUPER)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(r.get_json()["solicitud"]["chofer"]["nombre"], "Pedro Ignacio Lagos Fuentes")
+
+    def test_editar_el_telefono_de_un_externo(self):
+        ch = self._externo().get_json()["chofer"]
+        d = dict(TS._datos_chofer(9), nombre_completo=ch["nombre_completo"], rut="11.111.111-1", telefono="+56 2 2345 6789")
+        d.pop("usuario_id", None)
+        r = self.c.put(f"/flota/api/choferes/{ch['id']}", json=d, headers=SUPER)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(r.get_json()["chofer"]["telefono"], "+56223456789")
+
+    def test_un_usuario_que_ya_es_chofer_no_vacia_la_lista_por_un_externo(self):
+        self._externo()
+        r = self.c.get("/flota/api/choferes/usuarios", headers=SUPER)
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.get_json()["usuarios"])
+
+    def test_repositorio_trae_vigentes_y_anteriores_solo_con_permiso(self):
+        vid = self.c.post("/flota/api/vehiculos", json={"patente": "TVDZ88-5", "tipo": "Furgón", "licencia_clases": ["B"]},
+                          headers=SUPER).get_json()["vehiculo"]["id"]
+        for nombre in ("SOAP 2025.pdf", "SOAP 2026.pdf"):
+            import io
+            self.c.post("/flota/api/archivos", content_type="multipart/form-data", headers=SUPER, data={
+                "entidad": "vehiculo", "entidad_id": str(vid), "tipo": "soap", "archivo": (io.BytesIO(PDF), nombre, "application/pdf")})
+        r = self.c.get(f"/flota/api/vehiculos/{vid}/archivos", headers=SUPER)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        a = r.get_json()["archivos"]
+        self.assertEqual([x["nombre"] for x in a], ["SOAP 2026.pdf", "SOAP 2025.pdf"])
+        self.assertEqual([x["vigente"] for x in a], [True, False])
+        self.assertEqual(a[0]["etiqueta"], "SOAP")
+        r = self.c.get(f"/flota/api/vehiculos/{vid}/archivos", headers=SOLO_PEDIR)
+        self.assertEqual(r.status_code, 403)

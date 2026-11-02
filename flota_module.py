@@ -105,11 +105,12 @@ def register_flota_routes(app, ctx):
                   KEY idx_flota_log_veh (vehiculo_id, id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
-            # Fase 1b. Cada chofer es un usuario de ILUS (usuario_id): su nombre y teléfono salen del perfil; acá solo su licencia.
+            # Fase 1b. Un chofer es un usuario de ILUS (usuario_id: nombre y teléfono salen del perfil) o, desde el 02-nov-2026, un chofer
+            # EXTERNO sin usuario (usuario_id NULL: nombre_completo y telefono propios).
             mysql_execute("""
                 CREATE TABLE IF NOT EXISTS flota_choferes (
                   id                   INT AUTO_INCREMENT PRIMARY KEY,
-                  usuario_id           INT          NOT NULL,
+                  usuario_id           INT          NULL,
                   licencia_clases      VARCHAR(40)  NOT NULL DEFAULT 'B',
                   licencia_vence       DATE         NULL,
                   notas                TEXT         NULL,
@@ -228,6 +229,7 @@ def register_flota_routes(app, ctx):
             "ALTER TABLE flota_choferes ADD COLUMN archivado_motivo VARCHAR(300) NULL",
             "ALTER TABLE flota_choferes ADD COLUMN archivado_por VARCHAR(190) NULL",
             "ALTER TABLE flota_choferes ADD COLUMN archivado_at DATETIME NULL",
+            "ALTER TABLE flota_choferes ADD COLUMN telefono VARCHAR(30) NULL",
         )
         for sql_col in columnas_nuevas:
             try:
@@ -235,6 +237,16 @@ def register_flota_routes(app, ctx):
             except Exception as e:
                 if "Duplicate column" not in str(e) and "1060" not in str(e):
                     print(f"[ILUS][WARN] _ensure_flota_tables (columna): {type(e).__name__}: {e}", flush=True)
+        # Chofer externo (02-nov-2026): usuario_id pasa a aceptar NULL. Solo corre UNA vez: se mira antes si ya acepta NULL, así el
+        # arranque no pide un lock de la tabla en cada instancia (REGLA #18).
+        try:
+            col = mysql_fetchone(
+                "SELECT IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+                "AND TABLE_NAME='flota_choferes' AND COLUMN_NAME='usuario_id'")
+            if col and str(col.get("IS_NULLABLE") or "").upper() == "NO":
+                mysql_execute("ALTER TABLE flota_choferes MODIFY usuario_id INT NULL")
+        except Exception as e:
+            print(f"[ILUS][WARN] _ensure_flota_tables (chofer externo): {type(e).__name__}: {e}", flush=True)
 
     with app.app_context():
         _ensure_flota_tables()
@@ -739,6 +751,26 @@ def register_flota_routes(app, ctx):
         resp.headers["X-Content-Type-Options"] = "nosniff"
         return resp
 
+    @app.route("/flota/api/vehiculos/<int:vid>/archivos", methods=["GET"])
+    @_flota_docs_required
+    def flota_api_vehiculo_repositorio(vid):
+        """Repositorio de documentos del vehículo (Daniel, 02-nov-2026: «necesito un repositorio con los documentos»): TODOS los archivos que
+        se le han subido, el vigente y los reemplazados o quitados, con quién y cuándo. Nada se borra."""
+        try:
+            filas = mysql_fetchall(
+                "SELECT id, tipo, nombre_original, content_type, bytes, subido_por, subido_at, activo, quitado_por, quitado_at "
+                "FROM flota_archivos WHERE entidad='vehiculo' AND entidad_id=%s ORDER BY id DESC LIMIT 300", (vid,)) or []
+        except Exception as e:
+            print(f"[flota] repositorio: {type(e).__name__}: {e}", flush=True)
+            return _error("No se pudo leer el repositorio de documentos. Intenta de nuevo.", 500)
+        out = []
+        for f in filas:
+            a = _archivo_json(f)
+            a.update(vigente=bool(f.get("activo")), etiqueta=fr.ETIQUETAS_ARCHIVO.get(f.get("tipo"), f.get("tipo")),
+                     quitado_por=f.get("quitado_por"), quitado_fmt=_hora_chile(f.get("quitado_at")))
+            out.append(a)
+        return jsonify({"ok": True, "archivos": out})
+
     @app.route("/flota/api/archivos/<int:aid>/quitar", methods=["POST"])
     @_flota_admin_required
     def flota_api_archivo_quitar(aid):
@@ -766,11 +798,14 @@ def register_flota_routes(app, ctx):
         _AUTH = "app_users"
 
     _SQL_CHOF = (
-        "SELECT c.*, u.nombre AS u_nombre, u.username AS u_username, u.phone AS u_phone, u.cargo AS u_cargo, u.active AS u_activo "
+        # El chofer externo no tiene usuario: su nombre, su teléfono y «activo» salen de su propia fila.
+        "SELECT c.*, COALESCE(u.nombre, c.nombre_completo) AS u_nombre, u.username AS u_username, "
+        "COALESCE(u.phone, c.telefono) AS u_phone, u.cargo AS u_cargo, "
+        "CASE WHEN c.usuario_id IS NULL THEN 1 ELSE u.active END AS u_activo "
         "FROM flota_choferes c LEFT JOIN `" + _AUTH + "` u ON u.id = c.usuario_id")
     _SQL_SOL = (
         "SELECT s.*, v.patente AS v_patente, v.tipo AS v_tipo, v.marca AS v_marca, v.modelo AS v_modelo, "
-        "u.nombre AS chofer_nombre, u.phone AS chofer_phone "
+        "COALESCE(u.nombre, c.nombre_completo) AS chofer_nombre, COALESCE(u.phone, c.telefono) AS chofer_phone "
         "FROM flota_solicitudes s JOIN flota_vehiculos v ON v.id = s.vehiculo_id "
         "LEFT JOIN flota_choferes c ON c.id = s.chofer_id LEFT JOIN `" + _AUTH + "` u ON u.id = c.usuario_id")
     _SQL_OCUPA = (
@@ -809,7 +844,7 @@ def register_flota_routes(app, ctx):
         activo = bool(r.get("u_activo")) if r.get("u_activo") is not None else False
         lic = (archivos or {}).get("licencia")
         out = {
-            "id": r["id"], "usuario_id": r.get("usuario_id"),
+            "id": r["id"], "usuario_id": r.get("usuario_id"), "externo": r.get("usuario_id") is None,
             "nombre": r.get("u_nombre") or "(usuario sin nombre)", "username": r.get("u_username"),
             "telefono": r.get("u_phone"), "cargo": r.get("u_cargo"), "usuario_activo": activo,
             "licencia_clases": clases, "licencia_texto": ("Clase " + ", ".join(clases)) if clases else "Sin definir",
@@ -878,7 +913,8 @@ def register_flota_routes(app, ctx):
     def flota_api_choferes():
         archivados = 1 if (request.args.get("archivados") == "1" and _flota_admin()) else 0
         try:
-            filas = mysql_fetchall(_SQL_CHOF + " WHERE c.archivado=%s ORDER BY c.habilitado DESC, u.nombre LIMIT 500", (archivados,)) or []
+            filas = mysql_fetchall(_SQL_CHOF + " WHERE c.archivado=%s ORDER BY c.habilitado DESC, COALESCE(u.nombre, c.nombre_completo) LIMIT 500",
+                                   (archivados,)) or []
             n_arch = int((mysql_fetchone("SELECT COUNT(*) AS n FROM flota_choferes WHERE archivado=1") or {}).get("n") or 0) if _flota_admin() else 0
         except Exception as e:
             print(f"[flota] listar choferes: {type(e).__name__}: {e}", flush=True)
@@ -906,7 +942,7 @@ def register_flota_routes(app, ctx):
             filas = mysql_fetchall(
                 "SELECT id, nombre, username, phone, cargo, rut, direccion, direccion_lat, direccion_lng, direccion_place_id FROM `"
                 + _AUTH + "` WHERE active=1 AND id NOT IN "
-                "(SELECT usuario_id FROM flota_choferes) ORDER BY nombre LIMIT 1000") or []
+                "(SELECT usuario_id FROM flota_choferes WHERE usuario_id IS NOT NULL) ORDER BY nombre LIMIT 1000") or []
         except Exception as e:
             print(f"[flota] usuarios para chofer: {type(e).__name__}: {e}", flush=True)
             return _error("No se pudo leer la lista de usuarios. Intenta de nuevo en un momento.", 500)
@@ -921,7 +957,10 @@ def register_flota_routes(app, ctx):
     @app.route("/flota/api/choferes", methods=["POST"])
     @_flota_admin_required
     def flota_api_chofer_crear():
-        datos, errores = fr.validar_chofer(request.get_json(silent=True) or {})
+        payload = request.get_json(silent=True) or {}
+        if payload.get("externo") in (True, 1, "1", "true", "si"):
+            return _chofer_externo_crear(payload)
+        datos, errores = fr.validar_chofer(payload)
         if errores:
             return _error("Revisa los campos marcados.", 400, errores=errores)
         u = mysql_fetchone("SELECT id, nombre, active FROM `" + _AUTH + "` WHERE id=%s", (datos["usuario_id"],))
@@ -946,17 +985,47 @@ def register_flota_routes(app, ctx):
         _clog(fila["id"], "creado", {"usuario": u.get("nombre"), "licencia_clases": datos["licencia_clases"]})
         return _chofer_respuesta(fila["id"])
 
+    def _chofer_externo_crear(payload):
+        """Chofer EXTERNO (sin usuario de ILUS): mismo formulario y mismas reglas de licencia, con teléfono propio obligatorio. Para no
+        duplicar personas, su RUT no puede estar ya en el repositorio."""
+        datos, errores = fr.validar_chofer(payload, externo=True)
+        if errores:
+            return _error("Revisa los campos marcados.", 400, errores=errores)
+        otro = mysql_fetchone("SELECT id, nombre_completo FROM flota_choferes WHERE rut=%s LIMIT 1", (datos["rut"],))
+        if otro:
+            msg = f"Ya hay un chofer con ese RUT ({otro.get('nombre_completo') or 'en el repositorio'})."
+            return _error(msg, 409, errores={"rut": msg})
+        try:
+            mysql_execute(
+                "INSERT INTO flota_choferes (usuario_id, telefono, rut, nombre_completo, direccion, direccion_lat, direccion_lng, "
+                "direccion_place_id, licencia_clases, licencia_vence, notas, created_by, updated_by) "
+                "VALUES (NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (datos["telefono"], datos["rut"], datos["nombre_completo"], datos["direccion"], datos["direccion_lat"],
+                 datos["direccion_lng"], datos["direccion_place_id"], datos["licencia_clases"], datos["licencia_vence"],
+                 datos["notas"], current_username(), current_username()))
+        except Exception as e:
+            print(f"[flota] crear chofer externo: {type(e).__name__}: {e}", flush=True)
+            return _error("No se pudo guardar el chofer. Intenta de nuevo.", 500)
+        fila = mysql_fetchone(_SQL_CHOF + " WHERE c.usuario_id IS NULL AND c.rut=%s ORDER BY c.id DESC LIMIT 1", (datos["rut"],))
+        if not fila:
+            return _error("El chofer se guardó pero no se pudo leer de vuelta. Recarga la pantalla.", 500)
+        _clog(fila["id"], "creado", {"externo": True, "nombre": datos["nombre_completo"], "licencia_clases": datos["licencia_clases"]})
+        return _chofer_respuesta(fila["id"])
+
     @app.route("/flota/api/choferes/<int:cid>", methods=["PUT"])
     @_flota_admin_required
     def flota_api_chofer_editar(cid):
         actual = _chofer_fila(cid)
         if not actual:
             return _error("No encontré ese chofer.", 404)
+        externo = actual.get("usuario_id") is None
         datos, errores = fr.validar_chofer(request.get_json(silent=True) or {}, con_usuario=False,
-                                           direccion_actual=actual.get("direccion"))
+                                           direccion_actual=actual.get("direccion"), externo=externo)
         if errores:
             return _error("Revisa los campos marcados.", 400, errores=errores)
         cambios = fr.cambios(dict(actual), datos, campos=fr.CHOFER_COLUMNAS)
+        if externo and (actual.get("telefono") or None) != datos.get("telefono"):
+            cambios["telefono"] = {"antes": actual.get("telefono"), "despues": datos.get("telefono")}
         if datos["direccion_accion"] == "guardar" and (actual.get("direccion_place_id") or "") != (datos["direccion_place_id"] or ""):
             cambios["direccion"] = {"antes": actual.get("direccion") or None, "despues": (datos["direccion"] or "") + " (verificada con Google)"}
         if not cambios:
@@ -978,6 +1047,13 @@ def register_flota_routes(app, ctx):
         except Exception as e:
             print(f"[flota] editar chofer: {type(e).__name__}: {e}", flush=True)
             return _error("No se pudo guardar los cambios. Intenta de nuevo.", 500)
+        if externo and "telefono" in cambios:
+            try:
+                mysql_execute("UPDATE flota_choferes SET telefono=%s, updated_by=%s WHERE id=%s",
+                              (datos["telefono"], current_username(), cid))
+            except Exception as e:
+                print(f"[flota] teléfono de chofer externo: {type(e).__name__}: {e}", flush=True)
+                return _error("No se pudo guardar el teléfono. Intenta de nuevo.", 500)
         _clog(cid, "editado", {"cambios": cambios})
         return _chofer_respuesta(cid)
 

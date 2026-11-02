@@ -653,7 +653,14 @@ class TestCableado(unittest.TestCase):
         self.assertEqual(len(re.findall(r"CREATE TABLE IF NOT EXISTS flota_", self.MODULO)), 7)     # 2 de vehículos + 4 de la fase 1b + archivos
         altas = re.findall(r'"(ALTER TABLE [^"]+)"', self.MODULO)
         self.assertGreaterEqual(len(altas), 15)
+        # La única excepción: el chofer externo (02-nov-2026) deja usuario_id en NULL con un MODIFY que solo corre si la columna aún es
+        # NOT NULL (se mira antes en information_schema): una vez aplicado, el arranque no pide lock.
+        modificar = "ALTER TABLE flota_choferes MODIFY usuario_id INT NULL"
+        self.assertIn(modificar, altas)
+        self.assertIn('str(col.get("IS_NULLABLE") or "").upper() == "NO"', self.MODULO)
         for a in altas:
+            if a == modificar:
+                continue
             self.assertRegex(a, r"^ALTER TABLE flota_(vehiculos|choferes) ADD COLUMN \w+ [A-Z0-9(),' ]+$", a)
             self.assertNotIn(",", a.split("ADD COLUMN", 1)[0])
             self.assertEqual(a.count("ADD COLUMN"), 1)

@@ -143,6 +143,10 @@
         var v = buscar(S.fichaId);
         if (v) pintarFicha(v);
       }
+      if (S.editando && $('flModalVeh').classList.contains('show')) {     // PDF subido desde el formulario: se ve al tiro
+        var ve = buscar(S.editando.id);
+        if (ve) { S.editando = ve; pintarPdfsForm(ve); }
+      }
     });
   }
   function buscar(id) {
@@ -355,7 +359,9 @@
         c.hechos + ' de ' + c.total + ' datos registrados</span></div>' +
         (c.faltan.length ? '<ul class="fl-faltan">' + c.faltan.map(function (f) { return '<li>' + esc(f) + '</li>'; }).join('') + '</ul>' : '<p class="fl-t-ok">La ficha está completa y al día.</p>');
     }
-    $('flFichaCuerpo').innerHTML = cab + datos + docs + cal;
+    var repo = PERM.documentos ? '<h6 class="fl-ficha-h">Repositorio de documentos</h6><div class="fl-repo" id="flRepo"><span class="fl-t-mute">Cargando…</span></div>' : '';
+    $('flFichaCuerpo').innerHTML = cab + datos + docs + repo + cal;
+    if (PERM.documentos) pintarRepositorio(v.id);
     var b = [];
     if (admin) {
       b.push('<button type="button" class="btn btn-outline-secondary" data-facc="editar"><i class="bi bi-pencil me-1"></i>Editar datos</button>');
@@ -369,6 +375,26 @@
     }
     b.push('<button type="button" class="btn btn-dark" data-bs-dismiss="modal">Cerrar</button>');
     $('flFichaAcc').innerHTML = b.join('');
+  }
+  /* Repositorio: TODO lo que se le ha subido al vehículo, el vigente y los anteriores (Daniel, 02-nov-2026). Nada se borra. */
+  function pintarRepositorio(vid) {
+    api(API + '/' + vid + '/archivos').then(function (d) {
+      var el = document.querySelector('#flFichaCuerpo .fl-repo');      // se dibuja con la ficha (no está en la plantilla)
+      if (!el || S.fichaId !== vid) return;
+      if (!d.ok) { el.innerHTML = '<span class="fl-t-mute">' + esc(d.error || 'No se pudo leer el repositorio.') + '</span>'; return; }
+      var lista = d.archivos || [];
+      if (!lista.length) { el.innerHTML = '<span class="fl-t-mute">Todavía no se ha subido ningún archivo.</span>'; return; }
+      el.innerHTML = '<div class="fl-ftabla-wrap"><table class="fl-ftabla"><thead><tr><th>Documento</th><th>Archivo</th><th>Subido</th><th>Estado</th></tr></thead><tbody>' +
+        lista.map(function (a) {
+          var kb = a.bytes ? ' · ' + (a.bytes >= 1048576 ? (a.bytes / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(a.bytes / 1024)) + ' KB') : '';
+          return '<tr class="' + (a.vigente ? '' : 'inhab') + '"><td data-label="Documento"><b>' + esc(a.etiqueta || a.tipo) + '</b></td>' +
+            '<td data-label="Archivo"><a class="fl-pdf" href="' + API_ARCH + '/' + a.id + '" target="_blank" rel="noopener"><i class="bi ' + (a.tipo === 'foto' ? 'bi-image' : 'bi-file-earmark-pdf') + '"></i>Abrir</a>' +
+            '<span class="fl-sub">' + esc((a.nombre || '') + kb) + '</span></td>' +
+            '<td data-label="Subido">' + esc(a.subido_fmt || '—') + '<span class="fl-sub">' + esc(a.subido_por || '') + '</span></td>' +
+            '<td data-label="Estado">' + (a.vigente ? '<span class="fl-doc-pill fl-doc-pill--vigente">Vigente</span>'
+              : '<span class="fl-doc-pill fl-doc-pill--sin_fecha">Anterior</span><span class="fl-sub">' + esc((a.quitado_por ? 'Reemplazado por ' + a.quitado_por : 'Reemplazado') + (a.quitado_fmt ? ' · ' + a.quitado_fmt : '')) + '</span>') + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    });
   }
   function abrirFicha(v) {
     pintarFicha(v);
@@ -549,6 +575,26 @@
   function poblarListas() {
     $('flTiposList').innerHTML = (S.config.tipos || []).map(function (t) { return '<option value="' + esc(t) + '">'; }).join('');
     $('flCombustiblesList').innerHTML = (S.config.combustibles || []).map(function (t) { return '<option value="' + esc(t) + '">'; }).join('');
+    pintarCombustibles();
+  }
+  /* Combustible en botones (Daniel, 02-nov-2026: «si no es diésel es a gasolina, puede ser híbrido, puede ser eléctrico»); el campo sigue
+     aceptando otro valor escrito a mano. */
+  function pintarCombustibles() {
+    var actual = norm(valor('combustible'));
+    $('flCombRapidos').innerHTML = (S.config.combustibles || []).map(function (t) {
+      var on = actual && norm(t) === actual;
+      return '<button type="button" class="fl-sug' + (on ? ' on' : '') + '" data-comb="' + esc(t) + '" aria-pressed="' + on + '">' + esc(t) + '</button>';
+    }).join('');
+  }
+  /* PDF de cada documento dentro del formulario (Daniel, 02-nov-2026: «quisiera los documentos y poderlos ver… súbelos»). Mismo camino
+     que la ficha (POST /flota/api/archivos); en un vehículo nuevo se sube después de guardarlo. */
+  function pintarPdfsForm(v) {
+    Array.prototype.forEach.call(document.querySelectorAll('#flForm [data-docpdf]'), function (el) {
+      var clave = el.getAttribute('data-docpdf');
+      if (!v) { el.innerHTML = '<span class="fl-t-mute"><i class="bi bi-info-circle"></i> Guarda el vehículo y luego sube el PDF desde aquí o desde su ficha.</span>'; return; }
+      var d = (v.documentos || []).filter(function (x) { return x.clave === clave; })[0];
+      el.innerHTML = d ? '<div class="fl-docpdf-c">' + celdaPdf(v, d) + '</div>' : '';
+    });
   }
   function pintarClases(sel) {
     $('flClases').innerHTML = (S.config.clases || []).map(function (c) {
@@ -572,6 +618,9 @@
     if (v) f.elements.patente.value = v.patente_completa;
     if (v && v.propietario_rut) f.elements.propietario_rut.value = v.propietario_rut_fmt || v.propietario_rut;
     pintarClases(v ? v.licencia_clases : [S.config.clase_sugerida]);
+    if (v) S.fichaId = v.id;              // los PDF que se suban desde el formulario van a este vehículo
+    pintarCombustibles();
+    pintarPdfsForm(v);
     evaluar();
     window.bootstrap.Modal.getOrCreateInstance($('flModalVeh')).show();
   }
@@ -759,6 +808,16 @@
       else if (a === 'eliminar') eliminar(v);
     });
     $('flArchivoInput').addEventListener('change', alSeleccionarArchivo);
+    $('flForm').addEventListener('click', function (ev) {
+      var c = ev.target.closest('[data-comb]');
+      if (c) { $('flForm').elements.combustible.value = c.getAttribute('data-comb'); tocados.combustible = true; pintarCombustibles(); evaluarLuego(); return; }
+      var b = ev.target.closest('[data-farch]');
+      if (!b || !S.editando) return;
+      S.fichaId = S.editando.id;
+      if (b.getAttribute('data-farch') === 'subir') elegirArchivo(b.getAttribute('data-tipo'));
+      else quitarArchivo(b.getAttribute('data-aid'));
+    });
+    $('flCombustible').addEventListener('input', pintarCombustibles);
     var t;
     $('flBuscar').addEventListener('input', function (e) {
       clearTimeout(t);
