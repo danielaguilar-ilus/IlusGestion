@@ -795,3 +795,20 @@
   .fl-modal .modal-body{padding:18px 22px}
 }
 .fl-externo{display:inline-flex;align-items:center;gap:5px;margin-top:3px;font-size:.72rem;font-weight:800;color:#92400e;background:#fff8e1;border-radius:50px;padding:2px 9px}
+
+/* SLA de la llave (02-nov-2026) */
+.fl-sla{display:inline-flex;align-items:center;gap:5px;margin-top:5px;font-size:.72rem;font-weight:800;border-radius:50px;padding:3px 10px;overflow-wrap:anywhere}
+.fl-sla--en_plazo{background:#dbeafe;color:#1e40af}
+.fl-sla--atrasada{background:#fff8e1;color:#92400e;border:1px solid #fde68a}
+.fl-sla--critica{background:#fee2e2;color:#991b1b;border:1px solid #fecaca;animation:flaSla 1.6s infinite}
+.fl-sla--sin_entrega{background:#f3f4f6;color:#374151;border:1px dashed #9ca3af}
+@keyframes flaSla{50%{box-shadow:0 0 0 4px rgba(220,38,38,.15)}}
+.fla-b.sla-atrasada{outline:2px solid #f59e0b;outline-offset:1px}
+.fla-b.sla-critica{outline:2px solid #dc2626;outline-offset:1px;animation:flaSlaB 1.4s infinite}
+@keyframes flaSlaB{50%{outline-color:rgba(220,38,38,.25)}}
+.fla-b.sla-sin_entrega{outline:2px dashed #6b7280;outline-offset:1px}
+.fla-stat--alerta{border-color:rgba(245,158,11,.7);background:rgba(245,158,11,.14)}
+/* Calendario del modal: libre pero fuera del horario de llaves (antes de 8, colación, después de 17) */
+.fl-pk-s.lib.fh{background:repeating-linear-gradient(135deg,rgba(34,197,94,.10) 0 3px,rgba(255,255,255,.03) 3px 6px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+.fl-pk-s.lib.fh:hover{background:#4b5563}
+@media (prefers-reduced-motion: reduce){.fl-sla--critica,.fla-b.sla-critica{animation:none}}

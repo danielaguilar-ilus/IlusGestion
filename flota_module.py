@@ -1186,6 +1186,8 @@ def register_flota_routes(app, ctx):
             "fecha": _dia_iso(ini), "hora_desde": _hhmm(ini), "fecha_hasta": _dia_iso(fin), "hora_hasta": _hhmm(fin),
             "inicio": ini.strftime("%Y-%m-%dT%H:%M"), "fin": fin.strftime("%Y-%m-%dT%H:%M"), "rango_texto": fr.rango_texto(ini, fin),
             "motivo": r.get("motivo"), "sello_fmt": _hora_chile(r.get("sello_at")),
+            # SLA de la llave (02-nov-2026): solo corre en el horario de entrega; None si ya se entregó o aún no es la hora.
+            "sla": fr.sla_llave(est, ini, fin, _ahora_chile(), _feriados(ini.year, fin.year, _ahora_chile().year)),
             "confirmada_por": r.get("confirmada_por"), "confirmada_fmt": _hora_chile(r.get("confirmada_at")),
             "llave_por": r.get("llave_por"), "llave_fmt": _hora_chile(r.get("llave_at")), "llave_nota": r.get("llave_nota"),
             "cancelada_por": r.get("cancelada_por"), "cancelada_fmt": _hora_chile(r.get("cancelada_at")),
@@ -1214,6 +1216,20 @@ def register_flota_routes(app, ctx):
             mysql_execute(sql, params)
         except Exception as e:
             print(f"[flota] bitácora de solicitud ({accion}): {type(e).__name__}", flush=True)
+
+    _FERIADOS_CACHE = {}
+
+    def _feriados(*anios):
+        """Fechas ISO de los feriados de Chile de esos años (cl_feriados, REGLA #31), guardadas por año."""
+        out = set()
+        for a in set(anios):
+            if a not in _FERIADOS_CACHE:
+                try:
+                    _FERIADOS_CACHE[a] = set((cl_feriados.feriados_chile(a) or {}).keys()) if cl_feriados is not None else set()
+                except Exception:
+                    _FERIADOS_CACHE[a] = set()
+            out |= _FERIADOS_CACHE[a]
+        return out
 
     def _avisos_dia_no_laboral(ini, fin):
         """Alerta (no bloquea): ILUS no opera sábado, domingo ni feriados (REGLA #31)."""
@@ -1306,7 +1322,8 @@ def register_flota_routes(app, ctx):
                 return {"ok": False, "error": msg, "error_codigo": "CHOQUE_CHOFER", "errores": {"chofer_id": msg},
                         "choques": [_choque_json(x) for x in choque_c]}, 409
 
-            avisos = fr.avisos_vehiculo(dict(veh), inicio.date()) + ([aviso_lic] if aviso_lic else []) + _avisos_dia_no_laboral(inicio, fin)
+            avisos = (fr.avisos_vehiculo(dict(veh), inicio.date()) + ([aviso_lic] if aviso_lic else []) + _avisos_dia_no_laboral(inicio, fin)
+                      + fr.avisos_horario(inicio, fin, _feriados(inicio.year, fin.year)))
             if sid is None:
                 cur.execute(
                     "INSERT INTO flota_solicitudes (vehiculo_id, area, solicitante_id, solicitante_nombre, chofer_id, inicio, fin, motivo) "
@@ -1378,6 +1395,8 @@ def register_flota_routes(app, ctx):
             "ok": True, "vista": vista, "solicitudes": [_sol_json(dict(f)) for f in filas],
             "resumen": {"por_confirmar": cuentas.get("solicitada", 0), "confirmadas": cuentas.get("confirmada", 0),
                         "llave_entregada": cuentas.get("llave_entregada", 0), "hoy": hoy_n},
+            "horario": {"tramos": [list(t) for t in fr.HORARIO_LLAVES], "texto": fr.HORARIO_TEXTO,
+                        "tolerancia_min": fr.SLA_TOLERANCIA_MIN, "critico_min": fr.SLA_CRITICO_MIN},
             "hoy": ahora.date().isoformat(), "ahora_hhmm": ahora.strftime("%H:%M"),
             "areas": list(fr.AREAS_SUGERIDAS), "max_dias": fr.MAX_DIAS_USO,
         })

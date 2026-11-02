@@ -20,6 +20,7 @@
     sol: [], solVista: 'proximas', solEstado: 'todas', solQ: '', solVeh: '', solPag: 1, solPor: 25, ocup: [],
     vista: 'lista', mes: null, cal: null, diaSel: null, det: null,
     meses: {}, semana: null, mesVista: null, calArea: '', pk: { mes: null, ancla: null },
+    horario: { tramos: [[480, 780], [840, 1020]], texto: 'lunes a viernes hábiles de 08:00 a 13:00 y de 14:00 a 17:00 (colación 13:00–14:00)' },
     editSol: null, solIntento: false, solTocados: {}, guardandoSol: false,
     chQ: '', chEstado: 'todos', chPag: 1, chPor: 25, editCh: null, chIntento: false, chTocados: {}, guardandoCh: false, verArchCh: false, usuariosCh: []
   };
@@ -157,6 +158,7 @@
       if (d.config) S.config = d.config;
       if (d.areas) S.config.areas = d.areas;
       if (d.max_dias) S.config.max_dias_uso = d.max_dias;
+      if (d.horario) S.horario = d.horario;
       var r = d.resumen || {};
       $('flKpiPorConfirmar').textContent = r.por_confirmar != null ? r.por_confirmar : '–';
       $('flKpiConfirmadas').textContent = r.confirmadas != null ? r.confirmadas : '–';
@@ -215,8 +217,14 @@
       '<td data-label="Área y quién pidió"><b>' + esc(s.area) + '</b><span class="fl-sub">Pidió ' + esc(s.solicitante || '—') + '</span>' +
       '<span class="fl-sub">' + esc(s.motivo) + '</span></td>' +
       '<td data-label="Chofer">' + esc(s.chofer.nombre) + (s.chofer.telefono ? '<span class="fl-sub">' + esc(s.chofer.telefono) + '</span>' : '') + '</td>' +
-      '<td data-label="Estado">' + pill(s) + estadoExtra(s) + '</td>' +
+      '<td data-label="Estado">' + pill(s) + estadoExtra(s) + chipSla(s) + '</td>' +
       '<td data-label="Acciones"><div class="fl-acc">' + botonesFila(s) + '</div></td></tr>';
+  }
+  /* SLA de la llave (Daniel, 02-nov-2026): lo calcula el servidor contando solo el horario de entrega. */
+  function chipSla(s) {
+    if (!s.sla) return '';
+    var ic = { en_plazo: 'bi-key', atrasada: 'bi-alarm', critica: 'bi-exclamation-octagon-fill', sin_entrega: 'bi-x-octagon' }[s.sla.estado] || 'bi-key';
+    return '<span class="fl-sla fl-sla--' + esc(s.sla.estado) + '"><i class="bi ' + ic + '"></i>' + esc(s.sla.texto) + '</span>';
   }
   function estadoExtra(s) {
     if (s.estado === 'llave_entregada') return '<span class="fl-sub">' + esc((s.llave_por || '') + ' · ' + (s.llave_fmt || '')) + '</span>';
@@ -402,6 +410,7 @@
   }
   function pintarHero() {
     var lista = enSemana(), horas = 0, cuenta = { solicitada: 0, confirmada: 0, llave_entregada: 0 };
+    var atrasadas = todasCal().filter(function (s) { return s.sla && (s.sla.estado === 'atrasada' || s.sla.estado === 'critica'); }).length;
     lista.forEach(function (s) {
       cuenta[s.estado] = (cuenta[s.estado] || 0) + 1;
       horas += Math.max(0, (new Date(s.fin) - new Date(s.inicio)) / 3600000);
@@ -411,7 +420,9 @@
       stat(cuenta.solicitada, 'Por confirmar', 'bi-hourglass-split', 'fla-ic--ambar') +
       stat(cuenta.confirmada, 'Confirmadas', 'bi-check-circle-fill', 'fla-ic--verde') +
       stat(cuenta.llave_entregada, 'Con la llave', 'bi-key-fill', 'fla-ic--negro') +
-      stat(Math.round(horas), 'Horas reservadas', 'bi-clock-history', 'fla-ic--rojo');
+      stat(Math.round(horas), 'Horas reservadas', 'bi-clock-history', 'fla-ic--rojo') +
+      '<div class="fla-stat' + (atrasadas ? ' fla-stat--alerta' : '') + '" title="Plazo de entrega de la llave: ' + esc(S.horario.texto) + '"><span class="fla-stat-ic fla-ic--ambar"><i class="bi bi-alarm"></i></span>' +
+      '<span><b class="fla-stat-n">' + atrasadas + '</b><span class="fla-stat-l">Llaves atrasadas</span></span></div>';
     pintarProximo();
   }
   function pintarProximo() {
@@ -514,9 +525,10 @@
           var r = tramo(s, iso), a = Math.max(r[0], R[0]), b = Math.min(r[1], R[1]);
           if (b <= a) return;
           var k = areaKey(s.area), h = (b - a) / 60 * PX_HORA, atenuada = !pasaFiltro(s);
-          html += '<button type="button" class="fla-b fla-a--' + k + ' fla-e--' + esc(s.estado) + (atenuada ? ' tenue' : '') + (h < 34 ? ' corta' : '') + '" data-id="' + s.id + '" ' +
+          var slaCls = s.sla && s.sla.estado !== 'en_plazo' ? ' sla-' + s.sla.estado : '';
+          html += '<button type="button" class="fla-b fla-a--' + k + ' fla-e--' + esc(s.estado) + slaCls + (atenuada ? ' tenue' : '') + (h < 34 ? ' corta' : '') + '" data-id="' + s.id + '" ' +
             'style="top:' + ((a - R[0]) / 60 * PX_HORA) + 'px;height:' + Math.max(h, 16) + 'px" ' +
-            'title="' + esc(s.numero + ' · ' + s.vehiculo.patente_fmt + ' · ' + horaEnDia(s, iso) + ' · ' + s.area + ' · chofer ' + s.chofer.nombre + ' · ' + s.estado_texto) + '" ' +
+            'title="' + esc(s.numero + ' · ' + s.vehiculo.patente_fmt + ' · ' + horaEnDia(s, iso) + ' · ' + s.area + ' · chofer ' + s.chofer.nombre + ' · ' + s.estado_texto + (s.sla ? ' · ' + s.sla.texto : '')) + '" ' +
             'aria-label="' + esc(s.numero + ', ' + s.vehiculo.patente_fmt + ', ' + horaEnDia(s, iso) + ', ' + s.area) + '">' +
             '<span class="fla-b-t">' + (s.estado === 'llave_entregada' ? '<i class="bi bi-key-fill"></i>' : (s.estado === 'solicitada' ? '<i class="bi bi-hourglass-split"></i>' : '')) + esc(horaEnDia(s, iso)) + '</span>' +
             '<span class="fla-b-a">' + esc(s.area) + '</span><span class="fla-b-c">' + esc(s.chofer.nombre) + '</span></button>';
@@ -543,7 +555,7 @@
         var v = vehPorId(s.vehiculo.id), k = areaKey(s.area);
         return '<button type="button" class="fla-lr fla-a--' + k + '" data-id="' + s.id + '">' + vehFoto(v, 'fla-lr-foto') +
           '<span class="fla-lr-c"><b>' + esc(horaEnDia(s, iso)) + ' · ' + esc(s.vehiculo.patente_fmt) + '</b>' +
-          '<span><i class="fla-sw fla-a--' + k + '"></i>' + esc(s.area) + ' · chofer ' + esc(s.chofer.nombre) + '</span></span>' + pill(s) + '</button>';
+          '<span><i class="fla-sw fla-a--' + k + '"></i>' + esc(s.area) + ' · chofer ' + esc(s.chofer.nombre) + '</span>' + chipSla(s) + '</span>' + pill(s) + '</button>';
       }).join('') : '<div class="fla-ld-libre"><i class="bi bi-check-circle"></i>' + (S.solVeh ? 'Libre todo el día' : 'Todos los vehículos libres') + '</div>';
       html += '</div>';
     });
@@ -808,10 +820,17 @@
     var d = diasHasta(v);
     return res('ok', d === 0 ? 'Es hoy.' : (d === 1 ? 'Es mañana.' : ''));
   }
+  /* ¿Hay quién entregue (o reciba) la llave a esa hora? Fuera del horario solo se AVISA (Daniel, 02-nov-2026). */
+  function enHorarioLlaves(iso, m, esTermino) {
+    if (!iso || m == null || diaInfo(iso).no_laboral) return false;
+    return (S.horario.tramos || []).some(function (t) { return esTermino ? (m > t[0] && m <= t[1]) : (m >= t[0] && m < t[1]); });
+  }
   function reglaHoraDesde() {
     var v = vSol('hora_desde');
     if (!v) return res('bad', 'Indica a qué hora lo necesitas.');
-    return minutos(v) == null ? res('bad', 'Hora no válida (usa el formato 08:30).') : res('ok', '');
+    if (minutos(v) == null) return res('bad', 'Hora no válida (usa el formato 08:30).');
+    if (vSol('fecha') && !enHorarioLlaves(vSol('fecha'), minutos(v), false)) return res('warn', 'Fuera del horario de llaves (' + S.horario.texto + '): podría no haber quién la entregue.');
+    return res('ok', '');
   }
   function reglaHoraHasta() {
     var v = vSol('hora_hasta');
@@ -822,6 +841,7 @@
     if (ven.fin <= ven.ini) return res('bad', 'La hora de término debe ser después de la de inicio.');
     if (S.hoy && ven.fin <= S.hoy + 'T' + S.ahora) return res('bad', 'Ese horario ya terminó. Elige uno que no haya pasado.');
     if (new Date(ven.fin) - new Date(ven.ini) > (S.config.max_dias_uso || 7) * 86400000) return res('bad', 'Una solicitud puede durar hasta ' + (S.config.max_dias_uso || 7) + ' días.');
+    if (!enHorarioLlaves(ven.fh, minutos(v), true)) return res('warn', 'Uso de ' + duracionTexto(ven.ini, ven.fin) + '. La devolución queda fuera del horario de llaves: podría no haber quién la reciba.');
     return res('ok', 'Uso de ' + duracionTexto(ven.ini, ven.fin) + '.');
   }
   function reglaFechaHasta() {
@@ -1109,11 +1129,13 @@
         var ocu = pkOcupante(v.id, iso, x);
         var pasado = iso < ahora.iso || (iso === ahora.iso && x + PK_PASO <= minutos(ahora.hm));
         var enSel = String(v.id) === String(vsel) && md != null && (otroDia ? x >= md : (mh != null && x >= md && x < mh));
-        var cls = ocu ? 'ocu fla-a--' + areaKey(ocu.area) : (pasado ? 'pas' : 'lib');
+        var fueraH = !enHorarioLlaves(iso, x, false);
+        var cls = ocu ? 'ocu fla-a--' + areaKey(ocu.area) : (pasado ? 'pas' : (fueraH ? 'lib fh' : 'lib'));
         if (!ocu && !pasado) libres++;
         if (enSel) cls += ocu ? ' choca' : ' sel';
         if (S.pk.ancla && String(S.pk.ancla.veh) === String(v.id) && S.pk.ancla.m === x) cls += ' ancla';
-        var t = hhmm(x) + '–' + hhmm(x + PK_PASO) + ': ' + (ocu ? 'ocupado · ' + ocu.numero + ' · ' + ocu.area + ' · ' + horaEnDia(ocu, iso) + ' (pidió ' + (ocu.solicitante || 'otra persona') + ')' : (pasado ? 'ya pasó' : 'libre'));
+        var t = hhmm(x) + '–' + hhmm(x + PK_PASO) + ': ' + (ocu ? 'ocupado · ' + ocu.numero + ' · ' + ocu.area + ' · ' + horaEnDia(ocu, iso) + ' (pidió ' + (ocu.solicitante || 'otra persona') + ')'
+          : (pasado ? 'ya pasó' : (fueraH ? 'libre, pero fuera del horario de llaves' + (x >= 780 && x < 840 ? ' (colación)' : '') : 'libre')));
         celdas += '<button type="button" class="fl-pk-s ' + cls + '" data-pkveh="' + v.id + '" data-pkm="' + x + '"' + (pasado && !ocu ? ' disabled' : '') +
           ' title="' + esc(t) + '" aria-label="' + esc(v.patente_fmt + ', ' + t) + '"></button>';
       }
@@ -1126,7 +1148,7 @@
       '<button type="button" class="fl-pk-at" data-pkat="08:00-13:00"><i class="bi bi-sunrise"></i>Mañana 08–13</button>' +
       '<button type="button" class="fl-pk-at" data-pkat="14:00-18:00"><i class="bi bi-sunset"></i>Tarde 14–18</button>' +
       '<button type="button" class="fl-pk-at" data-pkat="08:00-18:00"><i class="bi bi-brightness-high"></i>Jornada 08–18</button>' +
-      '<span class="fl-pk-ayuda"><i class="bi bi-hand-index-thumb"></i>Toca dónde parte y dónde termina</span></div>';
+      '<span class="fl-pk-ayuda"><i class="bi bi-key"></i>Llaves: 08–13 y 14–17 · lo oscuro queda fuera de horario</span></div>';
     cont.innerHTML = html;
     pkPintarSel();
   }
