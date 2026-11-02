@@ -837,3 +837,77 @@ def coincide_confirmacion(escrito, esperado, es_patente=False):
 def validar_motivo_archivo(texto):
     """Archivar un vehículo o un chofer pide el motivo (queda en la bitácora)."""
     return validar_motivo(texto)
+
+
+# ── Horario de entrega de llaves y SLA (Daniel, 02-nov-2026) ──────────────
+# «El horario es de 8 a 13 y de 14 a las 17, existe la colación; sin embargo es posible que nos vayamos y que no se entregue la llave:
+# apliquemos SLA si se atrasan en entregar las llaves». Fuera de este horario se AVISA (no se bloquea); el reloj del SLA cuenta SOLO
+# minutos dentro del horario (como el «Sin responder» de Retiros, REGLA #22).
+HORARIO_LLAVES = ((8 * 60, 13 * 60), (14 * 60, 17 * 60))      # minutos del día; 13:00–14:00 es colación
+HORARIO_TEXTO = "lunes a viernes hábiles de 08:00 a 13:00 y de 14:00 a 17:00 (colación 13:00–14:00)"
+SLA_TOLERANCIA_MIN = 15      # hasta 15 min hábiles después de la hora de retiro: «debe entregarse ahora»
+SLA_CRITICO_MIN = 60         # desde 60 min hábiles: atraso crítico
+
+
+def dia_habil(d, feriados=()):
+    return d.weekday() < 5 and d.isoformat() not in feriados
+
+
+def en_horario(momento, feriados=(), es_termino=False):
+    """¿Hay quién entregue (o reciba, con es_termino) la llave a esa hora? El término puede caer justo al cierre (13:00 o 17:00)."""
+    if momento is None or not dia_habil(momento.date(), feriados):
+        return False
+    m = momento.hour * 60 + momento.minute
+    return any((a < m <= b) if es_termino else (a <= m < b) for a, b in HORARIO_LLAVES)
+
+
+def minutos_habiles(desde, hasta, feriados=()):
+    """Minutos entre dos momentos contando SOLO el horario de llaves de los días hábiles."""
+    if desde is None or hasta is None or hasta <= desde:
+        return 0
+    total, d = 0, desde.date()
+    while d <= hasta.date():
+        if dia_habil(d, feriados):
+            for a, b in HORARIO_LLAVES:
+                ini = datetime.combine(d, time(a // 60, a % 60))
+                fin = datetime.combine(d, time(b // 60, b % 60))
+                x, y = max(ini, desde), min(fin, hasta)
+                if y > x:
+                    total += int((y - x).total_seconds() // 60)
+        d += timedelta(days=1)
+    return total
+
+
+def avisos_horario(inicio, fin, feriados=()):
+    """Avisos (no bloquean) cuando el retiro o la devolución de la llave caen fuera del horario."""
+    out = []
+    if not en_horario(inicio, feriados):
+        out.append(f"El retiro ({fecha_dia_texto(inicio.date())} {inicio.strftime('%H:%M')}) queda fuera del horario de entrega de llaves "
+                   f"({HORARIO_TEXTO}): podría no haber quién entregue la llave. Coordínalo antes.")
+    if not en_horario(fin, feriados, es_termino=True):
+        out.append(f"La devolución ({fecha_dia_texto(fin.date())} {fin.strftime('%H:%M')}) queda fuera del horario de llaves: "
+                   f"podría no haber quién reciba la llave.")
+    return out
+
+
+def _duracion(m):
+    h, mm = divmod(int(m), 60)
+    return (f"{h} h {mm} min" if mm else f"{h} h") if h else f"{mm} min"
+
+
+def sla_llave(estado, inicio, fin, ahora, feriados=()):
+    """Estado del plazo de entrega de la llave de una reserva que todavía NO la tiene entregada. None si no corre.
+    en_plazo (hasta 15 min hábiles) · atrasada (ámbar) · critica (rojo, 60 min) · sin_entrega (la reserva terminó sin llave)."""
+    if estado not in ("solicitada", "confirmada") or inicio is None or ahora is None or ahora < inicio:
+        return None
+    sin_conf = estado == "solicitada"
+    if fin is not None and ahora >= fin:
+        return {"estado": "sin_entrega", "minutos": minutos_habiles(inicio, fin, feriados),
+                "texto": "Terminó sin registrar la entrega de la llave" + (" (ni se confirmó)" if sin_conf else "")}
+    m = minutos_habiles(inicio, ahora, feriados)
+    extra = " · aún sin confirmar" if sin_conf else ""
+    if m < SLA_TOLERANCIA_MIN:
+        return {"estado": "en_plazo", "minutos": m, "texto": "La llave debe entregarse ahora" + extra}
+    if m < SLA_CRITICO_MIN:
+        return {"estado": "atrasada", "minutos": m, "texto": f"Llave atrasada · {_duracion(m)} hábiles" + extra}
+    return {"estado": "critica", "minutos": m, "texto": f"Atraso crítico · {_duracion(m)} hábiles" + extra}

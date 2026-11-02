@@ -1139,3 +1139,49 @@ class TestPantalla(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHorarioYSlaLlave(unittest.TestCase):
+    """02-nov-2026 (Daniel): «el horario es de 8 a 13 y de 14 a las 17, existe la colación… apliquemos SLA si se atrasan en entregar las
+    llaves». Fuera de horario se avisa; el SLA cuenta solo minutos dentro del horario."""
+    L = dt.datetime(2026, 11, 2)      # lunes
+
+    def h(self, dia, hh, mm=0):
+        return dt.datetime(2026, 11, dia, hh, mm)
+
+    def test_en_horario_y_colacion(self):
+        self.assertTrue(R.en_horario(self.h(2, 8)))
+        self.assertTrue(R.en_horario(self.h(2, 12, 59)))
+        self.assertFalse(R.en_horario(self.h(2, 13, 30)))            # colación
+        self.assertFalse(R.en_horario(self.h(2, 17)))                # cerrado
+        self.assertTrue(R.en_horario(self.h(2, 17), es_termino=True))   # devolver justo al cierre sí
+        self.assertFalse(R.en_horario(self.h(7, 10)))                # sábado
+        self.assertFalse(R.en_horario(self.h(2, 10), feriados={"2026-11-02"}))
+
+    def test_minutos_habiles_saltan_colacion_noche_y_fin_de_semana(self):
+        self.assertEqual(R.minutos_habiles(self.h(2, 12, 50), self.h(2, 14, 10)), 20)     # 10 antes y 10 después de colación
+        self.assertEqual(R.minutos_habiles(self.h(6, 16, 50), self.h(9, 8, 5)), 15)       # viernes 16:50 → lunes 08:05
+        self.assertEqual(R.minutos_habiles(self.h(2, 18), self.h(3, 7)), 0)
+
+    def test_estados_del_sla(self):
+        ini, fin = self.h(2, 9), self.h(2, 12)
+        self.assertIsNone(R.sla_llave("confirmada", ini, fin, self.h(2, 8, 30)))         # aún no es la hora
+        self.assertIsNone(R.sla_llave("llave_entregada", ini, fin, self.h(2, 11)))      # ya se entregó
+        self.assertEqual(R.sla_llave("confirmada", ini, fin, self.h(2, 9, 10))["estado"], "en_plazo")
+        a = R.sla_llave("confirmada", ini, fin, self.h(2, 9, 20))
+        self.assertEqual((a["estado"], a["minutos"]), ("atrasada", 20))
+        self.assertIn("20 min", a["texto"])
+        self.assertEqual(R.sla_llave("confirmada", ini, fin, self.h(2, 10, 5))["estado"], "critica")
+        self.assertIn("sin confirmar", R.sla_llave("solicitada", ini, fin, self.h(2, 9, 20))["texto"])
+        self.assertEqual(R.sla_llave("confirmada", ini, fin, self.h(2, 12, 30))["estado"], "sin_entrega")
+
+    def test_la_colacion_no_suma_atraso(self):
+        s = R.sla_llave("confirmada", self.h(2, 12, 55), self.h(2, 16), self.h(2, 14, 5))
+        self.assertEqual((s["estado"], s["minutos"]), ("en_plazo", 10))
+
+    def test_avisos_fuera_de_horario(self):
+        self.assertEqual(R.avisos_horario(self.h(2, 9), self.h(2, 12)), [])
+        av = R.avisos_horario(self.h(2, 13, 15), self.h(2, 18))
+        self.assertEqual(len(av), 2)
+        self.assertIn("podría no haber quién entregue la llave", av[0])
+        self.assertIn("podría no haber quién reciba la llave", av[1])
