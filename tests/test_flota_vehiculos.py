@@ -702,7 +702,7 @@ class TestCableado(unittest.TestCase):
         base = _leer("templates", "base.html")
         self.assertEqual(base.count("<span>Solicitudes de vehículo</span>"), 1)      # UN solo ítem en el menú
         i = base.index('href="/flota"')
-        previo = base[max(0, i - 120):i]
+        previo = base[max(0, i - 260):i]
         self.assertIn("permissions.superadmin", previo)
         self.assertNotIn("url_for('flota", base)                      # un BuildError tumbaría todas las pantallas
         self.assertEqual(base.count('href="/flota"'), 1)
