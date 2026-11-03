@@ -711,16 +711,20 @@ ETIQUETAS_ARCHIVO = {"foto": "Foto", "licencia": "Licencia de conducir", **{c: n
 
 def niveles(permisos):
     """Qué puede hacer quien mira la pantalla, a partir de g.permissions. UNA sola función decide los cuatro niveles:
-    admin = agregar, editar, archivar y borrar vehículos y choferes y subir sus archivos (solo el superadministrador: sin llave);
+    admin = agregar, editar, archivar y borrar vehículos y choferes y subir sus archivos (el superadministrador, o quien tenga la llave
+    flota_administrar: Daniel la enciende por rol o por persona en el front);
     gestionar = confirmar, entregar la llave, mover y cancelar solicitudes de cualquiera (flota_gestionar);
-    documentos = ver los PDF y el RUT y la dirección de los choferes (flota_documentos, aparte de pedir y de gestionar);
-    solicitar = entrar, ver la flota y pedir un vehículo (flota_solicitar; quien gestiona también entra)."""
+    documentos = ver los PDF y el RUT y la dirección de los choferes (flota_documentos; quien administra también los ve: no se puede
+    mantener lo que no se ve);
+    solicitar = entrar, ver la flota y pedir un vehículo (flota_solicitar; quien gestiona o administra también entra).
+    Administrar NO da gestionar: no confirma ni entrega la llave, y sigue pidiendo con las 24 horas de aviso."""
     p = permisos or {}
-    admin = bool(p.get("superadmin"))
-    gestionar = admin or bool(p.get("flota_gestionar"))
+    superadmin = bool(p.get("superadmin"))
+    admin = superadmin or bool(p.get("flota_administrar"))
+    gestionar = superadmin or bool(p.get("flota_gestionar"))
     return {"admin": admin, "gestionar": gestionar,
             "documentos": admin or bool(p.get("flota_documentos")),
-            "solicitar": gestionar or bool(p.get("flota_solicitar"))}
+            "solicitar": gestionar or admin or bool(p.get("flota_solicitar"))}
 
 
 # ── Patente con dígito verificador (TVDZ88-5) ──────────────────────────────

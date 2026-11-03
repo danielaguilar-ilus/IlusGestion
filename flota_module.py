@@ -261,8 +261,9 @@ def register_flota_routes(app, ctx):
 
     # ── Acceso ──────────────────────────────────────────────────────────────
     # Cuatro niveles, decididos en UN solo lugar (flota_reglas.niveles): solicitar (entrar y pedir), gestionar (confirmar, llave, mover,
-    # cancelar), documentos (ver PDF y datos personales) y admin (agregar, editar, archivar y borrar vehículos y choferes: solo el
-    # superadministrador, sin llave). Las tres llaves se asignan por rol o por persona en el front (Roles → Solicitudes de vehículo).
+    # cancelar), documentos (ver PDF y datos personales) y admin (agregar, editar, archivar y borrar vehículos y choferes: el
+    # superadministrador o quien tenga la llave «administrar»). Las cuatro llaves se asignan por rol o por persona en el front
+    # (Roles → Solicitudes de vehículo); nacen apagadas para todos.
     def _niv():
         return fr.niveles(g.get("permissions"))
 
@@ -295,7 +296,7 @@ def register_flota_routes(app, ctx):
 
     _flota_required = _puerta(_flota_puede, "Esta sección todavía no está habilitada para tu usuario.", "SIN_PERMISO_FLOTA")
     _flota_gestion_required = _puerta(_flota_gestiona, "Solo quien gestiona la flota puede hacer esto.", "SIN_PERMISO_GESTION_FLOTA")
-    _flota_admin_required = _puerta(_flota_admin, "Solo el superadministrador agrega, edita o borra vehículos y choferes.", "SIN_PERMISO_ADMIN_FLOTA")
+    _flota_admin_required = _puerta(_flota_admin, "No tienes permiso para agregar, editar o borrar vehículos y choferes.", "SIN_PERMISO_ADMIN_FLOTA")
     _flota_docs_required = _puerta(_flota_docs, "No tienes permiso para ver los documentos de la flota.", "SIN_PERMISO_DOCUMENTOS_FLOTA")
 
     # ── Utilidades ──────────────────────────────────────────────────────────

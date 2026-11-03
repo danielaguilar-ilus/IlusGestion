@@ -1,5 +1,5 @@
 /* Solicitudes de vehículo · Flota — pestaña VEHÍCULOS: tabla inteligente con foto y calidad de la ficha, ficha con los documentos y su PDF,
-   alta y edición, habilitar / inhabilitar, archivar y borrar (esto último, solo el superadministrador).
+   alta y edición, habilitar / inhabilitar, archivar y borrar (el superadministrador o quien tenga la llave «administrar»).
    Reglas del proyecto que cumple: sin alert/confirm/prompt nativos (REGLA #1: ilusConfirm / ilusPrompt / ilusToast), tabla paginada con pie
    «Mostrando A–B de N» (REGLA #4.3), campos que pasan de rojo a verde mientras se escribe y al guardar se alerta, no se traba (REGLA #42),
    datos completos sin cortar (REGLA #15) y celular primero (REGLA #3).

@@ -929,7 +929,7 @@
        Solicitudes de vehículo, o por persona en Permisos individuales); nacen apagados para todos. La puerta real está en
        flota_reglas.niveles y flota_module.py; esta condición solo decide si se dibuja el ítem. href fijo a propósito (no url_for): si el módulo no llegara a registrar sus rutas, un url_for
        lanzaría BuildError y se caería TODA pantalla del sistema. #}
-    {% if permissions and (permissions.superadmin or permissions.flota_solicitar or permissions.flota_gestionar) %}
+    {% if permissions and (permissions.superadmin or permissions.flota_solicitar or permissions.flota_gestionar or permissions.flota_administrar) %}
     <a href="/flota" class="sidebar-link{% if request.path.startswith('/flota') %} active{% endif %}">
       <i class="bi bi-truck-front"></i><span>Solicitudes de vehículo</span>
     </a>
