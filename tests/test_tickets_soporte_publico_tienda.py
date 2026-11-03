@@ -484,7 +484,9 @@ class TestPlantilla:
         «Cambiar o devolver» es la clave para ubicar la compra). Sigue opcional. La comuna se ve y la llena Google."""
         src = open(PLANTILLA, encoding="utf-8").read()
         paso5 = src.split('id="spPaso5"')[1].split("</section>")[0]
-        assert 'id="spDoc"' in paso5 and "N° de boleta, factura o pedido" in paso5 and 'class="op">Opcional' in paso5.split('id="spDoc"')[0][-200:]
+        # 03-nov: el campo pasó a ser multidocumento (#spDocs: pedido web, factura o boleta, hasta 5) y sigue opcional.
+        docs = paso5.split('id="spDocs"')[1][:300]
+        assert 'id="spDoc"' in paso5 and "Documento de tu compra" in docs and 'class="op">Opcional' in docs
         assert 'id="spDoc"' not in src.split('id="spPaso4"')[1].split("</section>")[0]
         paso3 = src.split('id="spPaso3"')[1].split("</section>")[0]
         assert '<input type="text" id="spComuna"' in paso3 and 'id="spGmapsAviso"' in paso3
@@ -553,7 +555,7 @@ class TestArchivoShopify:
         assert 'name="hp_ilus_extra"' in src and "ilus_t0: T0" in src
         assert 'id="itk_code"' in src and "numero_ticket" in src              # muestra el N° de ticket al terminar
         paso5 = src.split('id="itk_paso5"')[1].split("</section>")[0]
-        assert 'id="itk_doc"' in paso5 and "N° de boleta, factura o pedido" in paso5
+        assert 'id="itk_doc"' in paso5 and "Documento de tu compra" in paso5   # 03-nov: multidocumento (#itk_docs)
         assert 'id="itk_files_resumen"' in src and "URL.createObjectURL(f)" in src and "' de ' + archivos.length + ' listos" in src
         assert "ILUS Fitness" in src and "ILUS Sport" not in src
 
