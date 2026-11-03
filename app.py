@@ -127977,6 +127977,105 @@ def _fac_equilibrio_rechazo(resultados):
                                                           "pendiente_id")} for m in malos]}), 409
 
 
+_OT_DESP_REF_CACHE = {}
+_OT_DESP_REF_TTL = 600      # 10 min: el comparador consulta a FedEx en vivo; no se le pregunta lo mismo en cada repintado
+
+
+@app.route("/ot/api/despacho-referencia", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot2_api_despacho_referencia():
+    """Referencia de cuánto cuesta LLEVAR los productos de la OT, según el cotizador de logística (3-nov-2026).
+
+    Daniel, mirando cómo Juan Pablo crea una OT: el despacho a mano debe verse y la sugerencia debe venir del motor de cotización de logística
+    («cuánto vale llevar esos productos»). Body: {documentos: [{tido, nudo}], comuna?, cliente_id?}. Suma el peso facturable de las líneas de PRODUCTO de
+    los documentos (cubicador, `pred_tot`; las líneas ZZ, de descuento y de servicio no se llevan) y pregunta al comparador de couriers del Cubicador
+    TAL CUAL está (cubicador_plus._invocar_comparador): aquí no se reimplementa ninguna tarifa. SOLO LECTURA del ERP (REGLA #4.1) y de las tarifas.
+
+    Devuelve solo courier, monto, si es estimado y plazo (nunca trazas ni motivos del comparador: la política comercial de Felca/Milling es
+    confidencial). Es una REFERENCIA que el asistente ofrece con «Usar este monto»: lo que cobre el proveedor de la OT puede ser distinto y la
+    persona escribe lo que quiera. Cuesta plata (REGLA #26): nunca para un técnico (@_no_tecnico). Nunca responde 5xx por un dato que falte: el estado
+    dice qué falta (sin_documento · sin_comuna · sin_medidas · sin_tarifa · erp_error · error) y el asistente lo muestra en ámbar.
+    """
+    import ot_despacho_ref as _odr
+    import cubicador_plus as _cp
+    cuerpo = request.get_json(silent=True) or {}
+    docs = _odr.documentos_validos(cuerpo.get("documentos"))
+    if not docs:
+        return jsonify({"ok": True, "estado": "sin_documento",
+                        "mensaje": "Elige primero el documento de la OT: con sus productos se cotiza el despacho."})
+    comuna = str(cuerpo.get("comuna") or "").strip()[:100]
+    if not comuna:
+        try:
+            _cid = int(cuerpo.get("cliente_id") or 0)
+        except (TypeError, ValueError):
+            _cid = 0
+        if _cid:
+            comuna = str((mysql_fetchone("SELECT comuna FROM mant_clientes WHERE id=%s", (_cid,)) or {}).get("comuna") or "").strip()
+    clave = (tuple((x["tido"], x["nudo"]) for x in docs), comuna.upper())
+    _hit = _OT_DESP_REF_CACHE.get(clave)
+    if _hit and (time.time() - _hit[0]) < _OT_DESP_REF_TTL:
+        return jsonify(_hit[1])
+
+    peso, productos, sin_medidas, valor_neto, no_leidos = 0.0, 0, [], 0.0, []
+    for _dc in docs:
+        _hdr, _lns = _mant_erp_doc_cached(_dc["tido"][:5], _dc["nudo"][:20])
+        if not _hdr:
+            no_leidos.append(_dc["tido"] + " " + _dc["nudo"])
+            continue
+        _r = _odr.resumir_lineas(_lns, _cp._es_linea_servicio)
+        peso += _r["peso_kg"]
+        productos += _r["productos"]
+        sin_medidas.extend(_r["sin_medidas"])
+        try:
+            valor_neto += float(_hdr.get("valor_neto") or 0)
+        except (TypeError, ValueError):
+            pass
+        if not comuna:
+            comuna = str(_hdr.get("comuna") or "").strip()[:100]
+
+    def _resp(estado, mensaje="", **extra):
+        out = {"ok": True, "estado": estado, "mensaje": mensaje, "comuna": comuna, "productos": productos,
+               "sin_medidas": [{"sku": m["sku"], "descripcion": m["descripcion"]} for m in sin_medidas[:8]],
+               "sin_medidas_n": len(sin_medidas), "peso_kg": round(peso, 1)}
+        out.update(extra)
+        if estado in ("ok", "sin_tarifa"):      # lo demás puede ser pasajero (ERP, comparador) o se arregla enseguida (cargar medidas): no se recuerda
+            if len(_OT_DESP_REF_CACHE) > 200:
+                _OT_DESP_REF_CACHE.clear()
+            _OT_DESP_REF_CACHE[clave] = (time.time(), out)
+        return jsonify(out)
+
+    if len(no_leidos) == len(docs):
+        return _resp("erp_error", "No pudimos leer el documento en Random para cotizar el despacho. Escribe el monto a mano.")
+    if not comuna:
+        return _resp("sin_comuna", "Falta la comuna de destino: complétala en el paso del cliente o del lugar del servicio.")
+    if peso <= 0:
+        return _resp("sin_medidas", "Los productos de estos documentos no tienen medidas cargadas en el Cubicador: sin ellas no se puede cotizar el despacho.")
+
+    _perm_previos = getattr(g, "permissions", None)
+    try:
+        # El comparador exige cubicador/transporte/logística: este endpoint devuelve UN solo precio de referencia (sin tarifas ni reglas), por eso
+        # se le abre la puerta solo aquí, sin ensanchar el acceso directo al comparador (cuyas tarifas son confidenciales).
+        g.permissions = dict(_perm_previos or {}, logistica_cotizaciones=True)
+        _data, _status = _cp._invocar_comparador(app, {"peso_kg": peso, "peso_pred_kg": peso, "comuna": comuna,
+                                                         "es_residencial": False, "valor_neto": valor_neto})
+    except Exception as _e_cmp:
+        print(f"[ot-despacho-ref] comparador: {type(_e_cmp).__name__}: {_e_cmp}", flush=True)
+        return _resp("error", "El cotizador de logística no respondió. Escribe el monto a mano.")
+    finally:
+        g.permissions = _perm_previos
+    if _status != 200 or not isinstance(_data, dict) or not _data.get("ok"):
+        return _resp("error", "El cotizador de logística no respondió. Escribe el monto a mano.")
+    _cots = _data.get("cotizaciones") or []
+    _cp._marcar_estimados(_cots)
+    _rec, _aviso = _cp._recomendar_no_estimado(_cots)
+    _sug = _odr.elegir_sugerencia(_cots, _rec)
+    if not _sug:
+        return _resp("sin_tarifa", "Ningún courier tiene tarifa para " + comuna + ". Escribe el monto a mano.")
+    return _resp("ok", "", sugerencia=_sug, comuna=str(_data.get("comuna_resuelta") or comuna),
+                 peso_facturable_kg=round(float(_data.get("peso_facturable") or peso), 1))
+
+
 @app.route("/ot/api/lineas-zz/<tido>/<nudo>", methods=["GET"])
 @_mant_required
 def ot2_api_lineas_zz(tido, nudo):

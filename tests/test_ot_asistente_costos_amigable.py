@@ -291,21 +291,22 @@ class TestMenosCamposQueRepitenLaPlata(unittest.TestCase):
         self.assertIn("OT2C.finDespachoAbrir()", f)
         self.assertIn("if (me.falta_despacho) _o2mFinDespachoMostrar(false);", _js_funcion("_pintarFinMargenDom"))
 
-    def test_valorizar_queda_detras_de_un_enlace_salvo_que_ya_tenga_valor(self):
-        def html(valor="", abierto=False):
-            prog = "\n".join(["var S = %s;" % json.dumps({"fin_valorizado": valor, "_fpAbierto": {"valorizar": True} if abierto else {}}),
+    def test_el_valor_de_referencia_ya_no_esta_detras_de_un_enlace(self):
+        """3-nov (Daniel: «hazlo igual con el valor de referencia, que sea editable»): siempre a la vista, vacío o con valor."""
+        def html(valor=""):
+            prog = "\n".join(["var S = %s;" % json.dumps({"fin_valorizado": valor, "_fpAbierto": {}}),
                               "function esc(s){ return String(s==null?'':s); } function _o2mFormatearMiles(v){ return String(v==null?'':v); }",
                               _js_funcion("_o2mFinValorizarHtml"),
                               "console.log(JSON.stringify({h: _o2mFinValorizarHtml()}));"])
             return _correr(prog)["h"]
-        h = html()
-        self.assertIn('id="o2mFinValorizarBtn" onclick="OT2C.finValorizarAbrir()">', h)
-        self.assertIn('<div id="o2mFinValorizarBox" hidden>', h)
-        self.assertIn('id="o2mFinValorizadoInput"', h, "el campo sigue en la página")
-        con_valor = html("109817")
-        self.assertIn('id="o2mFinValorizarBtn" onclick="OT2C.finValorizarAbrir()" hidden>', con_valor)
-        self.assertIn('<div id="o2mFinValorizarBox">', con_valor)
-        self.assertIn('<div id="o2mFinValorizarBox">', html(abierto=True))
+        for h in (html(), html("109817")):
+            self.assertNotIn("o2mFinValorizarBtn", h, "el enlace chico ya no se dibuja")
+            self.assertNotIn("Agregar valor de referencia", h)
+            self.assertNotIn("hidden", h, "la caja del valor de referencia siempre está a la vista")
+            self.assertIn('id="o2mFinValorizadoInput"', h)
+            self.assertIn('oninput="OT2C.setFinValorizado(this)"', h, "sigue siendo editable")
+            self.assertIn("Nunca se suma a lo que le cobras al cliente", h)
+        self.assertIn('value="109817"', html("109817"))
 
     def _anexo(self, items, editados=False, abierto=False, garantia=False):
         prog = "\n".join([
@@ -399,6 +400,58 @@ class TestElDespachoEsUnaPregunta(unittest.TestCase):
         con_cobro = self._funcs({"_fpAbierto": {}, "fin_costo_despacho": "", "fin_zz_envio": {"monto": 50000}},
                                 "finDespachoCerrar(); console.log(JSON.stringify({d: S.fin_costo_despacho, v: _o2mFinDespachoVisible()}));", extra)
         self.assertEqual(con_cobro, {"d": "0", "v": False}, "0 explícito: si no, el margen diría «falta el costo del despacho»")
+
+    def _ref_html(self, ref, clave="k"):
+        prog = "\n".join(["var S = %s;" % json.dumps({"_despRef": ref}),
+                          "function esc(s){ return String(s==null?'':s); } function _o2mFinDespachoRefClave(){ return %s; }" % json.dumps(clave),
+                          _js_funcion("_o2mFinDespachoRefHtml"), "console.log(JSON.stringify({h: _o2mFinDespachoRefHtml()}));"])
+        return _correr(prog)["h"]
+
+    def test_la_referencia_del_cotizador_se_ofrece_con_usar_este_monto(self):
+        ok = {"clave": "k", "estado": "ok", "data": {"estado": "ok", "comuna": "Lo Barnechea", "productos": 3, "sin_medidas_n": 0, "peso_kg": 233.5, "peso_facturable_kg": 233.5,
+                                                      "sugerencia": {"courier": "Felca", "monto": 98000, "estimado": False, "plazo": "2 días", "otras": []}}}
+        h = self._ref_html(ok)
+        for pista in ("llevar estos productos cuesta ≈ $98.000", "Felca", "2 días", "3 productos", "233,5 kg", "Lo Barnechea", "OT2C.finDespachoUsarRef()",
+                      "Es una referencia: lo que te cobra tu proveedor puede ser distinto"):
+            self.assertIn(pista, h, pista)
+        self.assertNotIn("estimada", h)
+        self.assertNotIn("sin medidas", h)
+        est = {"clave": "k", "estado": "ok", "data": dict(ok["data"], sin_medidas_n=2, sugerencia={"courier": "FedEx", "monto": 126933, "estimado": True, "plazo": "", "otras": []})}
+        h2 = self._ref_html(est)
+        self.assertIn("tarifa estimada", h2)
+        self.assertIn("2 productos sin medidas cargadas: el valor puede quedar corto", h2)
+
+    def test_lo_que_falta_se_dice_y_un_error_se_puede_reintentar(self):
+        falta = self._ref_html({"clave": "k", "estado": "sin_comuna", "data": {"mensaje": "Falta la comuna de destino."}})
+        self.assertIn("Falta la comuna de destino.", falta)
+        self.assertNotIn("Reintentar", falta, "lo que falta lo arregla la persona, no un reintento")
+        self.assertIn("OT2C.finDespachoRefReintentar()", self._ref_html({"clave": "k", "estado": "error", "data": {"mensaje": "x"}}))
+        self.assertIn("Consultando el cotizador de logística", self._ref_html({"clave": "k", "estado": "cargando"}))
+        self.assertEqual(self._ref_html({"clave": "otra", "estado": "ok", "data": {}}), "", "una referencia de otros documentos u otra comuna no se muestra")
+        self.assertEqual(self._ref_html(None), "")
+
+    def test_usar_este_monto_escribe_el_valor_y_el_campo_sigue_siendo_de_la_persona(self):
+        extra = "\n".join(["function _o2mFinDespachoPintar(){} function _pintarFinMargenDom(){} function _o2mFinEstadosDom(){} function _o2mAnexoSeguirCostos(){}",
+                           "var _inp = {value: ''}; var document = {getElementById: function(id){ return id === 'o2mFinCostoDesp' ? _inp : null; }};",
+                           "function _o2mFormatearMiles(v){ return String(v).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.'); }", _js_funcion("finDespachoUsarRef")])
+        prog = "\n".join(["var S = %s;" % json.dumps({"_fpAbierto": {}, "_despNo": True, "fin_costo_despacho": "",
+                                                        "_despRef": {"clave": "k", "estado": "ok", "data": {"sugerencia": {"monto": 98000.4}}}}),
+                          extra, "finDespachoUsarRef(); console.log(JSON.stringify({d: S.fin_costo_despacho, i: _inp.value, no: S._despNo, si: S._fpAbierto.despacho}));"])
+        self.assertEqual(_correr(prog), {"d": "98000", "i": "98.000", "no": False, "si": True})
+        sin = "\n".join(["var S = %s;" % json.dumps({"_fpAbierto": {}, "fin_costo_despacho": "", "_despRef": None}), extra,
+                         "finDespachoUsarRef(); console.log(JSON.stringify({d: S.fin_costo_despacho}));"])
+        self.assertEqual(_correr(sin), {"d": ""}, "sin referencia no escribe nada")
+
+    def test_la_consulta_solo_sale_con_si_y_con_el_sub_paso_a_la_vista(self):
+        pintar = _js_funcion("_o2mFinDespachoPintar")
+        self.assertIn("if (w){ if (si) _o2mFinDespachoRefCargar(); _o2mFinDespachoRefPintar(); }", pintar)
+        cargar = _js_funcion("_o2mFinDespachoRefCargar")
+        self.assertIn("fetch('/ot/api/despacho-referencia'", cargar)
+        self.assertIn("if (!forzar && r && r.clave === clave) return;", cargar, "no repite la consulta para los mismos documentos y la misma comuna")
+        self.assertIn("documentos: docs, comuna: comuna", cargar)
+        self.assertIn('id="o2mFinDespRef"', _js_funcion("pintarFinanzas"))
+        self.assertIn("finDespachoUsarRef:finDespachoUsarRef", H)
+        self.assertIn("finDespachoRefReintentar:finDespachoRefReintentar", H)
 
     def test_abrir_con_si_apaga_el_no_y_pide_foco(self):
         extra = "\n".join(["function _o2mFinDespachoPintar(){ _salida.pinto = true; } function _o2mFinEstadosDom(){ _salida.estados = true; }",

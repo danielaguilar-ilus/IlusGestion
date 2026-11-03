@@ -838,6 +838,15 @@
 .o2m-desp-q{font-weight:800;font-size:1rem;color:#0a0a0a}
 .o2m-desp-d{font-size:.85rem;color:#6b7280;line-height:1.4;margin:2px 0 8px}
 .o2m-desp .o2m-cobro-toggle{margin-bottom:8px}
+.o2m-desp-ref{display:flex;align-items:center;gap:10px;margin-top:10px;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;color:#374151;font-size:.9rem}
+.o2m-desp-ref.ok{background:#eff6ff;border-color:#bfdbfe}
+.o2m-desp-ref > i{font-size:1.25rem;color:#2563eb;flex:none}
+.o2m-desp-ref .tx{min-width:0;flex:1;line-height:1.4}
+.o2m-desp-ref .tx b{display:block;color:#0a0a0a}
+.o2m-desp-ref .d{display:block;margin-top:2px;color:#6b7280;font-size:.83rem}
+.o2m-desp-ref .d.adv{color:#92400e;font-weight:600}
+.o2m-desp-ref .o2m-linkbtn{flex:none}
+@media (max-width:575.98px){ .o2m-desp-ref{flex-wrap:wrap} .o2m-desp-ref .o2m-linkbtn{width:100%;justify-content:center;border:1px solid #bfdbfe;background:#fff} }
 .o2m-gar-resumen{display:grid;grid-template-columns:1fr 1fr;gap:10px;background:#fffbeb;
   border:1.5px solid #fcd34d;border-radius:11px;padding:12px;margin-bottom:10px}
 .o2m-gar-resumen .c{min-width:0}
@@ -1890,6 +1899,8 @@ window.OT2C = (function(){
          _fpAbierto:{},
          // 2026-11-03: «No, sin despacho» elegido a mano (gana sobre un valor o el despacho que se le cobra al cliente; ver _o2mFinDespachoVisible).
          _despNo:false,
+         // 2026-11-03: la referencia del cotizador de logística para el despacho ({clave, estado, data}; ver _o2mFinDespachoRefCargar).
+         _despRef:null,
          // 2026-10-25: el costo $0 del técnico propio lo sugiere el sistema (visible y editable); solo vale mientras nadie lo escriba (ver _o2mFinCostoAuto).
          _finCostoAuto:false,
          // 💰 2026-09-15 (Daniel: "toda OT debe salir VALORIZADA, se cobre o
@@ -7031,10 +7042,77 @@ window.OT2C = (function(){
     if (cn){ cn.className = 'o2m-op' + (si ? '' : ' sel-ok'); cn.setAttribute('aria-pressed', si ? 'false' : 'true'); }
     if (cs){ cs.className = 'o2m-op' + (si ? (tiene ? ' sel-ok' : ' sel-warn') : ''); cs.setAttribute('aria-pressed', si ? 'true' : 'false'); }
     if (av) av.hidden = !(si && !tiene);
+    if (w){ if (si) _o2mFinDespachoRefCargar(); _o2mFinDespachoRefPintar(); }   // la referencia del cotizador solo se pide con «Sí» y con el sub-paso a la vista
   }
   function _o2mFinDespachoMostrar(foco){
     _o2mFinDespachoPintar();
     if (foco){ var i = document.getElementById('o2mFinCostoDesp'); if (i) i.focus(); }
+  }
+  /* 🚚 2026-11-03 (Daniel: «la sugerencia debe venir del motor de cotización de logística: cuánto vale llevar esos productos»): con «Sí» elegido, bajo el
+     campo del monto se ofrece la REFERENCIA del cotizador de logística (POST /ot/api/despacho-referencia: peso de los productos de los documentos de la OT,
+     comuna de destino, tarifa del courier más conveniente). Es solo una referencia: se usa con «Usar este monto» y el campo sigue siendo de la persona
+     (lo que cobre el proveedor puede ser distinto). Si falta algo (documento, comuna, medidas) lo dice en ámbar y qué hacer. */
+  function _o2mFinDespachoComuna(){
+    var c = (S.contraparte && S.contraparte.comuna) ? String(S.contraparte.comuna).trim() : '';
+    if (!c && S.cliente && S.cliente.id && cacheClienteDireccion && cacheClienteDireccion[S.cliente.id]) c = String(cacheClienteDireccion[S.cliente.id].comuna || '').trim();
+    return c;
+  }
+  function _o2mFinDespachoRefClave(){
+    return _o2mFinDocsTodos().map(function(d){ return d.tido + ' ' + d.nudo; }).join('|') + '#' + _o2mFinDespachoComuna().toUpperCase() + '#' + ((S.cliente && S.cliente.id) || '');
+  }
+  function _o2mFinDespachoRefHtml(){
+    var r = S._despRef, pesos = function(n){ return '$' + Math.round(n).toLocaleString('es-CL'); };
+    if (!r || r.clave !== _o2mFinDespachoRefClave()) return '';
+    if (r.estado === 'cargando'){
+      return '<div class="o2m-desp-ref"><span class="spinner-border spinner-border-sm"></span><div class="tx">Consultando el cotizador de logística…</div></div>';
+    }
+    var j = r.data || {};
+    if (r.estado === 'ok' && j.sugerencia){
+      var s = j.sugerencia, falta = (j.sin_medidas_n || 0) > 0;
+      return '<div class="o2m-desp-ref ok"><i class="bi bi-calculator"></i><div class="tx">'+
+        '<b>Cotizador de logística: llevar estos productos cuesta ≈ '+pesos(s.monto)+'</b>'+
+        '<span class="d">'+esc(s.courier)+(s.estimado ? ' · tarifa estimada' : '')+(s.plazo ? ' · '+esc(s.plazo) : '')+' · '+esc(j.productos || 0)+' producto'+((j.productos||0)===1?'':'s')+
+          ' (≈ '+String(j.peso_facturable_kg || j.peso_kg || 0).replace('.', ',')+' kg) a '+esc(j.comuna || '')+'.</span>'+
+        (falta ? '<span class="d adv">'+esc(j.sin_medidas_n)+' producto'+(j.sin_medidas_n===1?'':'s')+' sin medidas cargadas: el valor puede quedar corto.</span>' : '')+
+        '<span class="d">Es una referencia: lo que te cobra tu proveedor puede ser distinto. Escribe el monto que corresponda.</span></div>'+
+        '<button type="button" class="o2m-linkbtn" onclick="OT2C.finDespachoUsarRef()">Usar este monto</button></div>';
+    }
+    var msg = j.mensaje || 'No pudimos consultar el cotizador de logística. Escribe el monto a mano.';
+    return '<div class="o2m-desp-ref"><i class="bi bi-info-circle"></i><div class="tx">'+esc(msg)+'</div>'+
+      ((r.estado === 'error' || r.estado === 'erp_error') ? '<button type="button" class="o2m-linkbtn" onclick="OT2C.finDespachoRefReintentar()">Reintentar</button>' : '')+'</div>';
+  }
+  function _o2mFinDespachoRefPintar(){
+    var c = document.getElementById('o2mFinDespRef'); if (!c) return;
+    c.innerHTML = _o2mFinDespachoRefHtml();
+    c.hidden = !_o2mFinDespachoVisible();
+  }
+  function _o2mFinDespachoRefCargar(forzar){
+    var clave = _o2mFinDespachoRefClave(), r = S._despRef;
+    if (!forzar && r && r.clave === clave) return;                // ya consultado (o consultando) para estos documentos y esta comuna
+    var docs = _o2mFinDocsTodos(), comuna = _o2mFinDespachoComuna();
+    S._despRef = {clave: clave, estado: 'cargando'};
+    _o2mFinDespachoRefPintar();
+    if (!docs.length){ S._despRef = {clave: clave, estado: 'sin_documento', data: {mensaje: 'Elige primero el documento de la OT: con sus productos se cotiza el despacho.'}}; _o2mFinDespachoRefPintar(); return; }
+    fetch('/ot/api/despacho-referencia', {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({documentos: docs, comuna: comuna, cliente_id: (S.cliente && S.cliente.id) || null})
+    }).then(function(x){ return x.json(); }).then(function(j){
+      if (!S._despRef || S._despRef.clave !== clave) return;
+      S._despRef = {clave: clave, estado: (j && j.ok) ? (j.estado || 'error') : 'error', data: j || {}};
+      _o2mFinDespachoRefPintar();
+    }).catch(function(){
+      if (!S._despRef || S._despRef.clave !== clave) return;
+      S._despRef = {clave: clave, estado: 'error', data: {mensaje: 'No pudimos consultar el cotizador de logística. Escribe el monto a mano.'}};
+      _o2mFinDespachoRefPintar();
+    });
+  }
+  function finDespachoRefReintentar(){ _o2mFinDespachoRefCargar(true); }
+  function finDespachoUsarRef(){
+    var r = S._despRef, s = r && r.data && r.data.sugerencia; if (!s) return;
+    S._despNo = false; S._fpAbierto.despacho = true;
+    S.fin_costo_despacho = String(Math.round(s.monto));
+    var i = document.getElementById('o2mFinCostoDesp'); if (i) i.value = _o2mFormatearMiles(S.fin_costo_despacho);
+    _o2mFinDespachoPintar(); _pintarFinMargenDom(); _o2mFinEstadosDom(); _o2mAnexoSeguirCostos();
   }
   function finDespachoAbrir(){ S._fpAbierto.despacho = true; S._despNo = false; _o2mFinDespachoMostrar(true); _o2mFinEstadosDom(); }
   function finDespachoCerrar(){
@@ -7063,20 +7141,19 @@ window.OT2C = (function(){
      campo del sub-paso 2. */
   function setFinValorizado(el){ _o2mInputDineroCambio(el, 'fin_valorizado'); }
   function _o2mFinValorizarHtml(){
-    // 🤝 2026-10-25 (Daniel: «valores duplicados o similares»): «Valorizar» es un segundo monto parecido a «Le cobras» y solo sirve de referencia, así
-    // que queda detrás de un enlace («Agregar valor de referencia»); si ya trae un valor se ve abierto. El campo sigue en la página (mismo id).
-    var abierto = !!S._fpAbierto.valorizar || String(S.fin_valorizado == null ? '' : S.fin_valorizado).trim() !== '';
+    // 🤝 2026-10-25 (Daniel: «valores duplicados o similares»): el valor de referencia quedó detrás de un enlace chico («Agregar valor de referencia»).
+    // 🚚 2026-11-03 (Daniel, tras lo mismo con el despacho: «hazlo igual con el valor de referencia, que sea editable para el usuario»): vuelve a la vista,
+    // siempre abierto y editable, con su explicación: un campo que solo se encuentra con un enlace chico es el que después hay que «subsanar». Sigue siendo
+    // opcional y solo referencia (nunca se suma a lo cobrado). El enlace ya no se dibuja; finValorizarAbrir() queda por compatibilidad.
     return '<div class="o2m-valorizar">'+
-      '<button type="button" class="o2m-linkbtn" id="o2mFinValorizarBtn" onclick="OT2C.finValorizarAbrir()"'+(abierto ? ' hidden' : '')+'>'+
-        '<i class="bi bi-plus-lg me-1"></i>Agregar valor de referencia (opcional)</button>'+
-      '<div id="o2mFinValorizarBox"'+(abierto ? '' : ' hidden')+'>'+
+      '<div id="o2mFinValorizarBox">'+
       '<label class="fl" for="o2mFinValorizadoInput">Valor de referencia '+
       '<span class="text-muted" style="font-weight:400">(opcional)</span></label>'+
       '<div class="o2m-money sm"><span class="pre">$</span>'+
-      '<input type="text" inputmode="numeric" id="o2mFinValorizadoInput" placeholder="Tarifa de referencia" '+
+      '<input type="text" inputmode="numeric" id="o2mFinValorizadoInput" placeholder="Cuánto vale el servicio según tu tarifa" '+
       'value="'+esc(_o2mFormatearMiles(S.fin_valorizado))+'" oninput="OT2C.setFinValorizado(this)"></div>'+
-      '<div class="o2m-fin-hint" style="margin:4px 0 0">Cuánto vale el servicio según tarifa. Es solo referencia: '+
-      'nunca se suma a lo que le cobras.</div></div></div>';
+      '<div class="o2m-fin-hint" style="margin:4px 0 0">Cuánto vale este servicio según tu tarifa, solo para comparar con lo que cuesta. '+
+      'Nunca se suma a lo que le cobras al cliente. Puedes dejarlo vacío.</div></div></div>';
   }
   function finValorizarAbrir(){
     S._fpAbierto.valorizar = true;
@@ -7322,6 +7399,7 @@ window.OT2C = (function(){
               'oninput="OT2C.setFinCostoDespacho(this)"></div>'+
             '</div>'+
           '</div>'+
+          '<div id="o2mFinDespRef"'+(_o2mFinDespachoVisible() ? '' : ' hidden')+'>'+_o2mFinDespachoRefHtml()+'</div>'+
           '<div class="o2m-aviso" id="o2mFinDespAviso"'+((_o2mFinDespachoVisible() && String(S.fin_costo_despacho == null ? '' : S.fin_costo_despacho).trim() === '') ? '' : ' hidden')+'><i class="bi bi-exclamation-triangle me-1"></i>'+
             'Escribe cuánto te cobran por el despacho, o elige «No, sin despacho».</div>'+
         '</div>'+
@@ -13588,7 +13666,7 @@ window.OT2C = (function(){
           usarEnvioDocumento:usarEnvioDocumento,   // 🧹 2026-10-08 «Usar este monto» del transporte del documento
           // 💰 2026-09-15: paso Costos rediseñado (valorización de toda OT)
           setFinCobro:setFinCobro, setFinCeroMotivo:setFinCeroMotivo, setFinIntencion:setFinIntencion, usarFuenteValor:usarFuenteValor, usarTarifaProveedor:usarTarifaProveedor, usarCostoCero:usarCostoCero, fpasoTog:fpasoTog, avisoEnvioTog:avisoEnvioTog,
-          finDespachoAbrir:finDespachoAbrir, finDespachoCerrar:finDespachoCerrar, finValorizarAbrir:finValorizarAbrir, anexoPartidasAbrir:anexoPartidasAbrir,
+          finDespachoAbrir:finDespachoAbrir, finDespachoCerrar:finDespachoCerrar, finDespachoUsarRef:finDespachoUsarRef, finDespachoRefReintentar:finDespachoRefReintentar, finValorizarAbrir:finValorizarAbrir, anexoPartidasAbrir:anexoPartidasAbrir,
           _o2mFinCostoInternoHeroCambio:_o2mFinCostoInternoHeroCambio, usarCostoInternoAuto:usarCostoInternoAuto,
           _o2mFinHeroBlur:_o2mFinHeroBlur,
           setAnexoItemMonto:setAnexoItemMonto, setAnexoItemConcepto:setAnexoItemConcepto,
