@@ -381,7 +381,7 @@
     for (var i = 0; i < 15; i++) {
       var iso = sumarDias(ahora.iso, i), d = diaInfo(iso);
       if (d.no_laboral) continue;
-      var desde = i === 0 ? Math.ceil(minutos(ahora.hm) / 30) * 30 : 0;
+      var desde = Math.max(i === 0 ? Math.ceil(minutos(ahora.hm) / 30) * 30 : 0, cierre24(iso));
       var h = huecosDia(vid, iso, desde);
       if (h.length) return { iso: iso, a: h[0][0], b: h[0][1] };
     }
@@ -518,6 +518,8 @@
       html += '<div class="fla-col' + (d.no_laboral ? ' nolab' : '') + (iso === ahora.iso ? ' hoy' : '') + '">';
       vehs.forEach(function (v) {
         html += '<div class="fla-pista" data-dia="' + iso + '" data-veh="' + v.id + '" data-ini="' + R[0] + '" title="Toca para pedir ' + esc(v.patente_fmt) + ' a esa hora">';
+        var c24 = iso >= ahora.iso ? Math.min(cierre24(iso), R[1]) : 0;
+        if (c24 > R[0]) html += '<span class="fla-c24" style="height:' + ((c24 - R[0]) / 60 * PX_HORA) + 'px" title="Se pide con al menos ' + antelacionH() + ' horas de anticipación"><b><i class="bi bi-hourglass-split"></i>' + antelacionH() + ' h</b></span>';
         if (iso < ahora.iso || (iso === ahora.iso)) {
           var pasadoHasta = iso < ahora.iso ? R[1] : Math.min(R[1], Math.max(R[0], minutos(ahora.hm)));
           if (pasadoHasta > R[0]) html += '<span class="fla-pasado" style="height:' + ((pasadoHasta - R[0]) / 60 * PX_HORA) + 'px"></span>';
@@ -552,7 +554,7 @@
       var d = diaInfo(iso), items = solDelDia(iso).filter(pasaFiltro).sort(function (p, q) { return p.inicio < q.inicio ? -1 : 1; });
       html += '<div class="fla-ld' + (d.no_laboral ? ' nolab' : '') + (iso === ahora.iso ? ' hoy' : '') + '"><div class="fla-ld-cab"><span><b>' + DIAS_LARGO[i] + (iso === ahora.iso ? ' · hoy' : '') + '</b>' +
         '<span>' + esc(fechaCorta(iso)) + (d.nombre ? ' · Feriado: ' + esc(d.nombre) : (d.no_laboral ? ' · No laboral' : '')) + '</span></span>' +
-        (iso >= ahora.iso ? '<button type="button" class="fl-btn fl-btn--chico" data-pedir="' + iso + '"><i class="bi bi-calendar-plus"></i>Pedir</button>' : '') + '</div>';
+        (iso >= ahora.iso ? (diaCerrado24(iso) ? '<span class="fla-ld-24" title="Se pide con al menos ' + antelacionH() + ' horas de anticipación"><i class="bi bi-hourglass-split"></i>' + antelacionH() + ' h de aviso</span>' : '<button type="button" class="fl-btn fl-btn--chico" data-pedir="' + iso + '"><i class="bi bi-calendar-plus"></i>Pedir</button>') : '') + '</div>';
       html += items.length ? items.map(function (s) {
         var v = vehPorId(s.vehiculo.id), k = areaKey(s.area);
         return '<button type="button" class="fla-lr fla-a--' + k + '" data-id="' + s.id + '">' + vehFoto(v, 'fla-lr-foto') +
@@ -638,6 +640,8 @@
   function pedirEnPista(pista, clientY) {
     var iso = pista.getAttribute('data-dia'), vid = pista.getAttribute('data-veh'), a = minutoEnPista(pista, clientY), ahora = ahoraCL();
     if (iso < ahora.iso || (iso === ahora.iso && a + 30 <= minutos(ahora.hm))) { toast('Ese horario ya pasó. Elige uno desde ahora en adelante.', 'warning'); return; }
+    var l24 = limite24Base();
+    if (l24 && (iso + 'T' + hhmm(a)) < l24) { toast('Se pide con al menos ' + antelacionH() + ' horas de anticipación: el primer horario disponible es ' + limiteTexto(l24) + '.', 'warning'); return; }
     var siguiente = 1440;
     solDelDia(iso).forEach(function (s) {
       if (String(s.vehiculo.id) !== String(vid)) return;
@@ -1197,10 +1201,17 @@
     return isoDe(d) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
   /* Quien PIDE no puede reservar con menos de 24 h de anticipación; la gestión (y quien mueve una reserva) sí. */
-  function pkLimite24() {
-    if (S.editSol || PERM.gestionar || PERM.admin) return null;
-    return sumarMin(ahoraCL().dt, antelacionH() * 60);
+  function limite24Base() { return (PERM.gestionar || PERM.admin) ? null : sumarMin(ahoraCL().dt, antelacionH() * 60); }
+  function pkLimite24() { return S.editSol ? null : limite24Base(); }
+  /* Hasta qué minuto de ese día rige la regla de 24 h en la AGENDA (0 = nada; 1440 = el día completo). */
+  function cierre24(iso) {
+    var l = limite24Base();
+    if (!l) return 0;
+    var li = l.slice(0, 10);
+    if (iso < li) return 1440;
+    return iso > li ? 0 : Math.ceil(minutos(l.slice(11, 16)) / 30) * 30;
   }
+  function diaCerrado24(iso) { var l = limite24Base(); return !!l && pkSlots().every(function (x) { return (iso + 'T' + hhmm(x)) < l; }); }
   function limiteTexto(l) {
     var iso = l.slice(0, 10), m = Math.ceil(minutos(l.slice(11, 16)) / 30) * 30;
     if (m >= 1440) { iso = sumarDias(iso, 1); m = 0; }
@@ -1505,6 +1516,10 @@
     tarjetasChoferes(s ? s.chofer.id : '');
     $('flSolAreasList').innerHTML = (S.config.areas || []).map(function (a) { return '<option value="' + esc(a) + '">'; }).join('');
     var l24 = pkLimite24();
+    if (!s && pref.fecha && (diaCerrado24(pref.fecha) || (pref.hora_desde && l24 && (pref.fecha + 'T' + pref.hora_desde) < l24))) {
+      toast('Ese horario se pide con al menos ' + antelacionH() + ' horas de anticipación. Te dejé el primer día disponible.', 'warning');
+      pref = { vehiculo_id: pref.vehiculo_id };
+    }
     f.elements.fecha.value = s ? s.fecha : (pref.fecha || (l24 ? l24.slice(0, 10) : (S.hoy || ahoraCL().iso)));
     f.elements.hora_desde.value = s ? s.hora_desde : (pref.hora_desde || '');
     f.elements.hora_hasta.value = s ? s.hora_hasta : (pref.hora_hasta || '');
@@ -2113,7 +2128,8 @@
     $('flaSemana').addEventListener('mousemove', function (ev) {      // muestra dónde partiría la reserva antes de tocar
       var p = ev.target.closest('.fla-pista');
       if (!p || ev.target.closest('.fla-b')) return;
-      var g = p.querySelector('.fla-fantasma'), ini = parseInt(p.getAttribute('data-ini'), 10) || 0, m = minutoEnPista(p, ev.clientY);
+      var g = p.querySelector('.fla-fantasma'), ini = parseInt(p.getAttribute('data-ini'), 10) || 0, m = minutoEnPista(p, ev.clientY), l24 = limite24Base();
+      g.style.display = l24 && (p.getAttribute('data-dia') + 'T' + hhmm(m)) < l24 ? 'none' : '';
       g.style.top = ((m - ini) / 60 * PX_HORA) + 'px';
       escribir(g, '+ ' + hhmm(m));
     });
