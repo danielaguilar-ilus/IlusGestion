@@ -63,6 +63,7 @@
         <button type="button" class="fl-fchip" data-sest="solicitada">Por confirmar</button>
         <button type="button" class="fl-fchip" data-sest="confirmada">Confirmadas</button>
         <button type="button" class="fl-fchip" data-sest="llave_entregada">Llave entregada</button>
+        <button type="button" class="fl-fchip" data-sest="devuelta">Devueltas</button>
         <button type="button" class="fl-fchip" data-sest="cancelada">Canceladas</button>
       </div>
       <div class="fl-chips" role="group" aria-label="Cuándo">
@@ -505,10 +506,27 @@
           <section class="fl-paso" data-paso="1">
             <div class="fl-paso-n" aria-hidden="true">1</div>
             <div class="fl-paso-cont">
+              <h6>¿Qué vehículo? <span class="fl-req">*</span></h6>
+              <p class="fl-ayuda">Elígelo primero: el calendario de abajo te muestra solo la jornada de ese vehículo. Si alguien lo pidió antes, queda a su nombre y eliges otro horario u otro vehículo.</p>
+              <div class="fl-campo" data-campo="vehiculo_id">
+                <div class="fl-vcards" id="flSolVehiculos" role="radiogroup" aria-label="Vehículo"></div>
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="2">
+            <div class="fl-paso-n" aria-hidden="true">2</div>
+            <div class="fl-paso-cont">
               <h6>¿Cuándo lo necesitas?</h6>
-              <p class="fl-ayuda">Elige el día, el vehículo y toca el bloque donde partes y el bloque donde terminas. Las llaves se entregan de 08:00 a 13:00 y de 14:00 a 17:00.</p>
-              {# Calendario propio del modal (Daniel, 02-nov-2026: «el calendario del modal tiene que ser potente, dinámico»): mismo
-                 esqueleto de dos columnas que el Paso 4 de /retiros/solicitar. Los campos de abajo siguen siendo la verdad del formulario. #}
+              <p class="fl-ayuda">Elige el día y toca el bloque donde partes y el bloque donde terminas. Las llaves se entregan de 08:00 a 13:00 y de 14:00 a 17:00. Se pide con al menos 24 horas de anticipación (la gestión puede reservar antes).</p>
+              <label class="fl-pk-switch" for="flSolOtroDia">
+                <input type="checkbox" id="flSolOtroDia">
+                <span class="fl-pk-sw-i" aria-hidden="true"></span>
+                <span class="fl-pk-sw-t"><b>Lo devuelvo otro día</b><span>Marcas la salida y la devolución en el calendario: el vehículo queda agendado todos esos días (hasta 7).</span></span>
+              </label>
+              {# Calendario propio del modal (Daniel, 02 y 03-nov-2026): mismo esqueleto de dos columnas que el Paso 4 de /retiros/solicitar.
+                 Los campos de abajo siguen siendo la verdad del formulario. #}
               <div class="fl-pk">
                 <div class="fl-pk-izq">
                   <div class="fl-pk-cab">
@@ -517,7 +535,8 @@
                     <button type="button" class="fl-pk-nav" id="flPkSig" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>
                   </div>
                   <div class="fl-pk-mes" id="flPkMes"></div>
-                  <div class="fl-pk-ley" aria-hidden="true"><span><i class="fl-pk-bar fl-pk-bar--libre" style="--p:1"></i>Libre</span><span><i class="fl-pk-bar fl-pk-bar--parcial" style="--p:1"></i>En parte</span><span><i class="fl-pk-bar fl-pk-bar--lleno" style="--p:1"></i>Lleno</span><span class="fl-pk-ley-n">Una barra por vehículo</span></div>
+                  <div class="fl-pk-ley" aria-hidden="true"><span><i class="fl-pk-bar fl-pk-bar--libre" style="--p:1"></i>Libre</span><span><i class="fl-pk-bar fl-pk-bar--parcial" style="--p:1"></i>En parte</span><span><i class="fl-pk-bar fl-pk-bar--lleno" style="--p:1"></i>Lleno</span></div>
+                  <div class="fl-pk-nota" id="flPkNota" aria-live="polite"></div>
                 </div>
                 <div class="fl-pk-der">
                   <div id="flPkBloques"></div>
@@ -545,25 +564,12 @@
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
               </div>
-              </details>
-              <label class="fl-check"><input type="checkbox" id="flSolOtroDia"> Lo devuelvo otro día</label>
               <div class="fl-campo fl-campo--corto" data-campo="fecha_hasta" id="flSolOtroDiaCampo" hidden>
                 <label for="flSolFechaHasta">Día de devolución</label>
                 <input type="date" id="flSolFechaHasta" name="fecha_hasta">
                 <div class="fl-msg" aria-live="polite"></div>
               </div>
-            </div>
-          </section>
-
-          <section class="fl-paso" data-paso="2">
-            <div class="fl-paso-n" aria-hidden="true">2</div>
-            <div class="fl-paso-cont">
-              <h6>¿Qué vehículo? <span class="fl-req">*</span></h6>
-              <p class="fl-ayuda">Te mostramos si está libre en ese horario. Si alguien lo pidió antes, queda a su nombre y eliges otro horario u otro vehículo.</p>
-              <div class="fl-campo" data-campo="vehiculo_id">
-                <div class="fl-vcards" id="flSolVehiculos" role="radiogroup" aria-label="Vehículo"></div>
-                <div class="fl-msg" aria-live="polite"></div>
-              </div>
+              </details>
             </div>
           </section>
 
@@ -633,6 +639,78 @@
       </div>
       <div class="modal-body"><div id="flSolDetCuerpo"></div></div>
       <div class="modal-footer fl-det-acc" id="flSolDetAcc"></div>
+    </div>
+  </div>
+</div>
+
+{# ═══ Modal: DEVOLUCIÓN del vehículo con evidencia (FASE 2, 03-nov-2026) ═══
+   Daniel: «que declaren la gasolina con una foto… el odómetro con una foto, para creerles el kilometraje… una foto interna y una
+   externa». Kilometraje, combustible y las cuatro fotos son obligatorios; lo raro se avisa (no se traba) y queda en la bitácora. #}
+<div class="modal fade" id="flModalDev" tabindex="-1" aria-labelledby="flModalDevTitulo" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content fl-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="flModalDevTitulo">Devolver el vehículo</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="fl-dev-cab" id="flDevCab"></div>
+        <form id="flFormDev" novalidate autocomplete="off">
+
+          <section class="fl-paso" data-paso="1">
+            <div class="fl-paso-n" aria-hidden="true">1</div>
+            <div class="fl-paso-cont">
+              <h6>¿Cuántos kilómetros marca el odómetro? <span class="fl-req">*</span></h6>
+              <div class="fl-campo fl-campo--corto" data-campo="km">
+                <input type="text" id="flDevKm" name="km" inputmode="numeric" placeholder="Por ejemplo 56.240" autocomplete="off" class="fl-dev-km">
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="2">
+            <div class="fl-paso-n" aria-hidden="true">2</div>
+            <div class="fl-paso-cont">
+              <h6>¿Cuánto combustible le queda? <span class="fl-req">*</span></h6>
+              <div class="fl-campo" data-campo="combustible">
+                <div class="fl-dev-comb" id="flDevComb" role="radiogroup" aria-label="Combustible"></div>
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="3">
+            <div class="fl-paso-n" aria-hidden="true">3</div>
+            <div class="fl-paso-cont">
+              <h6>Las cuatro fotos <span class="fl-req">*</span></h6>
+              <p class="fl-ayuda">Son la evidencia: el odómetro para el kilometraje, el indicador de combustible, el interior y el exterior. En el celular se abre la cámara.</p>
+              <div class="fl-dev-fotos" id="flDevFotos"></div>
+            </div>
+          </section>
+
+          <section class="fl-paso" data-paso="4">
+            <div class="fl-paso-n" aria-hidden="true">4</div>
+            <div class="fl-paso-cont">
+              <h6>¿Viene con alguna novedad?</h6>
+              <div class="fl-dev-nov" id="flDevNov" role="radiogroup" aria-label="Novedad">
+                <button type="button" class="fl-dev-nov-b on" data-nov="0" role="radio" aria-checked="true"><i class="bi bi-check-circle"></i><span><b>Sin novedad</b><span>Vuelve como salió</span></span></button>
+                <button type="button" class="fl-dev-nov-b" data-nov="1" role="radio" aria-checked="false"><i class="bi bi-exclamation-triangle"></i><span><b>Con novedad o daño</b><span>Rayón, golpe, falla, multa…</span></span></button>
+              </div>
+              <div class="fl-campo fl-campo--ancho" data-campo="observaciones">
+                <label for="flDevObs" id="flDevObsLbl">Observaciones (opcional)</label>
+                <textarea id="flDevObs" name="observaciones" rows="2" maxlength="500" placeholder="Lo que la gestión deba saber"></textarea>
+                <div class="fl-msg" aria-live="polite"></div>
+              </div>
+            </div>
+          </section>
+
+        </form>
+      </div>
+      <div class="modal-footer">
+        <div class="fl-pie-form" id="flDevPie" aria-live="polite"></div>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="flDevGuardar"><i class="bi bi-box-arrow-in-down me-1"></i>Registrar devolución</button>
+      </div>
     </div>
   </div>
 </div>

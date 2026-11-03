@@ -231,6 +231,12 @@ def register_flota_routes(app, ctx):
             "ALTER TABLE flota_choferes ADD COLUMN archivado_at DATETIME NULL",
             "ALTER TABLE flota_choferes ADD COLUMN telefono VARCHAR(30) NULL",
             "ALTER TABLE flota_solicitudes ADD COLUMN sla_aviso VARCHAR(20) NULL",
+            "ALTER TABLE flota_solicitudes ADD COLUMN devuelta_por VARCHAR(190) NULL",
+            "ALTER TABLE flota_solicitudes ADD COLUMN devuelta_at DATETIME NULL",
+            "ALTER TABLE flota_solicitudes ADD COLUMN dev_km INT NULL",
+            "ALTER TABLE flota_solicitudes ADD COLUMN dev_combustible VARCHAR(20) NULL",
+            "ALTER TABLE flota_solicitudes ADD COLUMN dev_obs VARCHAR(500) NULL",
+            "ALTER TABLE flota_solicitudes ADD COLUMN dev_novedad TINYINT(1) NOT NULL DEFAULT 0",
         )
         for sql_col in columnas_nuevas:
             try:
@@ -406,7 +412,7 @@ def register_flota_routes(app, ctx):
             "tipos": list(fr.TIPOS_SUGERIDOS), "combustibles": list(fr.COMBUSTIBLES_SUGERIDOS),
             "clases": [{"codigo": c, "nombre": fr.LICENCIA_CLASES[c]} for c in fr.ORDEN_CLASES],
             "clase_sugerida": "B", "dias_alerta": fr.DIAS_ALERTA,
-            "areas": list(fr.AREAS_SUGERIDAS), "max_dias_uso": fr.MAX_DIAS_USO,
+            "areas": list(fr.AREAS_SUGERIDAS), "max_dias_uso": fr.MAX_DIAS_USO, "antelacion_horas": fr.MIN_ANTELACION_H,
         }
 
     def _log(vid, accion, detalle=None, estricto=False):
@@ -738,7 +744,8 @@ def register_flota_routes(app, ctx):
         f = mysql_fetchone("SELECT * FROM flota_archivos WHERE id=%s", (aid,))
         if not f:
             return _error("No encontré ese archivo.", 404)
-        if f["tipo"] != "foto" and not _flota_docs():
+        # Las fotos de una devolución son evidencia de uso: las ve quien entra a la flota (como la foto del vehículo).
+        if f["tipo"] != "foto" and not str(f["tipo"]).startswith("dev_") and not _flota_docs():
             return _error("No tienes permiso para ver los documentos de la flota.", 403, error_codigo="SIN_PERMISO_DOCUMENTOS_FLOTA")
         if f["tipo"] == "foto" and not f.get("activo") and not _flota_docs():
             return _error("No encontré ese archivo.", 404)
@@ -810,7 +817,7 @@ def register_flota_routes(app, ctx):
         "CASE WHEN c.usuario_id IS NULL THEN 1 ELSE u.active END AS u_activo "
         "FROM flota_choferes c LEFT JOIN `" + _AUTH + "` u ON u.id = c.usuario_id")
     _SQL_SOL = (
-        "SELECT s.*, v.patente AS v_patente, v.tipo AS v_tipo, v.marca AS v_marca, v.modelo AS v_modelo, "
+        "SELECT s.*, v.patente AS v_patente, v.tipo AS v_tipo, v.marca AS v_marca, v.modelo AS v_modelo, v.km_actual AS v_km, "
         "COALESCE(u.nombre, c.nombre_completo) AS chofer_nombre, COALESCE(u.phone, c.telefono) AS chofer_phone "
         "FROM flota_solicitudes s JOIN flota_vehiculos v ON v.id = s.vehiculo_id "
         "LEFT JOIN flota_choferes c ON c.id = s.chofer_id LEFT JOIN `" + _AUTH + "` u ON u.id = c.usuario_id")
@@ -1181,7 +1188,12 @@ def register_flota_routes(app, ctx):
         titulo = " ".join(x for x in (r.get("v_tipo"), r.get("v_marca"), r.get("v_modelo")) if x)
         return {
             "id": r["id"], "numero": r.get("numero") or "", "estado": est, "estado_texto": fr.ESTADOS.get(est, est),
-            "vehiculo": {"id": r["vehiculo_id"], "patente_fmt": fr.patente_con_guion(r.get("v_patente")), "titulo": titulo},
+            "vehiculo": {"id": r["vehiculo_id"], "patente_fmt": fr.patente_con_guion(r.get("v_patente")), "titulo": titulo,
+                         "km_actual": r.get("v_km")},
+            "devolucion": ({"km": r.get("dev_km"), "combustible": r.get("dev_combustible"),
+                            "combustible_texto": fr.combustible_texto(r.get("dev_combustible")), "observaciones": r.get("dev_obs"),
+                            "novedad": bool(r.get("dev_novedad")), "por": r.get("devuelta_por"), "fmt": _hora_chile(r.get("devuelta_at"))}
+                           if est == "devuelta" else None),
             "area": r.get("area"), "solicitante": r.get("solicitante_nombre"),
             "chofer": {"id": r["chofer_id"], "nombre": r.get("chofer_nombre") or "(sin nombre)", "telefono": r.get("chofer_phone")},
             "fecha": _dia_iso(ini), "hora_desde": _hhmm(ini), "fecha_hasta": _dia_iso(fin), "hora_hasta": _hhmm(fin),
@@ -1199,6 +1211,8 @@ def register_flota_routes(app, ctx):
                 "llave": gest and est == "confirmada",
                 "editar": gest and est in fr.ESTADOS_EDITABLES,
                 "cancelar": (gest and est in fr.ESTADOS_OCUPAN) or (mia and est in fr.ESTADOS_EDITABLES),
+                # Devolver la llave (FASE 2): la gestión, que la recibe, o quien pidió el vehículo, que la trae.
+                "devolver": est == "llave_entregada" and (gest or mia),
             },
         }
 
@@ -1483,13 +1497,17 @@ def register_flota_routes(app, ctx):
     @_flota_required
     def flota_api_solicitud_crear():
         payload = request.get_json(silent=True) or {}
-        datos, errores = fr.validar_solicitud(payload, _ahora_chile())
+        # Anticipación mínima (Daniel, 03-nov-2026): quien PIDE reserva con al menos 24 h de aviso; la gestión puede reservar antes.
+        puede_antes = _flota_gestiona()
+        datos, errores = fr.validar_solicitud(payload, _ahora_chile(), antelacion_horas=None if puede_antes else fr.MIN_ANTELACION_H)
         if errores:
             return _error("Revisa los campos marcados.", 400, errores=errores)
         # Origen (Daniel, 03-nov-2026: «cuando se cree la orden de trabajo no debería mandar correo, pero si lo hacen por el menú sí»):
         # una reserva que nace desde una OT (origen="ot") no avisa por correo; la del menú Solicitudes de vehículo, sí.
         desde_ot = str(payload.get("origen") or "").strip().lower() == "ot"
         cuerpo, http = _reservar(datos)
+        if cuerpo.get("ok") and puede_antes and datos["inicio"] < _ahora_chile() + timedelta(hours=fr.MIN_ANTELACION_H):
+            cuerpo.setdefault("avisos", []).append(f"Faltan menos de {fr.MIN_ANTELACION_H} horas para esta reserva: quien pide debe hacerlo con ese aviso, pero la gestión puede reservar antes.")
         if cuerpo.get("ok") and not desde_ot:
             r = _sol_fila(cuerpo["id"])
             if r:
@@ -1507,7 +1525,8 @@ def register_flota_routes(app, ctx):
             return _error("No encontré esa solicitud.", 404)
         eventos = []
         titulos = {"creada": "Solicitud creada", "confirmada": "Confirmada por la gestión", "llave_entregada": "Llave entregada",
-                   "editada": "Reserva modificada", "cancelada": "Cancelada", "sla_aviso": "Aviso de llave atrasada a la gestión"}
+                   "editada": "Reserva modificada", "cancelada": "Cancelada", "sla_aviso": "Aviso de llave atrasada a la gestión",
+                   "devuelta": "Vehículo devuelto"}
         for f in mysql_fetchall(
                 "SELECT id, accion, detalle, usuario, created_at FROM flota_solicitud_log WHERE solicitud_id=%s ORDER BY id DESC LIMIT 200",
                 (sid,)) or []:
@@ -1527,9 +1546,25 @@ def register_flota_routes(app, ctx):
                 lineas = ["Motivo: " + (det.get("motivo") or "(sin motivo)")]
             elif f["accion"] == "llave_entregada" and det.get("nota"):
                 lineas = ["Nota: " + det["nota"]]
+            elif f["accion"] == "devuelta":
+                lineas = [x for x in (
+                    f"Kilometraje: {det.get('km'):,} km".replace(",", ".") if det.get("km") is not None else None,
+                    ("Combustible: " + fr.combustible_texto(det.get("combustible"))) if det.get("combustible") else None,
+                    "Con novedad o daño" if det.get("novedad") else None,
+                    ("Observaciones: " + det["observaciones"]) if det.get("observaciones") else None) if x]
+                lineas += list(det.get("avisos") or [])
             eventos.append({"accion": f["accion"], "titulo": titulos.get(f["accion"], f["accion"]), "lineas": lineas,
                             "usuario": f.get("usuario") or "", "fecha": _hora_chile(f.get("created_at"))})
-        return jsonify({"ok": True, "solicitud": _sol_json(dict(fila)), "eventos": eventos})
+        fotos = []
+        try:
+            for a in mysql_fetchall("SELECT id, tipo, nombre_original, content_type, bytes, subido_por, subido_at FROM flota_archivos "
+                                    "WHERE entidad='solicitud' AND entidad_id=%s AND activo=1 ORDER BY id", (sid,)) or []:
+                j = _archivo_json(a)
+                j["etiqueta"] = dict(fr.FOTOS_DEVOLUCION).get(a["tipo"], a["tipo"])
+                fotos.append(j)
+        except Exception as e:
+            print(f"[flota] fotos de la devolución: {type(e).__name__}", flush=True)
+        return jsonify({"ok": True, "solicitud": _sol_json(dict(fila)), "eventos": eventos, "fotos_devolucion": fotos})
 
     @app.route("/flota/api/solicitudes/<int:sid>", methods=["PUT"])
     @_flota_gestion_required
@@ -1654,3 +1689,100 @@ def register_flota_routes(app, ctx):
         return {"revisadas": len(filas), "avisos": avisos}
 
     ctx["_flota_sla_barrido"] = _flota_sla_barrido
+
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  FASE 2 · DEVOLUCIÓN DE LA LLAVE CON EVIDENCIA (03-nov-2026)
+    #  Daniel: «el hueveo va a ser cuando declaren la gasolina, que tuviera una foto, y que declaren el odómetro con una foto… para
+    #  creerles el kilometraje. Además una foto interna y una externa». Kilometraje + nivel de combustible + 4 fotos obligatorias.
+    #  Lo raro (km menor al último, salto grande) se AVISA y queda en la bitácora: no se traba, la foto es la evidencia.
+    # ═══════════════════════════════════════════════════════════════════════
+    def _guardar_imagen_solicitud(sid, tipo, archivo):
+        """Sube UNA foto de la devolución al almacenamiento privado y la registra. (fila_id, error)."""
+        data = archivo.read() if archivo else b""
+        info, err = fr.validar_archivo("solicitud", tipo, data)
+        if err:
+            return None, err
+        bucket = _bucket()
+        if bucket is None:
+            return None, "El almacenamiento de archivos no está disponible en este momento. Intenta de nuevo en unos minutos."
+        contenido, ct, ext = data, info["content_type"], info["extension"]
+        try:
+            resize = ctx.get("_img_resize_bytes")
+            if resize:
+                contenido, ct = resize(data, max_dim=1600, quality=84)
+                ext = ".png" if ct == "image/png" else (".webp" if ct == "image/webp" else ".jpg")
+        except Exception as e:
+            print(f"[flota] redimensionar foto de devolución: {type(e).__name__}", flush=True)
+        nombre = fr.nombre_seguro(getattr(archivo, "filename", "") or fr.ETIQUETAS_ARCHIVO.get(tipo, "foto"), ext)
+        clave = f"{_PREFIJO_PRIVADO}solicitud/{sid}/{tipo}_{secrets.token_hex(8)}{ext}"
+        try:
+            blob = bucket.blob(clave)
+            blob.cache_control = "private, max-age=0"
+            blob.upload_from_string(contenido, content_type=ct)
+            mysql_execute("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() "
+                          "WHERE entidad=%s AND entidad_id=%s AND tipo=%s AND activo=1", (current_username(), "solicitud", sid, tipo))
+            mysql_execute(
+                "INSERT INTO flota_archivos (entidad, entidad_id, tipo, nombre_original, content_type, bytes, gcs_key, sha256, subido_por) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                ("solicitud", sid, tipo, nombre, ct, len(contenido), clave, hashlib.sha256(contenido).hexdigest(), current_username()))
+        except Exception as e:
+            print(f"[flota] guardar foto de devolución: {type(e).__name__}: {e}", flush=True)
+            return None, "No se pudo guardar la foto. Intenta de nuevo."
+        return True, None
+
+    @app.route("/flota/api/solicitudes/<int:sid>/devolucion", methods=["POST"])
+    @_flota_required
+    def flota_api_solicitud_devolucion(sid):
+        fila = _sol_fila(sid)
+        if not fila:
+            return _error("No encontré esa solicitud.", 404)
+        fila = dict(fila)
+        if fila["estado"] != "llave_entregada":
+            return _error(f"Solo se devuelve un vehículo con la llave entregada; esta está «{fr.ESTADOS.get(fila['estado'], fila['estado'])}».",
+                          409, solicitud=_sol_json(fila))
+        if not _sol_json(fila)["puede"]["devolver"]:
+            return _error("La devolución la registra la gestión de la flota o quien pidió el vehículo.", 403, error_codigo="SIN_PERMISO_DEVOLVER")
+        datos, errores, avisos = fr.validar_devolucion(request.form, fila.get("v_km"))
+        fotos = {}
+        for tipo, nombre in fr.FOTOS_DEVOLUCION:
+            f = request.files.get(tipo)
+            if not f or not getattr(f, "filename", ""):
+                errores[tipo] = f"Falta la foto: {nombre.lower()}."
+            else:
+                fotos[tipo] = f
+        if errores:
+            return _error("Revisa lo marcado: el kilometraje, el combustible y las cuatro fotos son obligatorios.", 400, errores=errores)
+        for tipo, f in fotos.items():
+            ok, err = _guardar_imagen_solicitud(sid, tipo, f)
+            if err:
+                return _error(f"{dict(fr.FOTOS_DEVOLUCION)[tipo]}: {err}", 400, errores={tipo: err})
+        n = mysql_rowcount(
+            "UPDATE flota_solicitudes SET estado='devuelta', devuelta_por=%s, devuelta_at=NOW(), dev_km=%s, dev_combustible=%s, "
+            "dev_obs=%s, dev_novedad=%s WHERE id=%s AND estado='llave_entregada'",
+            (current_username(), datos["km"], datos["combustible"], datos["observaciones"], 1 if datos["novedad"] else 0, sid))
+        if not n:
+            actual = _sol_fila(sid) or fila
+            return _error(f"Otra persona ya la movió: ahora está «{fr.ESTADOS.get(actual['estado'], actual['estado'])}». Recarga la pantalla.", 409,
+                          solicitud=_sol_json(dict(actual)))
+        _slog(sid, "devuelta", {"km": datos["km"], "combustible": datos["combustible"], "novedad": datos["novedad"],
+                                "observaciones": datos["observaciones"], "avisos": avisos})
+        # El kilometraje del vehículo sube con la devolución (nunca baja solo: un km menor queda avisado, no se pisa el registro).
+        try:
+            if mysql_rowcount("UPDATE flota_vehiculos SET km_actual=%s, updated_by=%s WHERE id=%s AND (km_actual IS NULL OR km_actual < %s)",
+                              (datos["km"], current_username(), fila["vehiculo_id"], datos["km"])):
+                _log(fila["vehiculo_id"], "editado", {"cambios": {"km_actual": {"antes": fila.get("v_km"), "despues": datos["km"]}},
+                                                      "motivo": f"Devolución de la solicitud {fila.get('numero') or sid}"})
+        except Exception as e:
+            print(f"[flota] km tras devolución: {type(e).__name__}", flush=True)
+        r = dict(_sol_fila(sid) or fila)
+        primera = (f"{current_username() or 'Alguien'} registró la devolución: {datos['km']:,} km · combustible "
+                   f"{fr.combustible_texto(datos['combustible'])}".replace(",", ".") + (" · CON NOVEDAD O DAÑO" if datos["novedad"] else "") + ".")
+        if datos["observaciones"]:
+            primera += " Observaciones: " + datos["observaciones"]
+        if avisos:
+            primera += " Ojo: " + " ".join(avisos)
+        _correo_flota("flota_devolucion", [u for u in _gestores_flota() if u != _uid()],
+                      f"Vehículo devuelto {r.get('numero') or ''}: {fr.patente_con_guion(r.get('v_patente'))}"
+                      + (" · con novedad" if datos["novedad"] else ""), _cuerpo_correo(r, primera))
+        return jsonify({"ok": True, "solicitud": _sol_json(r), "avisos": avisos})
