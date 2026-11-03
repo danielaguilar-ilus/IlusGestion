@@ -195,6 +195,23 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
 /* Accesibilidad + movimiento reducido (misma auditoría que Retiros) */
 #ilus-tk button:focus-visible,#ilus-tk a:focus-visible,#ilus-tk input[type=checkbox]:focus-visible{outline:2px solid #1C1C1C;outline-offset:2px}
 {# Ojo: «{ #ilus-tk» lleva espacio a propósito: «{#» abriría un comentario Jinja y se comería media página. #}
+/* Documentos de la compra: hasta 5 (mismo patrón que «Agendar retiro») */
+#ilus-tk .sp-docrow{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:10px;margin:0 0 10px}
+#ilus-tk .sp-docrow.is-extra{grid-template-columns:minmax(0,5fr) minmax(0,7fr) 46px}
+#ilus-tk .sp-docrow select.sp-in{display:block;width:100%;min-height:46px;margin:0;padding:11px 14px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#111827;font:inherit;font-size:15px;line-height:1.3}
+#ilus-tk .sp-docdel{min-height:46px;width:46px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#4b5563;font:inherit;font-size:16px;line-height:1;cursor:pointer}
+#ilus-tk .sp-docdel:hover{border-color:#dc2626;color:#dc2626}
+#ilus-tk .sp-docadd-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:4px 0 0}
+#ilus-tk .sp-docadd-row .fh{margin:0;flex:1 1 220px}
+#ilus-tk .sp-docadd{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 24px;border-radius:45px;font:inherit;font-weight:500;font-size:13px;cursor:pointer;border:1.5px solid var(--k);background:#fff;color:var(--k);text-transform:uppercase}
+#ilus-tk .sp-docadd[disabled]{opacity:.45;cursor:not-allowed}
+/* OJO: en Jinja una llave seguida de numeral abre un comentario; por eso el salto de línea antes de #ilus-tk */
+@media(max-width:560px){
+  #ilus-tk .sp-docrow,#ilus-tk .sp-docrow.is-extra{grid-template-columns:minmax(0,1fr) 46px}
+  #ilus-tk .sp-docrow:not(.is-extra){grid-template-columns:minmax(0,1fr)}
+  #ilus-tk .sp-docrow.is-extra select{grid-column:1 / -1}
+  #ilus-tk .sp-docrow.is-extra input{grid-column:1}
+}
 @media (prefers-reduced-motion:reduce){ #ilus-tk *,#ilus-tk *::before,#ilus-tk *::after{transition-duration:.01s!important;animation-duration:.01s!important}}
 /* Celular (REGLA #3): todo a 1 columna, tipos en 2 columnas, inputs de 16 px (sin auto-zoom en iOS) */
 @media(max-width:720px){
@@ -405,10 +422,24 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
       <div class="sp-grid">
         {# 2026-10-27: el N° de documento se MUEVE del paso 4 (que se oculta en «¿Dónde está mi pedido?» y «Cambiar o devolver») a este
            paso, siempre visible: es la clave para ubicar la compra. Sigue opcional. #}
-        <div class="sp-field full">
-          <label for="spDoc">N° de boleta, factura o pedido <span class="op">Opcional</span></label>
-          <input type="text" id="spDoc" placeholder="Ej: 10683 o #1136" maxlength="500" inputmode="numeric">
-          <div class="fh">Aparece en la parte superior de tu documento o en el correo de tu pedido. Nos ayuda a ubicar tu compra.</div>
+        {# 2026-11-03 (Daniel): multidocumento y con las mismas opciones que Retiros: pedido web, factura (FCV) o boleta (BLV), hasta 5.
+           Viaja al ticket como «WEB-1136, FCV-10683», el texto que ILUS ya sabe leer para cruzar cada documento con su compra. #}
+        <div class="sp-field full" id="spDocs">
+          <label for="spDoc">Documento de tu compra <span class="op">Opcional</span></label>
+          <div class="sp-docrow" data-docrow>
+            <select class="sp-in" id="spDocTipo" data-doc-tipo aria-label="Tipo de documento">
+              <option value="WEB">Pedido web (ilusfitness.com)</option>
+              <option value="FCV">Factura electrónica</option>
+              <option value="BLV">Boleta electrónica</option>
+            </select>
+            <input type="text" id="spDoc" data-doc-num placeholder="Ej: 1136" maxlength="20" inputmode="numeric" autocomplete="off" aria-label="N° del documento">
+          </div>
+          <div id="spDocsExtra"></div>
+          <div class="sp-docadd-row">
+            <button type="button" class="sp-docadd" id="spDocAdd">+ Agregar documento</button>
+            <div class="fh" id="spDocAddHelp">¿Es por más de una compra? Agrega hasta 5 documentos en esta misma solicitud.</div>
+          </div>
+          <div class="fh">El N° aparece en la parte superior de tu factura o boleta, o en el correo de tu pedido (ej: #1136 → escribe 1136). Nos ayuda a ubicar tu compra.</div>
         </div>
         <div class="sp-field full" id="fDescWrap">
           <label for="spDesc">¿Qué está pasando? <span class="req">*</span></label>
@@ -524,6 +555,56 @@ function esc(s){ return (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</
   .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arguments,c=this; t=setTimeout(()=>fn.apply(c,a),ms); }; }
 function marcarError(id, on){ document.getElementById(id).classList.toggle('err', !!on); }
+
+// ── Documentos de la compra: hasta 5 (pedido web, factura o boleta) ──
+const SP_DOC_MAX = 5;
+function spFilasDoc(){ return Array.prototype.slice.call(document.getElementById('spDocs').querySelectorAll('[data-docrow]')); }
+function spSoloDigitos(v){ return String(v || '').replace(/\D/g, '').slice(0, 20); }
+function spActualizarDocAdd(){
+  const lleno = spFilasDoc().length >= SP_DOC_MAX;
+  document.getElementById('spDocAdd').disabled = lleno;
+  document.getElementById('spDocAddHelp').textContent = lleno
+    ? 'Llegaste al máximo de ' + SP_DOC_MAX + ' documentos por solicitud.'
+    : '¿Es por más de una compra? Agrega hasta ' + SP_DOC_MAX + ' documentos en esta misma solicitud.';
+}
+function spAgregarFilaDoc(){
+  if(spFilasDoc().length >= SP_DOC_MAX) return null;
+  const f = document.createElement('div');
+  f.className = 'sp-docrow is-extra'; f.setAttribute('data-docrow', '');
+  f.innerHTML = '<select class="sp-in" data-doc-tipo aria-label="Tipo de documento">' +
+    '<option value="WEB">Pedido web (ilusfitness.com)</option><option value="FCV">Factura electrónica</option><option value="BLV">Boleta electrónica</option></select>' +
+    '<input type="text" data-doc-num maxlength="20" inputmode="numeric" placeholder="Ej: 10683" autocomplete="off" aria-label="N° del documento">' +
+    '<button type="button" class="sp-docdel" data-doc-del aria-label="Quitar este documento" title="Quitar este documento">✕</button>';
+  document.getElementById('spDocsExtra').appendChild(f);
+  spActualizarDocAdd();
+  return f;
+}
+function spLimpiarDocs(){ document.getElementById('spDocsExtra').innerHTML = ''; spActualizarDocAdd(); }
+// → { texto: 'WEB-1136, FCV-10683', malos: [inputs sin número válido] }
+function spDocumentos(){
+  const vistos = {}, partes = [], malos = [];
+  spFilasDoc().forEach(function(f){
+    const inp = f.querySelector('[data-doc-num]'), crudo = String(inp.value || '').trim();
+    if(!crudo) return;                                   // fila vacía: se ignora (el campo es opcional)
+    const n = spSoloDigitos(crudo).replace(/^0+(?=\d)/, '');
+    if(!n){ malos.push(inp); return; }
+    const cod = f.querySelector('[data-doc-tipo]').value + '-' + n;
+    if(!vistos[cod]){ vistos[cod] = 1; partes.push(cod); }
+  });
+  return { texto: partes.join(', '), malos: malos };
+}
+document.getElementById('spDocAdd').addEventListener('click', function(){
+  const f = spAgregarFilaDoc();
+  if(f) f.querySelector('[data-doc-num]').focus();
+});
+document.getElementById('spDocs').addEventListener('click', function(e){
+  const b = e.target.closest ? e.target.closest('[data-doc-del]') : null;
+  if(!b) return;
+  const fila = b.closest('[data-docrow]');
+  if(fila && fila.parentNode) fila.parentNode.removeChild(fila);
+  spActualizarDocAdd();
+});
+spActualizarDocAdd();
 const $id = function(id){ return document.getElementById(id); };
 
 // ── Semáforo de pasos (2026-10-27, mismo lenguaje que el formulario de retiros de la tienda) ──
@@ -891,6 +972,8 @@ function validarTodo(){
   // bloquea el envio; si el cliente no sabe el nombre, el ticket avanza sin
   // el (se resuelve despues por telefono/correo, o el toggle de Repuestos
   // que agrega Daniel a mano en la ficha).
+  const spDocs = spDocumentos();
+  if(spDocs.malos.length){ falta('Escribe solo el número del documento (ej: 1136).', spDocs.malos[0], 5); }
   if(!document.getElementById('spDesc').value.trim()){ marcarError('fDescWrap', true); falta('Cuéntanos qué está pasando.', document.getElementById('spDesc'), 5); } else marcarError('fDescWrap', false);
   if(!ok){
     spMostrarAvisos(avisos);
@@ -920,7 +1003,7 @@ document.getElementById('spBtnEnviar').addEventListener('click', async function(
     es_garantia: document.getElementById('spGarantia').checked ? 1 : 0,
     sucursal: conEquipo ? document.getElementById('spSucursal').value.trim() : '',
     productos: conEquipo ? productos : [],
-    numero_documento: document.getElementById('spDoc').value.trim(),
+    numero_documento: spDocumentos().texto,
     descripcion: document.getElementById('spDesc').value.trim(),
     // Anti-bots (2026-10-27): campo trampa + hora del servidor al abrir el formulario.
     hp_ilus_extra: document.getElementById('spHp').value,
@@ -986,6 +1069,7 @@ function spResetFormulario(){
    'spDoc','spDesc','spBuscarProd','spDirLat','spDirLng','spDirPlace','spComuna','spRegion','spCodigoPostal','spHp']
     .forEach(function(id){ const el = document.getElementById(id); if(el) el.value = ''; });
   document.getElementById('spDescCount').textContent = '260';
+  spLimpiarDocs(); document.getElementById('spDocTipo').value = 'WEB';
   const spGar = document.getElementById('spGarantia'); if(spGar) spGar.checked = false;
   const spProdT = document.getElementById('spProdToggle');
   if(spProdT){ spProdT.checked = false; document.getElementById('prodBuscarWrap').classList.add('sp-hidden'); }
