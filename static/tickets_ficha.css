@@ -423,15 +423,17 @@
   .rp-pl-row:hover .rp-pl-dots,.rp-pl-row:focus-within .rp-pl-dots{opacity:1;} }
 
 /* ── Stepper de estado (tracking visual de avance) ── */
-.tk-stepper-card{padding-bottom:14px;}
-.tk-stepper{display:flex;align-items:flex-start;}
+/* 03-nov (Daniel: «me cuesta más darle scroll»): la tarjeta del recorrido es una grilla — el recorrido a la izquierda y,
+   en pantallas anchas, el resumen de tiempos a su lado (ver tickets_ficha_v2.css). */
+.tk-stepper-card{display:grid;grid-template-columns:minmax(0,1fr);align-items:center;padding:16px 20px 12px;}
+.tk-stepper{display:flex;align-items:flex-start;min-width:0;}
 .tk-step{flex:1;position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer;}
-.tk-step:not(:first-child)::before{content:'';position:absolute;top:19px;left:-50%;width:100%;height:3px;
+.tk-step:not(:first-child)::before{content:'';position:absolute;top:15.5px;left:-50%;width:100%;height:3px;
   background:#e5e7eb;z-index:0;}
 .tk-step.done:not(:first-child)::before,.tk-step.current:not(:first-child)::before{background:#16a34a;}
-.tk-step-circle{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  font-size:1.05rem;background:#f3f4f6;color:#9ca3af;position:relative;z-index:1;transition:background .15s,color .15s;}
-.tk-step-label{font-size:.72rem;font-weight:700;color:#9ca3af;margin-top:7px;}
+.tk-step-circle{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:.95rem;background:#f3f4f6;color:#9ca3af;position:relative;z-index:1;transition:background .15s,color .15s;}
+.tk-step-label{font-size:.72rem;font-weight:700;color:#9ca3af;margin-top:5px;}
 .tk-step.done .tk-step-circle{background:#dcfce7;color:#166534;}
 .tk-step.done .tk-step-label{color:#166534;}
 .tk-step.current .tk-step-circle{background:var(--ilus-red,#dc2626);color:#fff;box-shadow:0 0 0 5px rgba(220,38,38,.15);}
@@ -439,7 +441,7 @@
 .tk-step-badge{position:absolute;top:-10px;background:#fff;border:1px solid #dc2626;color:#dc2626;
   font-size:.56rem;font-weight:800;border-radius:50px;padding:1px 8px;white-space:nowrap;z-index:2;}
 .tk-pending-pill{background:#fff8e1;color:#b45309;border-radius:50px;padding:6px 14px;font-size:.78rem;
-  font-weight:800;display:inline-flex;align-items:center;gap:6px;margin-top:14px;}
+  font-weight:800;display:inline-flex;align-items:center;gap:6px;margin-top:10px;grid-column:1/-1;justify-self:center;}
 .tk-cancel-banner{background:#fee2e2;color:#991b1b;border-radius:10px;padding:12px 16px;font-weight:800;
   display:flex;align-items:center;gap:10px;font-size:.92rem;}
 @media (max-width:520px){
@@ -447,7 +449,7 @@
   .tk-step{flex-direction:row;justify-content:flex-start;text-align:left;gap:12px;padding:8px 0;
     flex-wrap:wrap;}
   .tk-step-label{margin-top:0;}
-  .tk-step:not(:first-child)::before{top:-6px;left:19px;width:3px;height:16px;}
+  .tk-step:not(:first-child)::before{top:-6px;left:15.5px;width:3px;height:16px;}
   .tk-step-badge{position:static;margin-left:6px;}
   /* Label de sub-estado largo (ej. "Pendiente aprobación OT") junto al
      círculo de 40px puede no caber en el ancho de la tarjeta -- que baje
