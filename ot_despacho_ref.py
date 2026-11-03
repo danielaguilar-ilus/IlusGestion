@@ -44,7 +44,8 @@ def resumir_lineas(lineas, es_servicio=None):
     """Suma el peso facturable de las líneas de PRODUCTO de un documento (las de servicio, descuento y las ZZ no se llevan en un camión).
 
     `lineas` = lo que devuelve `_cubicador_fetch`: cada una con `pred_tot` (peso predominante total de la línea, ya multiplicado por la cantidad),
-    `cantidad`, `es_zz`, `es_descuento`. `es_servicio(sku, descripcion, es_zz)` es opcional (cubicador_plus._es_linea_servicio).
+    `cantidad`, `es_zz`, `es_descuento`. `es_servicio(sku, descripcion, es_zz)` es opcional (cubicador_plus._es_linea_servicio, que devuelve una
+    tupla `(es_servicio, motivo)`; también se acepta un booleano).
     Una línea de producto SIN medidas cargadas (pred_tot = 0) no pesa nada: se lista aparte para avisar que la referencia puede quedar corta."""
     peso, productos, sin_medidas = 0.0, 0, []
     for l in lineas or []:
@@ -53,7 +54,10 @@ def resumir_lineas(lineas, es_servicio=None):
         sku, desc = str(l.get("sku") or ""), str(l.get("descripcion_erp") or l.get("descripcion") or "")
         if es_servicio is not None:
             try:
-                if es_servicio(sku, desc, bool(l.get("es_zz"))):
+                r = es_servicio(sku, desc, bool(l.get("es_zz")))
+                if isinstance(r, (tuple, list)):       # cubicador_plus._es_linea_servicio devuelve (bool, motivo): una tupla siempre sería «verdadera»
+                    r = r[0] if r else False
+                if r:
                     continue
             except Exception:
                 pass

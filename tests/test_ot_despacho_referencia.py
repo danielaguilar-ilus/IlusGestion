@@ -63,6 +63,17 @@ class TestResumirLineas(unittest.TestCase):
         r = odr.resumir_lineas(lineas, lambda sku, desc, zz: sku == "FLETE")
         self.assertEqual((r["peso_kg"], r["productos"]), (10.0, 1))
 
+    def test_el_filtro_real_del_cubicador_devuelve_una_tupla(self):
+        """Bug real visto en producción el 3-nov: _es_linea_servicio devuelve (bool, motivo); tratar la tupla como booleano descartaba TODOS los productos."""
+        import cubicador_plus as cp
+        lineas = [{"sku": "TROT-1", "descripcion_erp": "Trotadora", "cantidad": 2, "pred_tot": 180.5},
+                  {"sku": "FLETE", "descripcion_erp": "Envío", "cantidad": 1, "pred_tot": 50},
+                  {"sku": "MAN-2", "descripcion_erp": "Mancuerna", "cantidad": 10, "pred_tot": 40}]
+        r = odr.resumir_lineas(lineas, cp._es_linea_servicio)
+        self.assertEqual((r["peso_kg"], r["productos"]), (220.5, 2), "el producto cuenta y el flete/servicio no")
+        self.assertEqual(odr.resumir_lineas(lineas, lambda s, d, z: (False, ""))["productos"], 3)
+        self.assertEqual(odr.resumir_lineas(lineas, lambda s, d, z: (True, "x"))["productos"], 0)
+
     def test_datos_raros_no_rompen(self):
         r = odr.resumir_lineas([None, "x", {"sku": "A", "cantidad": "n/a", "pred_tot": "n/a"}, {"sku": "B", "cantidad": "2", "pred_tot": "7,5"}])
         self.assertEqual(r["peso_kg"], 0.0)
