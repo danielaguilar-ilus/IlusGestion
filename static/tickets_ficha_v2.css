@@ -373,3 +373,35 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
   .tk-step-info .tk-step-label{margin-top:0;}
   .tk-trk-resumen{justify-content:flex-start;}
 }
+
+/* ── Cabecera de la ficha más compacta (Daniel 03-nov: «me cuesta más darle scroll, es fastidioso») ──
+   Medido en una ficha real a 1920 px: hasta el contenido había ~1.040 px (cabecera 256 + estado y avance 152 +
+   guía 399 + recorrido 236). Aquí la guía baja ~66 px y «Estado y avance» ~29 px SIN quitar ningún dato:
+   la tarjeta «Esperando / Siguiente» pasa a una fila (título + botón al lado) y las fichas se apretan.
+   Los selectores llevan #tkGuia / #tkEstadoAvance a propósito: ganan sobre las reglas de arriba. */
+#tkEstadoAvance{margin-bottom:10px;}
+#tkEstadoAvance .tk-ea-col{gap:5px;padding:10px 16px;}
+#tkEstadoAvance .tk-ea-pill{padding:5px 14px;}
+#tkEstadoAvance .tk-ea-num b{font-size:1.6rem;}
+#tkEstadoAvance .tk-ea-barra{height:8px;}
+#tkGuia .tk-gbar{padding:8px 16px 2px;gap:6px 20px;}
+#tkGuia .tk-gbar-t{font-size:1.05rem;}
+#tkGuia .tk-gbar-t .bi{font-size:1.25rem;}
+#tkGuia .tk-gprog{height:8px;}
+#tkGuia .tk-gchips{padding:4px 12px 6px;gap:6px;}
+#tkGuia .tk-gchip{min-height:40px;padding:3px 8px;gap:7px;border-width:1.5px;border-radius:10px;}
+#tkGuia .tk-gchip-n{width:26px;height:26px;font-size:.85rem;border-width:2px;}
+#tkGuia .tk-gchip-t{font-size:.84rem;line-height:1.15;}
+#tkGuia .tk-gchip-t small{font-size:.72rem;line-height:1.2;}
+#tkGuia .tk-gsig{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"k t a" "p p a";align-items:center;gap:2px 14px;margin:2px 12px 10px;padding:8px 14px;border-width:2px;border-radius:12px;}
+#tkGuia .tk-gsig-k{grid-area:k;font-size:.74rem;}
+#tkGuia .tk-gsig h4{grid-area:t;margin:0;font-size:1.08rem;}
+#tkGuia .tk-gsig p{grid-area:p;margin:0;font-size:.9rem;line-height:1.35;}
+#tkGuia .tk-gsig .tk-gacc{grid-area:a;margin:0;}
+#tkGuia .tk-gbtn{min-height:38px;padding:0 14px;font-size:.9rem;}
+@media (max-width:991px){
+  /* En celular la tarjeta vuelve a apilarse: no cabe título + botón en una fila */
+  #tkGuia .tk-gsig{grid-template-columns:minmax(0,1fr);grid-template-areas:"k" "t" "p" "a";}
+  #tkGuia .tk-gsig .tk-gacc{margin-top:6px;}
+  #tkGuia .tk-gbtn{min-height:44px;}
+}
