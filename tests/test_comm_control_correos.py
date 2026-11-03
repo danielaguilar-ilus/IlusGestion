@@ -92,7 +92,7 @@ class TestRegistro(unittest.TestCase):
         grupos = {c["modulo_ui"] for c in R.listar()}
         self.assertIn("ot", grupos)
         self.assertEqual({"ot", "tickets", "mantenciones", "retiros", "transporte", "cotizaciones", "prospectos",
-                          "repuestos", "catalogo", "accesos"}, grupos)
+                          "repuestos", "catalogo", "accesos", "flota"}, grupos)     # flota: Solicitudes de vehículo (03-nov-2026)
         for k in ("ot_creada_cliente", "ot_tec_asignada", "ot_tec_agenda_manana", "ot_pendiente_aprobacion",
                   "ot_informe_servicio", "ot_anexo_envio", "ot_acta_recepcion"):
             self.assertEqual(R.por_clave(k)["modulo_ui"], "ot", k)

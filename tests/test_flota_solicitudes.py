@@ -293,6 +293,8 @@ class Falsa(BaseFalsa):
             return [dict(self.veh[p[0]])] if p[0] in self.veh else []
         if s.startswith("SELECT * FROM flota_solicitudes WHERE id=%s FOR UPDATE"):
             return [dict(self.sol[p[0]])] if p[0] in self.sol else []
+        if s.startswith("SELECT u.id, (SELECT up.permitido FROM usuario_permisos up WHERE up.user_id=u.id AND up.permiso='flota_gestionar'"):
+            return [{"id": 2, "ov": 1, "rolp": None}, {"id": 4, "ov": None, "rolp": 0}]      # Beto gestiona la flota; Dani no
         if s.startswith("SELECT IS_NULLABLE FROM information_schema.COLUMNS"):
             return [{"IS_NULLABLE": "YES"}]
         if s.startswith("SELECT id, nombre_completo FROM flota_choferes WHERE rut=%s"):
@@ -545,7 +547,7 @@ class _Cursor:
         return [dict(x) for x in self._r]
 
 
-def _app(base, bucket=None):
+def _app(base, bucket=None, extra=None):
     from flask import Flask, g, redirect, request
 
     plantillas = tempfile.mkdtemp(prefix="flota_tpl_")
@@ -581,6 +583,7 @@ def _app(base, bucket=None):
     ctx = {"mysql_fetchone": base.fetchone, "mysql_fetchall": base.fetchall, "mysql_execute": base.execute,
            "mysql_execute_returning_rowcount": base.rowcount, "get_mysql": base.conexion, "AUTH_TABLE": "app_users",
            "login_required": login_required, "current_username": lambda: "Daniel Aguilar", "_gcs_bucket": lambda: bucket}
+    ctx.update(extra or {})
     import flota_module
     flota_module.register_flota_routes(app, ctx)
     return app
@@ -1185,3 +1188,42 @@ class TestHorarioYSlaLlave(unittest.TestCase):
         self.assertEqual(len(av), 2)
         self.assertIn("podría no haber quién entregue la llave", av[0])
         self.assertIn("podría no haber quién reciba la llave", av[1])
+
+
+class TestCorreosFlota(unittest.TestCase):
+    """03-nov-2026 (Daniel): «activa en comunicaciones sus mails» y «cuando se cree la orden de trabajo no debería mandar correo, pero si
+    lo hacen por el menú sí»."""
+
+    def setUp(self):
+        self.enviados = []
+        self.base = Falsa()
+        aviso = lambda clave, uids, titulo, cuerpo, url, etiqueta="", ref=None: self.enviados.append((clave, list(uids), titulo, cuerpo)) or len(uids)
+        self.app = _app(self.base, extra={"_aviso_interno_correo": aviso})
+        self.c = self.app.test_client()
+        vid = self.c.post("/flota/api/vehiculos", json={"patente": "PHVD21-7", "tipo": "Camión", "licencia_clases": ["B"]},
+                          headers=SUPER).get_json()["vehiculo"]["id"]
+        cid = self.c.post("/flota/api/choferes", json=dict(_datos_chofer(1), usuario_id=1), headers=SUPER).get_json()["chofer"]["id"]
+        dia = (dt.date.today() + dt.timedelta(days=5)).isoformat()
+        self.sol = {"vehiculo_id": vid, "chofer_id": cid, "area": "Logística", "motivo": "Reparto zona norte", "fecha": dia,
+                    "hora_desde": "09:00", "hora_hasta": "11:00"}
+
+    def test_desde_el_menu_avisa_a_la_gestion(self):
+        r = self.c.post("/flota/api/solicitudes", json=self.sol, headers=SUPER)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual([e[0] for e in self.enviados], ["flota_solicitud_nueva"])
+        self.assertEqual(self.enviados[0][1], [2])                      # solo quien tiene «Gestionar solicitudes»
+        self.assertIn("PHVD-21", self.enviados[0][2])
+        self.assertIn("Retira la llave", self.enviados[0][3])
+
+    def test_desde_una_ot_no_manda_correo(self):
+        r = self.c.post("/flota/api/solicitudes", json=dict(self.sol, origen="ot"), headers=SUPER)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(self.enviados, [])
+
+    def test_las_claves_estan_en_el_registro_de_comunicaciones(self):
+        import comm_correos_registro as REG
+        for k in ("flota_solicitud_nueva", "flota_solicitud_confirmada", "flota_solicitud_cancelada", "flota_llave_atrasada"):
+            c = REG.por_clave(k)
+            self.assertIsNotNone(c, k)
+            self.assertEqual((c["modulo_ui"], c["llave"]), ("flota", "comunicacion_interna"))
+            self.assertFalse(c["nace_apagado"])

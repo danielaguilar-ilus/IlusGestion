@@ -506,7 +506,7 @@
             <div class="fl-paso-n" aria-hidden="true">1</div>
             <div class="fl-paso-cont">
               <h6>¿Cuándo lo necesitas?</h6>
-              <p class="fl-ayuda">Elige el día y toca en la jornada el bloque donde partes y el bloque donde terminas. Lo rojo ya está pedido.</p>
+              <p class="fl-ayuda">Elige el día, el vehículo y toca el bloque donde partes y el bloque donde terminas. Las llaves se entregan de 08:00 a 13:00 y de 14:00 a 17:00.</p>
               {# Calendario propio del modal (Daniel, 02-nov-2026: «el calendario del modal tiene que ser potente, dinámico»): mismo
                  esqueleto de dos columnas que el Paso 4 de /retiros/solicitar. Los campos de abajo siguen siendo la verdad del formulario. #}
               <div class="fl-pk">
@@ -524,6 +524,10 @@
                   <div class="fl-pk-sel" id="flPkSel" aria-live="polite"></div>
                 </div>
               </div>
+              {# Día / Desde / Hasta: son los MISMOS datos que se eligen en el calendario (Daniel, 03-nov: «¿la fecha de abajo qué
+                 hace?»). Quedan plegados para ajustar a mano una hora fuera de los bloques; el formulario los sigue usando. #}
+              <details class="fl-pk-manual" id="flPkManual">
+                <summary><i class="bi bi-sliders"></i>Ajustar el día y la hora a mano (por ejemplo, fuera del horario de llaves)</summary>
               <div class="fl-grid fl-grid--3 fl-pk-campos">
                 <div class="fl-campo" data-campo="fecha">
                   <label for="flSolFecha">Día <span class="fl-req">*</span></label>
@@ -541,6 +545,7 @@
                   <div class="fl-msg" aria-live="polite"></div>
                 </div>
               </div>
+              </details>
               <label class="fl-check"><input type="checkbox" id="flSolOtroDia"> Lo devuelvo otro día</label>
               <div class="fl-campo fl-campo--corto" data-campo="fecha_hasta" id="flSolOtroDiaCampo" hidden>
                 <label for="flSolFechaHasta">Día de devolución</label>

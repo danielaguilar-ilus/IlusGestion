@@ -39597,6 +39597,14 @@ def tr_cron_simpliroute_poll():
                 res["retiros_prep_auto"] = _fn_rp(max_s=70, t_peticion=_t_peticion)
         except Exception as _e_rp:
             print(f"[cron-simpliroute] retiros prep auto: {_e_rp}", flush=True)
+    # Flota (03-nov-2026): aviso por correo a la gestión cuando se atrasa la entrega de una llave (SLA). Si falla no afecta al polling.
+    if not dry:
+        try:
+            _fn_fl = globals().get("_flota_sla_barrido")
+            if _fn_fl:
+                res["flota_sla"] = _fn_fl()
+        except Exception as _e_fl:
+            print(f"[cron-simpliroute] flota SLA: {_e_fl}", flush=True)
     # Vigilancia: toda instalación NUEVA deja su ficha de cliente (Daniel 2026-10-04). No envía nada. Si falla no afecta al polling.
     if not dry:
         try:
