@@ -75,6 +75,7 @@ import ot_producto_estado as _pe    # acciones por producto de una OT interna (N
 import ot_anexo_costo as _oac    # 2026-10-20: el costo de la OT y el anexo del proveedor son UN solo valor (módulo puro con pruebas)
 import ot_valorizar as _valz     # 2026-10-29 (REGLA #60): valorización SUGERIDA desde las cotizaciones (escalera A–E, rango, confianza): módulo puro con pruebas
 import anexo_anulacion as _axa   # 2026-10-28 (REGLA #52): anexo FIRMADO + OT eliminada → anexo inválido y aviso a las dos partes (módulo puro con pruebas)
+import anexo_lugar as _axl        # 2026-11-03: «Lugar del Servicio» del anexo (dirección donde se ejecuta; pedido de Félix): módulo puro con pruebas
 import ot_intenciones as _oint   # 2026-10-25 (REGLA #47): intenciones del costeo (por qué, quién lo asume) y su validación: módulo puro con pruebas
 import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
@@ -96802,6 +96803,9 @@ def ot2_detalle(vid):
                 "direccion": (v.get("direccion_visita")
                               or v.get("cliente_direccion") or ""),
                 "comuna": v.get("cliente_comuna") or "",
+                # 📍 2026-11-03: el «Lugar del Servicio» que el modal propone (editable): la dirección DEL LUGAR de la OT con SU comuna; si la OT
+                # no tiene una propia, la de la ficha del cliente. Mismo cálculo que usa el servidor al crear el anexo sin que la persona lo toque.
+                "lugar": _axl.lugar_de_ot(v),
                 # Fechas del servicio: la OT ya tiene el día agendado.
                 "fecha_inicio": (str(v.get("fecha_programada"))[:10]
                                  if v.get("fecha_programada") else ""),
@@ -117149,6 +117153,8 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
                     except Exception: pass
 
                 if _aid_auto:
+                    # 📍 2026-11-03: el anexo dice dónde se hace el servicio (la dirección DEL LUGAR que se acaba de confirmar en el asistente).
+                    _anexo_guardar_lugar(_aid_auto, _axl.componer_lugar(_cp_dir, _cp_comuna, _cp_detalle) or _anexo_lugar_ot(vid))
                     try:
                         _mant_log("anexo", _aid_auto, "creado",
                                   f"N°{_num_auto} · {_prov_nombre} · OT {numero_ot} (automático al crear)")
@@ -121093,6 +121099,10 @@ def _ensure_mant_anexos():
                                    "COMMENT 'por que quedo invalido'"),
                 ("anulado_ot_numero", "ALTER TABLE mant_anexos ADD COLUMN anulado_ot_numero VARCHAR(40) NULL "
                                       "COMMENT 'numero de la OT eliminada (ot_id queda en NULL)'"),
+                # 📍 2026-11-03 (Félix, vía Daniel: «el anexo tiene que decir dónde se realizará el servicio… es importante dejar la dirección del lugar»).
+                # Se congela al crear el anexo: un anexo firmado dice lo que decía cuando se firmó, aunque después se corrija la dirección de la OT.
+                ("lugar_servicio", "ALTER TABLE mant_anexos ADD COLUMN lugar_servicio VARCHAR(500) NULL "
+                                   "COMMENT 'direccion donde se ejecuta el servicio (de la OT al crear el anexo)'"),
             ):
                 try:
                     cur.execute(
@@ -121243,6 +121253,8 @@ def _anexo_render_canonico(a):
         f"Proveedor: {a.get('proveedor_nombre','')} (RUT {a.get('proveedor_rut') or '—'})\n"
         f"Cliente: {a.get('cliente_nombre') or '—'}\n"
         f"Objetivo del Servicio: {a.get('objetivo_servicio','')}\n"
+        # 2026-11-03: solo si el anexo tiene lugar, así el texto canónico de todo lo anterior queda idéntico.
+        + (f"Lugar del Servicio: {a.get('lugar_servicio')}\n" if (a.get("lugar_servicio") or "").strip() else "") +
         f"Precio: {precio_txt} Neto.\n"
         f"Duración del Servicio: Inicio {a.get('fecha_inicio') or '—'} / "
         f"Término {a.get('fecha_termino') or '—'}\n"
@@ -121280,12 +121292,23 @@ def _anexo_clausulas_defecto():
     El contrato principal contiene las condiciones generales. No añadir aquí
     cláusulas ni plazos configurados ajenos al anexo de servicio aprobado.
     """
+    # ✍️ 2026-11-03 (Félix, vía Daniel): nueva redacción de «Hitos de Pago» y «Alcance del Servicio». Solo rige para anexos NUEVOS: cada anexo
+    # guarda su propio texto (un anexo firmado jamás cambia). Sigue lo que pidió, corregido solo en ortografía y concordancia; «los anexos» pasó
+    # a «el presente Anexo» porque el alcance habla de los equipos de ESTE documento. Los textos quedan dentro de la función a propósito: las
+    # pruebas la ejecutan aislada, sin importar app.py.
     return {
         "niveles_servicio": "el servicio debe cumplir con grado de calidad, rapidez y eficacia con el que se atienden y resuelven las solicitudes de nuestros clientes.",
-        "hitos_pago": "Una vez realizados los servicios, se debe llenar la OT con la respectiva firma del cliente, posteriormente, se emitirá documentación para el pago del servicio.",
-        "alcance_servicio": "Se debe realizar el servicio de los equipos informados, y entregar el trabajo en perfectas condiciones, garantizando la conformidad del cliente. También se debe asumir penalizaciones monetarias por incumplimiento del servicio y el principio de reportabilidad tanto para el inicio del trabajo como para el término.",
+        "hitos_pago": "El pago de este Anexo se activa una vez que la Orden de Trabajo (OT) asociada se encuentre firmada por el cliente. Cumplido este hito, este Anexo se incluirá en el pago junto con los demás anexos que se encuentren pendientes durante el período de pago del mes.",
+        "alcance_servicio": "Se debe realizar el servicio a todos los equipos declarados en el presente Anexo, garantizando un servicio de calidad. Esta solicitud de servicio tiene una garantía de ejecución de 6 meses.",
         "clausulas_adicionales": "",
     }
+
+
+# Lo que decía antes «Hitos de Pago». Un anexo todavía sin firmar que conserva ese texto se trata como «sin editar» (ver _anexo_hitos_para).
+_ANEXO_HITOS_PAGO_ANTERIORES = (
+    "Una vez realizados los servicios, se debe llenar la OT con la respectiva firma del cliente, posteriormente, se emitirá documentación para el pago del servicio.",
+    "Una vez realizados los servicios, se debe llenar la OT con la respectiva firma del cliente; posteriormente se emitirá documentación para el pago del servicio.",
+)
 
 
 # 2026-10-02 (Daniel, Anexo N°203: tuvo que poner $1 para poder avanzar).
@@ -121330,8 +121353,9 @@ def _anexo_hitos_para(items, hitos_in, es_garantia):
     ("se emitirá documentación para el pago") se reemplaza por el de
     garantía; un texto que la persona escribió a mano se respeta."""
     hitos_in = (hitos_in or "").strip()
+    # 2026-11-03: también cuenta como «sin editar» el texto que traían los anexos antes de la nueva redacción (un borrador que se reabre).
     if es_garantia and _anexo_total_items(items) == 0 and \
-            hitos_in in ("", _anexo_clausulas_defecto()["hitos_pago"]):
+            hitos_in in ("", _anexo_clausulas_defecto()["hitos_pago"], *_ANEXO_HITOS_PAGO_ANTERIORES):
         return _ANEXO_HITOS_GARANTIA_SIN_PAGO
     return hitos_in
 
@@ -121438,14 +121462,58 @@ _ANEXO_CLAUSULAS_DEFECTO = (
 )
 
 
+def _anexo_lugar_ot(vid):
+    """Dirección donde se ejecuta el servicio de una OT, para el anexo («Lugar del Servicio»). Es la dirección DEL LUGAR de la OT
+    (`direccion_visita`, la que el técnico visita) y, si no tiene una propia, la de la ficha del cliente. Solo lectura; si algo falla devuelve ""
+    (un anexo sin lugar se ve igual que uno anterior a esta función, nunca se inventa una dirección)."""
+    if not vid:
+        return ""
+    try:
+        r = mysql_fetchone(
+            "SELECT v.direccion_visita, v.direccion_comuna, v.direccion_detalle, "
+            "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna "
+            "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+            " WHERE v.id=%s", (vid,))
+        return _axl.lugar_de_ot(r)
+    except Exception as e:
+        print(f"[anexo_lugar] OT {vid}: {type(e).__name__}", flush=True)
+        return ""
+
+
+def _anexo_guardar_lugar(aid, texto, solo_si_vacio=False):
+    """Deja el lugar del servicio en el anexo. Best-effort y por separado del INSERT/UPDATE principal a propósito: si la columna aún no existe
+    (el ALTER de `_ensure_mant_anexos` falló), el anexo se crea y se firma igual; lo único que falta es esta línea."""
+    try:
+        t = _axl.componer_lugar(texto) if texto else ""
+        if solo_si_vacio:
+            if not t:
+                return False
+            mysql_execute(
+                "UPDATE mant_anexos SET lugar_servicio=%s "
+                " WHERE id=%s AND (lugar_servicio IS NULL OR lugar_servicio='')", (t, aid))
+        else:
+            mysql_execute("UPDATE mant_anexos SET lugar_servicio=%s WHERE id=%s", (t or None, aid))
+        return True
+    except Exception as e:
+        print(f"[anexo_lugar] no se guardó aid={aid}: {type(e).__name__}", flush=True)
+        return False
+
+
 def _anexo_dict(row):
-    """Fila de mant_anexos → dict con precio_items ya decodificado."""
+    """Fila de mant_anexos → dict con precio_items ya decodificado y el lugar del servicio resuelto."""
     import json as _json
     d = dict(row)
     try:
         d["precio_items"] = _json.loads(d.get("precio_items_json") or "[]")
     except Exception:
         d["precio_items"] = []
+    # 📍 2026-11-03: el lugar guardado al crear el anexo; si no tiene y aún no está firmado, el de la OT en vivo (ver anexo_lugar.lugar_del_anexo).
+    # Se consulta la OT solo cuando hace falta (anexo sin lugar guardado y sin firmar).
+    _guardado = " ".join(str(d.get("lugar_servicio") or "").split())
+    _vivo = ""
+    if not _guardado and str(d.get("estado") or "") != "firmado" and not d.get("firmado_at"):
+        _vivo = _anexo_lugar_ot(d.get("ot_id"))
+    d["lugar_servicio"] = _axl.lugar_del_anexo(_guardado, d.get("estado"), d.get("firmado_at"), _vivo)
     return d
 
 
@@ -121746,6 +121814,9 @@ def ot2_api_anexo_crear():
         try: conn.close()
         except Exception: pass
 
+    # 📍 2026-11-03 (Félix, vía Daniel): el anexo dice DÓNDE se realiza el servicio. Manda lo que la persona dejó en el formulario; si no vino
+    # (otro camino, un cliente web cacheado), la dirección que la OT ya tiene. Va aparte del INSERT: sin la columna el anexo se crea igual.
+    _anexo_guardar_lugar(aid, _axl.componer_lugar(d.get("lugar_servicio")) or _anexo_lugar_ot(vid))
     try:
         _mant_log("anexo", aid, "creado", f"N°{numero} · {proveedor}"
                   + (f" · OT {vid}" if vid else ""))
@@ -121820,6 +121891,7 @@ def ot2_api_anexo_detalle(aid):
             "proveedor_direccion_place_id": a.get("proveedor_direccion_place_id") or "",
             "cliente_nombre": a.get("cliente_nombre") or "",
             "objetivo_servicio": a.get("objetivo_servicio") or "",
+            "lugar_servicio": a.get("lugar_servicio") or "",   # 2026-11-03: guardado, o el de la OT si es un borrador anterior sin lugar
             "precio_items": a.get("precio_items") or [],
             "productos": _anexo_productos_guardados(a) or [],
             # Formato del <input type="date">: aaaa-mm-dd. Son columnas DATE
@@ -121956,6 +122028,10 @@ def ot2_api_anexo_editar(aid):
                         "error": "El anexo cambió de estado mientras lo editábas "
                                  "(puede que el proveedor lo acabe de firmar). "
                                  "Recarga la página para ver cómo quedó."}), 409
+
+    # 📍 2026-11-03: el lugar del servicio se corrige junto con el resto (solo si el formulario lo trae: un cliente web viejo no lo borra).
+    if "lugar_servicio" in d:
+        _anexo_guardar_lugar(aid, _axl.componer_lugar(d.get("lugar_servicio")))
 
     # 🗑️ 2026-10-23 (Daniel, OT 353: «mientras no haya firmado el anexo se pueden eliminar los productos, con registro de actividad»):
     # cada producto que ya no está en el anexo corregido queda anotado (quién y cuál) en la bitácora del anexo y de la OT.
@@ -122399,6 +122475,8 @@ def _anexo_publico_payload(a):
         "nombre_representante_sugerido": _nombre_rep_sugerido,
         "proveedor_direccion": a.get("proveedor_direccion") or "",
         "objetivo_servicio": a.get("objetivo_servicio") or "",
+        # 📍 2026-11-03: dónde se realiza el servicio (lo resuelve _anexo_dict: el guardado al crear, o el de la OT si es un borrador sin lugar).
+        "lugar_servicio": a.get("lugar_servicio") or "",
         "cliente_nombre": a.get("cliente_nombre") or "",
         "precio_items": a.get("precio_items") or [],
         "fecha_inicio": _anexo_fecha_d(a.get("fecha_inicio")),
@@ -122840,6 +122918,7 @@ def ot2_api_anexo_preview_pdf():
         "proveedor_nombre": proveedor,
         "proveedor_rut": (d.get("proveedor_rut") or "").strip()[:20],
         "objetivo_servicio": objetivo,
+        "lugar_servicio": _axl.componer_lugar(d.get("lugar_servicio")),   # 2026-11-03: lo que la persona ve en el paso Anexo
         "cliente_nombre": (d.get("cliente_nombre") or "").strip()[:200],
         "precio_items": items,
         "fecha_inicio": _iso_a_dmy(d.get("fecha_inicio")),
@@ -123038,6 +123117,10 @@ def ot2_anexo_firma_submit(token):
         # La redirección a la GET pública ya resuelve cuál es el caso real
         # (normalmente "ya firmado" por la otra petición que sí alcanzó).
         return _volver()
+
+    # 📍 2026-11-03: el lugar que el proveedor vio al firmar queda en el anexo (en un borrador anterior sin lugar guardado era el de la OT en
+    # vivo). Así el anexo firmado dice siempre lo mismo, aunque después se corrija la dirección de la OT. Best-effort: jamás deshace la firma.
+    _anexo_guardar_lugar(a["id"], a_full.get("lugar_servicio"), solo_si_vacio=True)
 
     try:
         _mant_log("anexo", a["id"], "firmado",

@@ -208,6 +208,9 @@
     background:#f9fafb;border:1px solid var(--gray-2);border-radius:50px;padding:6px 14px;
   }
   .clausula .cl-cuerpo .cliente-final b{color:#0a0a0a;font-weight:800}
+  /* 📍 Lugar del servicio: texto corrido (una dirección larga no cabe en una pastilla), con el dato destacado. */
+  .clausula .cl-cuerpo .lugar-servicio{margin:10px 0 2px;color:#374151}
+  .clausula .cl-cuerpo .lugar-servicio b{color:#0a0a0a;font-weight:800}
 
   /* Tabla de precios */
   .precio-tabla{width:100%;border-collapse:collapse;margin:4px 0 8px;font-family:'Inter',sans-serif}
@@ -811,6 +814,11 @@
           <div class="cl-titulo"><span class="ord">Primero</span> Objetivo del servicio</div>
           <div class="cl-cuerpo">
             <p>{{ anexo.objetivo_servicio }}</p>
+            {#- 📍 2026-11-03 (Félix, vía Daniel): el anexo dice DÓNDE se realiza el servicio. Va dentro de #docLegal: la huella SHA-256 que firma el
+                navegador cubre este texto. Sin lugar (anexo anterior a esto) no se dibuja nada. -#}
+            {% if anexo.lugar_servicio %}
+            <p class="lugar-servicio">Lugar del servicio: <b>{{ anexo.lugar_servicio }}</b></p>
+            {% endif %}
             <span class="cliente-final">Cliente final del servicio: <b>{{ anexo.cliente_nombre }}</b></span>
           </div>
         </div>

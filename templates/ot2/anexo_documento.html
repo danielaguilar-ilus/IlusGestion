@@ -229,6 +229,13 @@
 
   <p class="campo"><b>Objetivo del Servicio:</b> {{ anexo.objetivo_servicio }}</p>
 
+  {#- 📍 2026-11-03 (Félix, vía Daniel: «necesitamos que indique dónde se realizará el servicio… es importante dejar la dirección del lugar en
+      el anexo»). Línea propia, no escondida dentro de la frase del objetivo. Se imprime solo si el anexo tiene lugar (un anexo firmado antes de
+      esto no lo tiene y no se le inventa uno). -#}
+  {% if anexo.lugar_servicio %}
+  <p class="campo"><b>Lugar del Servicio:</b> {{ anexo.lugar_servicio }}</p>
+  {% endif %}
+
   <p class="campo"><b>Duración del Servicio:</b> Inicio del servicio
     {{ anexo.fecha_inicio }} / Término del servicio {{ anexo.fecha_termino }}.
     Estas fechas son programadas según la Orden de Trabajo asociada y podrán extenderse por razones operativas

@@ -10037,6 +10037,12 @@ window.OT2C = (function(){
         objetivo_servicio: a.objetivo_servicio, precio_items: _o2mAnexoItemsValidos(),
         productos: a.productos || [],
         fecha_inicio: a.fecha_inicio, fecha_termino: a.fecha_termino,
+        // 📍 2026-11-03: el anexo dice dónde se hace el servicio: la dirección DEL LUGAR confirmada en el paso Contraparte (con su comuna si la dirección no la trae).
+        lugar_servicio: (function(){
+          var dir = String((S.contraparte && S.contraparte.direccion) || '').trim();
+          var com = String((S.contraparte && S.contraparte.comuna) || '').trim();
+          return (dir && com && dir.toLowerCase().indexOf(com.toLowerCase()) === -1) ? (dir + ', ' + com) : dir;
+        })(),
         cliente_nombre: S.cliente ? S.cliente.nombre : ''
       })
     }).then(function(r){

@@ -289,6 +289,14 @@
           <label class="fl">Objetivo del servicio</label>
           <textarea class="form-control form-control-sm" id="oaxObjetivo" rows="2" maxlength="600"
                     oninput="OT2ANX.setObjetivo(this.value)"></textarea>
+          {#- 📍 2026-11-03 (Félix, vía Daniel: «el anexo tiene que indicar dónde se realizará el servicio… es importante dejar la dirección del
+              lugar»). Campo propio y obligatorio: sale en el anexo como «Lugar del Servicio». Se propone la dirección de la OT; se puede corregir. -#}
+          <label class="fl" style="margin-top:10px" for="oaxLugar">Lugar del servicio (dirección) *</label>
+          <input class="form-control form-control-sm" id="oaxLugar" maxlength="500" autocomplete="off"
+                 placeholder="Dirección donde se realiza el servicio"
+                 oninput="OT2ANX.setLugar(this.value)">
+          <small class="oax-hint" style="display:block;margin-top:4px;color:#6b7280">
+            Sale de la OT y queda escrita en el anexo que firma el proveedor.</small>
         </div>
 
         <div class="oax-sec" data-paso="precio">
@@ -595,8 +603,9 @@ window.OT2ANX = (function(){
     }
     t += ' para el cliente ' + DEF_CLIENTE;
     if (DEF_OT && DEF_OT.cliente_rut) t += ' (RUT ' + DEF_OT.cliente_rut + ')';
-    if (DEF_OT && DEF_OT.direccion) t += ', en ' + DEF_OT.direccion +
-      (DEF_OT.comuna ? ', ' + DEF_OT.comuna : '');
+    /* 2026-11-03: se usa el mismo lugar que el anexo escribe en «Lugar del Servicio» (dirección de la OT con SU comuna, sin repetirla: antes
+       salía «…, Talca, Maule, Talca» y con una dirección propia de la OT se le pegaba la comuna del cliente). */
+    if (DEF_OT && DEF_OT.lugar) t += ', en ' + DEF_OT.lugar;
     t += '. Referencia: ' + (DEF_OT && DEF_OT.numero_ot ? DEF_OT.numero_ot : 'OT') +
       (DEF_OT && DEF_OT.salida ? ' (instalación) y ' + DEF_OT.salida.numero_ot + ' (desinstalación)' : '') + '.';
     /* 🔴 2026-09-07 (Daniel, viendo el Anexo N° 162: "en los objetivos el
@@ -657,6 +666,7 @@ window.OT2ANX = (function(){
       proveedor_direccion_lat: null, proveedor_direccion_lng: null,
       proveedor_direccion_place_id: '',
       objetivo_servicio: objetivoDesdeOT(),
+      lugar_servicio: (DEF_OT && DEF_OT.lugar) || '',   // 📍 2026-11-03: dónde se hace el servicio (se propone el de la OT, editable)
       cliente_nombre: DEF_CLIENTE,
       items: itemsDesdeOT(),
       fecha_inicio: DEF_FECHA_INI, fecha_termino: DEF_FECHA_FIN,
@@ -717,6 +727,7 @@ window.OT2ANX = (function(){
       var _limpiado = false;
       if (_iEq > 0){ _obj = _obj.slice(0, _iEq).trim(); _limpiado = true; }
       S.objetivo_servicio = _obj;
+      S.lugar_servicio = a.lugar_servicio || (DEF_OT && DEF_OT.lugar) || '';   // 📍 el guardado; si es un borrador anterior, el de la OT
       S.items = (a.precio_items && a.precio_items.length)
         ? a.precio_items.map(function(it){
             var f = {concepto: it.concepto || '', monto: String(it.monto || '')};
@@ -787,6 +798,8 @@ window.OT2ANX = (function(){
 
   function pintarForm(){
     document.getElementById('oaxObjetivo').value = S.objetivo_servicio;
+    var _lug = document.getElementById('oaxLugar');
+    if (_lug) _lug.value = S.lugar_servicio || '';
     document.getElementById('oaxFechaIni').value = S.fecha_inicio || '';
     document.getElementById('oaxFechaFin').value = S.fecha_termino || '';
     document.getElementById('oaxNiveles').value = S.niveles_servicio;
@@ -1057,6 +1070,7 @@ window.OT2ANX = (function(){
   }
 
   function setObjetivo(v){ S.objetivo_servicio = v; pintarPasos(); }
+  function setLugar(v){ S.lugar_servicio = v; pintarPasos(); }
   function setFecha(cual, v){ if (cual === 'inicio') S.fecha_inicio = v; else S.fecha_termino = v; pintarPasos(); }
   function setCond(campo, v){ S[campo] = v; }
   function setItemConcepto(i, v){ if (S.items[i]) S.items[i].concepto = v; pintarPasos(); }
@@ -1166,7 +1180,7 @@ window.OT2ANX = (function(){
       var emailMal = !!email && !emailOk, telMal = !!tel && !telOk;
       return !!(nombre && rut && _oaxRutValido(rut) && !emailMal && !telMal && (emailOk || telOk));
     }
-    if (paso === 'objetivo') return !!(S.objetivo_servicio || '').trim();
+    if (paso === 'objetivo') return !!(S.objetivo_servicio || '').trim() && !!(S.lugar_servicio || '').trim();
     if (paso === 'precio')
       return OT_GARANTIA || (S.items || []).some(function(it){ return Number(it.monto) > 0; });
     if (paso === 'fechas') return !!(S.fecha_inicio && S.fecha_termino);
@@ -1309,6 +1323,13 @@ window.OT2ANX = (function(){
       ilusToast('Falta el objetivo del servicio.', {type:'warning'});
       return;
     }
+    // 📍 2026-11-03 (Félix, vía Daniel): el anexo tiene que decir dónde se realiza el servicio. Normalmente ya viene de la OT; si no, se escribe acá.
+    if (!S.lugar_servicio || !S.lugar_servicio.trim()){
+      ilusToast('Falta el lugar del servicio: escribe la dirección donde se realiza. El anexo tiene que decir dónde se ejecuta.', {type:'warning'});
+      var _lugEl = document.getElementById('oaxLugar');
+      if (_lugEl && _lugEl.focus) _lugEl.focus();
+      return;
+    }
     var items = (S.items || [])
       .filter(it => (it.concepto || '').trim() || Number(it.monto) > 0)
       .map(it => {
@@ -1345,6 +1366,7 @@ window.OT2ANX = (function(){
           proveedor_direccion_lng: S.proveedor_direccion_lng,
           proveedor_direccion_place_id: S.proveedor_direccion_place_id,
           cliente_nombre: S.cliente_nombre, objetivo_servicio: S.objetivo_servicio,
+          lugar_servicio: (S.lugar_servicio || '').trim(),   // 📍 2026-11-03: «Lugar del Servicio» del anexo
           // Los equipos viajan como tabla, no dentro del objetivo. Sin esto
           // el anexo nace sin productos: la pantalla de firma no muestra
           // ninguno y el firmado no congela la lista.
@@ -1636,7 +1658,7 @@ window.OT2ANX = (function(){
     abrir, abrirEnviar, abrirEditar, crear, enviar, enviarPor, copiarLink, focoVisible,
     onProveedorChange, toggleManual, toggleCondiciones, setContactoSel,
     oaxValidarCampoManual, oaxFormatearRut,
-    setObjetivo, setFecha, setCond, setItemConcepto, setItemMonto, setItemOt,
+    setObjetivo, setLugar, setFecha, setCond, setItemConcepto, setItemMonto, setItemOt,
     agregarItem, quitarItem,
   };
 })();

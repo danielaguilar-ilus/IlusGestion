@@ -46,6 +46,7 @@ class AnexoSinClausulasAdicionalesTest(unittest.TestCase):
 
     def test_anexo_nuevo_no_muestra_clausulas_adicionales(self):
         env = Environment(loader=FileSystemLoader(ROOT / "templates"), autoescape=True)
+        env.filters["rut_fmt"] = lambda v: v   # el filtro real (REGLA #7) vive en app.py; la plantilla lo usa desde el 09-09 y esta prueba no lo registraba
         html = env.get_template("ot2/anexo_documento.html").render(
             anexo=anexo_base(), firma=None, productos=[], es_vista_previa=False)
         labels = ["Anexo de Servicios N° 999", "Objetivo del Servicio:",
@@ -64,6 +65,7 @@ class AnexoSinClausulasAdicionalesTest(unittest.TestCase):
         debe perder su contenido solo porque hoy los anexos nuevos nacen
         sin cláusulas -- el render depende del DATO, no de una bandera."""
         env = Environment(loader=FileSystemLoader(ROOT / "templates"), autoescape=True)
+        env.filters["rut_fmt"] = lambda v: v
         html = env.get_template("ot2/anexo_documento.html").render(
             anexo=anexo_base(clausulas_adicionales="Primero: texto uno\n\nSegundo: texto dos"),
             firma=None, productos=[], es_vista_previa=False)
