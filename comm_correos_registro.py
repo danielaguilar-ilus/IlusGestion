@@ -65,6 +65,8 @@ MODULOS_UI = (
      "descripcion": "Solicitudes de compra de repuestos a proveedores y avisos internos de los pedidos de repuesto de las OT."},
     {"clave": "catalogo", "nombre": "Catálogo", "icono": "bi-box-seam",
      "descripcion": "Manuales de producto que se envían por correo."},
+    {"clave": "flota", "nombre": "Solicitudes de vehículo", "icono": "bi-truck-front",
+     "descripcion": "Reservas del furgón y el camión: avisos internos a la gestión de la flota y a quien pidió el vehículo."},
     {"clave": "accesos", "nombre": "Accesos y usuarios", "icono": "bi-shield-lock",
      "descripcion": "Invitaciones, cambios y recuperación de contraseña de los usuarios del sistema."},
     # Solo para las dos herramientas de Comunicaciones (no son tarjetas: no se apagan por interruptor).
@@ -481,6 +483,22 @@ REGISTRO = (
     _c("ret_propuesta", "ILUS propone una fecha de retiro", "retiros", "retiros", "cliente",
        "Botón «Proponer fecha» y también al crear un retiro interno.", plantilla=("retiros", "propuesta_enviada"),
        tambien_whatsapp=True, avisa_a="Al contacto del retiro y a sus copias"),
+    # 2026-11-03 (Daniel: «activa en comunicaciones sus mails»): avisos INTERNOS de la flota. Los envía flota_module.py por
+    # _aviso_interno_correo (llave Comunicación interna). Nacen encendidos; se apagan aquí. Nunca a clientes ni técnicos.
+    _c("flota_solicitud_nueva", "Solicitud de vehículo nueva: aviso a la gestión de la flota", "flota", "comunicacion_interna", "interno",
+       "Cuando alguien pide el furgón o el camión (día, horario, chofer y motivo).",
+       modo="automatico", avisa_a="A quienes tienen «Gestionar solicitudes» en Roles → Solicitudes de vehículo (de respaldo, los superadministradores)",
+       nota="Interno: no sale a clientes ni a técnicos. No le llega a quien la pidió."),
+    _c("flota_solicitud_confirmada", "Solicitud de vehículo confirmada: aviso a quien la pidió", "flota", "comunicacion_interna", "usuario",
+       "Cuando la gestión confirma la reserva.", modo="automatico", avisa_a="A quien pidió el vehículo (si no la confirmó él mismo)"),
+    _c("flota_solicitud_cancelada", "Solicitud de vehículo cancelada: aviso", "flota", "comunicacion_interna", "usuario",
+       "Cuando se cancela una reserva: si la cancela la gestión, avisa a quien la pidió; si la cancela quien la pidió, avisa a la gestión.",
+       modo="automatico", avisa_a="A quien pidió el vehículo o a la gestión de la flota, según quién cancele"),
+    _c("flota_llave_atrasada", "Llave atrasada: aviso a la gestión de la flota", "flota", "comunicacion_interna", "interno",
+       "Cuando la entrega de la llave pasa 15 minutos hábiles (atrasada) y otra vez a los 60 (crítico). Lo revisa el barrido de cada 10 min, "
+       "solo dentro del horario de llaves (L–V 08:00–13:00 y 14:00–17:00).",
+       modo="automatico", avisa_a="A quienes tienen «Gestionar solicitudes» en Roles (de respaldo, los superadministradores)",
+       nota="Una vez por nivel y por reserva: no repite."),
     _c("ret_cita_confirmada", "Cita de retiro confirmada", "retiros", "retiros", "cliente",
        "Cuando el cliente confirma, se acepta su contrapropuesta, se cambia el estado o se propone la misma fecha que pidió.",
        modo="mixto", plantilla=("retiros", "agenda_confirmada"), tambien_whatsapp=True,

@@ -671,7 +671,7 @@ class TestCableado(unittest.TestCase):
         for a in altas:
             if a == modificar:
                 continue
-            self.assertRegex(a, r"^ALTER TABLE flota_(vehiculos|choferes) ADD COLUMN \w+ [A-Z0-9(),' ]+$", a)
+            self.assertRegex(a, r"^ALTER TABLE flota_(vehiculos|choferes|solicitudes) ADD COLUMN \w+ [A-Z0-9(),' ]+$", a)
             self.assertNotIn(",", a.split("ADD COLUMN", 1)[0])
             self.assertEqual(a.count("ADD COLUMN"), 1)
 

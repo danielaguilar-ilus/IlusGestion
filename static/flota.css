@@ -812,3 +812,58 @@
 .fl-pk-s.lib.fh{background:repeating-linear-gradient(135deg,rgba(34,197,94,.10) 0 3px,rgba(255,255,255,.03) 3px 6px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
 .fl-pk-s.lib.fh:hover{background:#4b5563}
 @media (prefers-reduced-motion: reduce){.fl-sla--critica,.fla-b.sla-critica{animation:none}}
+
+/* Calendario del modal al estilo Retiros (03-nov-2026): panel claro, pestaña por vehículo con foto, bloques de media hora en
+   «Mañana» y «Tarde» con la colación al medio, y los campos a mano plegados. */
+.fl-pk-der{background:linear-gradient(180deg,#fcfcfd 0%,#f6f7f9 100%);border:1.5px solid #e5e7eb;color:#111827}
+.fl-pk-dia-cab b{color:#0a0a0a}
+.fl-pk-der .fl-pk-fer{color:#92400e;background:#fff8e1}
+.fl-pk-vtabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin:0 0 10px}
+.fl-pk-vtab{display:flex;align-items:center;gap:10px;text-align:left;border:1.5px solid #e5e7eb;border-radius:14px;padding:8px 10px;background:#fff;
+  cursor:pointer;min-height:64px;transition:border-color .15s,box-shadow .15s,transform .12s}
+.fl-pk-vtab:hover{border-color:#0a0a0a;transform:translateY(-1px)}
+.fl-pk-vtab.on{border-color:#dc2626;box-shadow:0 0 0 3px #fee2e2;background:#fffafa}
+.fl-pk-vtab > span{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
+.fl-pk-vtab > span > span{font-size:.74rem;color:#6b7280}
+.fl-pk-vtab .fl-pat{font-size:.82rem;padding:1px 7px}
+.fl-pk-vtab .fl-pk-libres{color:#166534;font-weight:800}
+.fl-pk-vtab-foto{width:72px;height:50px;object-fit:cover;border-radius:10px;background:#f3f4f6;flex:0 0 auto}
+.fl-pk-vtab-foto--sin{display:grid;place-items:center;color:#9ca3af}
+.fl-pk-leg{display:flex;gap:12px;flex-wrap:wrap;font-size:.72rem;color:#6b7280;font-weight:600;margin:0 0 4px}
+.fl-pk-leg span{display:inline-flex;align-items:center;gap:5px}
+.fl-pk-dot{width:12px;height:12px;border-radius:4px;display:inline-block;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.fl-pk-dot--lib{background:#fff;border:1.5px solid #d1d5db}
+.fl-pk-dot--ocu{background:linear-gradient(135deg,#dc2626,#b91c1c)}
+.fl-pk-dot--col{background:#fff7ed;border:1.5px solid #fed7aa}
+.fl-pk-dot--sel{background:linear-gradient(160deg,#ff2d2d,#b30000)}
+.fl-pk-sec{font-size:.7rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:#9ca3af;margin:10px 0 6px;display:flex;align-items:center;gap:8px}
+.fl-pk-sec::after{content:"";flex:1;height:1px;background:repeating-linear-gradient(90deg,#e5e7eb 0 6px,transparent 6px 11px)}
+.fl-pk-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px}
+.fl-pk-slot{position:relative;min-height:46px;border-radius:10px;background:#fff;border:1.5px solid #e5e7eb;font-size:.9rem;font-weight:800;color:#1f2937;
+  font-variant-numeric:tabular-nums;cursor:pointer;box-shadow:0 1px 2px rgba(15,23,42,.04);transition:transform .15s,box-shadow .15s,background .15s,border-color .15s}
+.fl-pk-slot:hover:not([aria-disabled]){border-color:#dc2626;background:#fff5f5;color:#dc2626;transform:translateY(-2px);box-shadow:0 8px 16px -4px rgba(220,38,38,.22)}
+.fl-pk-slot.is-ocu{background:linear-gradient(135deg,#dc2626,#b91c1c);border-color:#991b1b;color:#fff;cursor:not-allowed;
+  box-shadow:inset 0 -4px 0 var(--ac,#991b1b),0 4px 12px rgba(220,38,38,.3)}
+.fl-pk-slot.is-ocu i{font-size:1rem}
+.fl-pk-slot.is-pasado{background:#f9fafb;color:#c0c4cc;cursor:not-allowed;opacity:.6}
+.fl-pk-slot.is-rango{background:#fee2e2;border-color:#fca5a5;color:#991b1b}
+.fl-pk-slot.is-sel{background:linear-gradient(160deg,#ff2d2d 0%,#dc2626 55%,#b30000 100%);border-color:#dc2626;color:#fff;
+  transform:translateY(-2px) scale(1.03);box-shadow:0 10px 22px -6px rgba(220,38,38,.55);z-index:2}
+.fl-pk-slot.is-choca{outline:2px solid #f59e0b;outline-offset:-2px}
+.fl-pk-slot.is-ancla{animation:flaAncla 1s infinite}
+.fl-pk-colacion{display:flex;align-items:center;justify-content:center;gap:7px;margin:10px 0 0;padding:7px;border-radius:10px;
+  background:#fff7ed;border:1.5px dashed #fed7aa;color:#9a3412;font-size:.78rem;font-weight:700}
+.fl-pk-der .fl-pk-at{border-color:#e5e7eb;background:#fff;color:#111827}
+.fl-pk-der .fl-pk-at:hover{background:#0a0a0a;color:#fff}
+.fl-pk-atajos{margin-top:12px}
+.fl-pk-sel{background:#fff;border:1.5px solid #e5e7eb;color:#374151}
+.fl-pk-sel > span b{color:#0a0a0a}
+.fl-pk-sel.ok{border-color:#86efac;background:#f0fdf4}
+.fl-pk-sel.bad{border-color:#fcd34d;background:#fffbeb}
+.fl-pk-sel.ok .fl-pk-sel-est{color:#166534}.fl-pk-sel.bad .fl-pk-sel-est{color:#92400e}
+.fl-pk-der .fl-pk-vacio,.fl-pk-der .fl-pk-cargando{color:#6b7280}
+.fl-pk-manual{margin:6px 0 4px;border:1px dashed #d1d5db;border-radius:12px;padding:0 12px;background:#fafafa}
+.fl-pk-manual > summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;min-height:44px;font-size:.84rem;font-weight:700;color:#4b5563}
+.fl-pk-manual > summary::-webkit-details-marker{display:none}
+.fl-pk-manual[open]{padding-bottom:12px}
+@media (max-width: 860px){.fl-pk-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.fl-pk-vtabs{grid-template-columns:1fr}}
