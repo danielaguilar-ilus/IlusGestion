@@ -976,3 +976,6 @@
 .fl-pk-dos .fl-pk-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
 .fl-pk-dos .fl-pk-slot{min-height:42px;font-size:.84rem}
 @media (max-width: 860px){.fl-pk-dos{grid-template-columns:1fr}.fl-pk-ruta-d{flex:1 1 calc(50% - 4px)}.fl-pk-ruta-f{display:none}}
+.fla-c24{position:absolute;left:0;right:0;top:0;z-index:0;display:flex;align-items:flex-end;justify-content:center;overflow:hidden;pointer-events:none;border-radius:6px;background:repeating-linear-gradient(135deg,rgba(245,158,11,.13) 0 4px,transparent 4px 8px)}
+.fla-c24 b{display:inline-flex;align-items:center;gap:3px;margin-bottom:3px;padding:1px 6px;border-radius:999px;font-size:.58rem;font-weight:800;color:#92400e;background:rgba(255,251,235,.95);border:1px solid #fde68a}
+.fla-ld-24{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:.72rem;font-weight:700;color:#92400e;background:#fffbeb;border:1px solid #fde68a}

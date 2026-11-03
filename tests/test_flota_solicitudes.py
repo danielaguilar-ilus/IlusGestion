@@ -1385,3 +1385,32 @@ class TestAntelacion24(unittest.TestCase):
             "fecha": (dia + dt.timedelta(days=1)).isoformat(), "hora_desde": "09:00", "hora_hasta": "10:00"}, headers=SUPER)
         self.assertEqual(otro.status_code, 409)                  # el día del medio el vehículo está afuera
         self.assertEqual(otro.get_json()["error_codigo"], "CHOQUE_VEHICULO")
+
+
+class TestAgenda24hEnElFrente(unittest.TestCase):
+    """03-nov-2026 (Daniel: «la restricción de 24 es para agenda»): la regla de 24 h no vive solo en el calendario del modal; la agenda
+    principal (pista semanal, lista, próximo hueco y la entrada desde un día) usa la MISMA fuente del límite."""
+    JS = _leer("static", "flota_uso.js")
+
+    def test_hay_una_sola_fuente_del_limite(self):
+        self.assertEqual(self.JS.count("function limite24Base()"), 1)
+        self.assertIn("function cierre24(iso)", self.JS)
+        self.assertIn("function diaCerrado24(iso)", self.JS)
+        self.assertIn("function pkLimite24() { return S.editSol ? null : limite24Base(); }", self.JS)
+
+    def test_la_gestion_no_queda_limitada(self):
+        i = self.JS.index("function limite24Base()")
+        self.assertIn("(PERM.gestionar || PERM.admin) ? null", self.JS[i:i + 140])
+
+    def test_la_pista_la_lista_el_hueco_y_la_entrada_la_respetan(self):
+        for marca in ("cierre24(iso), R[1]",                                    # franja ámbar en la pista
+                      "diaCerrado24(iso) ? '<span class=\"fla-ld-24\"",       # lista de la semana: sin «Pedir»
+                      "(iso + 'T' + hhmm(a)) < l24",                            # tocar un hueco de la pista
+                      "Math.max(i === 0 ? Math.ceil(minutos(ahora.hm) / 30) * 30 : 0, cierre24(iso))",   # próximo hueco libre
+                      "Te dejé el primer día disponible"):                      # entrar a la solicitud desde un día cerrado
+            self.assertIn(marca, self.JS, marca)
+
+    def test_estilos_de_la_franja(self):
+        css = _leer("static", "flota.css")
+        self.assertIn(".fla-c24{", css)
+        self.assertIn(".fla-ld-24{", css)
