@@ -702,7 +702,7 @@ class TestCableado(unittest.TestCase):
         base = _leer("templates", "base.html")
         self.assertEqual(base.count("<span>Solicitudes de vehículo</span>"), 1)      # UN solo ítem en el menú
         i = base.index('href="/flota"')
-        previo = base[max(0, i - 120):i]
+        previo = base[max(0, i - 260):i]
         self.assertIn("permissions.superadmin", previo)
         self.assertNotIn("url_for('flota", base)                      # un BuildError tumbaría todas las pantallas
         self.assertEqual(base.count('href="/flota"'), 1)
@@ -729,7 +729,7 @@ class TestPantalla(unittest.TestCase):
         self.assertIn("Solicitudes de vehículo", self.html)
         self.assertIn("flota.css", self.html)
         self.assertIn("flota.js", self.html)
-        self.assertIn("Solo tú administras esto", self.html)          # el superadmin ve que agregar, editar y borrar es solo suyo
+        self.assertIn("Tú administras la flota", self.html)           # quien administra ve el aviso de lo que puede hacer
 
     def test_todo_id_que_usa_el_js_existe(self):
         usados = set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", self.js))

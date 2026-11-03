@@ -59,9 +59,12 @@ class TestNiveles(unittest.TestCase):
         self.assertEqual(R.niveles({"flota_gestionar": True}), {"admin": False, "gestionar": True, "documentos": False, "solicitar": True})
         self.assertEqual(R.niveles({"flota_documentos": True}), {"admin": False, "gestionar": False, "documentos": True, "solicitar": False})
 
-    def test_solo_el_superadmin_es_admin(self):
+    def test_solo_el_superadmin_o_la_llave_administrar_es_admin(self):
         self.assertTrue(R.niveles({"superadmin": True}) == {"admin": True, "gestionar": True, "documentos": True, "solicitar": True})
+        # las otras tres llaves, juntas, NO administran
         self.assertFalse(R.niveles({"flota_solicitar": True, "flota_gestionar": True, "flota_documentos": True})["admin"])
+        # la llave nueva administra y entra, pero NO gestiona (no confirma ni entrega la llave)
+        self.assertEqual(R.niveles({"flota_administrar": True}), {"admin": True, "gestionar": False, "documentos": True, "solicitar": True})
 
 
 class TestPatenteYRut(unittest.TestCase):
@@ -296,10 +299,10 @@ class TestPermisosPorNivel(Base2):
         html = self.c.get("/flota", headers=SOLO_PEDIR).get_data(as_text=True)
         self.assertIn("window.FLOTA_PERMISOS", html)
         self.assertRegex(html, r'FLOTA_PERMISOS = \{[^}]*"admin": false')
-        self.assertNotIn("Solo tú administras esto", html)                    # el aviso del superadmin no se le muestra a los demás
+        self.assertNotIn("Tú administras la flota", html)                     # el aviso de quien administra no se le muestra a los demás
         html = self.c.get("/flota", headers=SUPER).get_data(as_text=True)
         self.assertRegex(html, r'FLOTA_PERMISOS = \{[^}]*"admin": true')
-        self.assertIn("Solo tú administras esto", html)
+        self.assertIn("Tú administras la flota", html)
 
 
 TS_VEH = {"patente": "ZZZZ99", "tipo": "Furgón", "licencia_clases": ["B"]}
@@ -577,7 +580,7 @@ class TestCableadoPermisos(unittest.TestCase):
     def test_las_tres_llaves_estan_en_perms_keys_y_apagadas(self):
         i = self.APP.index("PERMS_KEYS = (")
         bloque = self.APP[i:self.APP.index("\n)\n", i)]
-        for k in ("flota_solicitar", "flota_gestionar", "flota_documentos"):
+        for k in ("flota_solicitar", "flota_gestionar", "flota_documentos", "flota_administrar"):
             self.assertIn(f'"{k}"', bloque, k)
         # no son de tipo «bloqueo» (concedidas por omisión): nacen apagadas para todos
         j = self.APP.index("_PERMS_CONCEDIDOS_POR_OMISION = {")
@@ -586,26 +589,27 @@ class TestCableadoPermisos(unittest.TestCase):
 
     def test_la_matriz_de_roles_las_muestra_y_las_compila(self):
         self.assertIn('"flota":          {"label":"Solicitudes de vehículo"', self.APP)
-        self.assertIn('"acciones":["solicitar", "gestionar", "documentos"]', self.APP)
-        for k, a in (("flota_solicitar", "solicitar"), ("flota_gestionar", "gestionar"), ("flota_documentos", "documentos")):
+        self.assertIn('"acciones":["solicitar", "gestionar", "documentos", "administrar"]', self.APP)
+        for k, a in (("flota_solicitar", "solicitar"), ("flota_gestionar", "gestionar"), ("flota_documentos", "documentos"),
+                     ("flota_administrar", "administrar")):
             self.assertIn(f'base["{k}"] = bool(flo.get("{a}"))', self.APP)
         self.assertIn('flo = matrix.get("flota", {})', self.APP)
         j = self.APP.index('    "flota": {\n        "solicitar":')
         meta = self.APP[j:j + 900]
-        for a in ("solicitar", "gestionar", "documentos"):
+        for a in ("solicitar", "gestionar", "documentos", "administrar"):
             self.assertIn(f'"{a}":', meta)
 
     def test_el_menu_lo_ve_quien_tiene_una_de_las_dos_llaves(self):
         base = _leer("templates", "base.html")
         i = base.index('href="/flota"')
         previo = base[max(0, i - 200):i]
-        self.assertIn("permissions.superadmin or permissions.flota_solicitar or permissions.flota_gestionar", previo)
+        self.assertIn("permissions.superadmin or permissions.flota_solicitar or permissions.flota_gestionar or permissions.flota_administrar", previo)
         self.assertEqual(base.count('href="/flota"'), 1)
         self.assertNotIn("url_for('flota", base)
 
     def test_las_llaves_de_la_flota_no_dan_acceso_a_nada_mas(self):
         # son llaves propias: ninguna reutiliza «superadmin», «admin» ni «mantenciones»
-        for k in ("flota_solicitar", "flota_gestionar", "flota_documentos"):
+        for k in ("flota_solicitar", "flota_gestionar", "flota_documentos", "flota_administrar"):
             for m in re.finditer(rf'base\["{k}"\]\s*=\s*([^\n]+)', self.APP):
                 self.assertNotRegex(m.group(1), r"adm\.|man\.|eti\.|tra\.")
 
@@ -739,3 +743,44 @@ class TestChoferExternoYRepositorio(unittest.TestCase):
         self.assertEqual(a[0]["etiqueta"], "SOAP")
         r = self.c.get(f"/flota/api/vehiculos/{vid}/archivos", headers=SOLO_PEDIR)
         self.assertEqual(r.status_code, 403)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  D. La llave «administrar» (03-nov-2026): Aarón agrega vehículos y choferes sin ser superadministrador
+# ═══════════════════════════════════════════════════════════════════════════
+ADMINISTRA = {"X-Rol": "ejecutivo", "X-Flota": "flota_administrar"}
+
+
+class TestLlaveAdministrar(Base2):
+    def test_quien_administra_agrega_edita_archiva_y_sube_archivos(self):
+        r = self.c.post("/flota/api/vehiculos", json=TS_VEH, headers=ADMINISTRA)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        vid = r.get_json()["vehiculo"]["id"]
+        self.assertEqual(self.c.put(f"/flota/api/vehiculos/{vid}", json=dict(TS_VEH, color="Rojo"), headers=ADMINISTRA).status_code, 200)
+        self.assertEqual(self.c.post(f"/flota/api/vehiculos/{vid}/archivar", json={"motivo": "Vendido hoy"}, headers=ADMINISTRA).status_code, 200)
+        r = self.c.post("/flota/api/choferes", json=dict(TS._datos_chofer(4), usuario_id=4), headers=ADMINISTRA)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(self.subir("vehiculo", self.furgon, "soap", PDF, headers=ADMINISTRA).status_code, 200)
+
+    def test_entra_a_la_pantalla_y_ve_lo_que_mantiene(self):
+        self.assertEqual(self.c.get("/flota", headers=ADMINISTRA).status_code, 200)
+        d = self.c.get("/flota/api/vehiculos", headers=ADMINISTRA).get_json()
+        self.assertEqual(d["permisos"], {"admin": True, "gestionar": False, "documentos": True, "solicitar": True})
+        self.assertIsNotNone(self.veh_json(ADMINISTRA)["vin"])      # lo que mantiene, lo ve
+
+    def test_administrar_no_es_gestionar(self):
+        r = self.c.post("/flota/api/solicitudes", json=TS._sol(vehiculo_id=self.furgon, chofer_id=self.ana), headers=SOLO_PEDIR)
+        sid = r.get_json()["solicitud"]["id"]
+        for ruta in ("confirmar", "llave"):
+            self.assertEqual(self.c.post(f"/flota/api/solicitudes/{sid}/{ruta}", json={}, headers=ADMINISTRA).status_code, 403, ruta)
+        self.assertEqual(self.c.get(f"/flota/api/vehiculos/{self.furgon}/historial", headers=ADMINISTRA).status_code, 403)
+
+    def test_gestionar_solo_sigue_sin_poder_agregar(self):
+        self.assertEqual(self.c.post("/flota/api/vehiculos", json=TS_VEH, headers=GESTOR).status_code, 403)
+        self.assertEqual(self.c.post("/flota/api/choferes", json=dict(TS._datos_chofer(4), usuario_id=4), headers=GESTOR).status_code, 403)
+
+    def test_el_front_no_lo_exime_de_las_24_horas(self):
+        js = _leer("static", "flota_uso.js")
+        i = js.index("function limite24Base()")
+        self.assertIn("PERM.gestionar ? null", js[i:i + 140])
+        self.assertNotIn("PERM.admin) ? null", js[i:i + 140])

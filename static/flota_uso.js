@@ -113,7 +113,7 @@
       p.hidden = p.getAttribute('data-panel') !== t;
     });
     $('flBtnSolicitud').hidden = t !== 'solicitudes';
-    $('flBtnNuevo').hidden = t !== 'vehiculos' || !PERM.admin;        // agregar vehículos y choferes: solo el superadministrador
+    $('flBtnNuevo').hidden = t !== 'vehiculos' || !PERM.admin;        // agregar vehículos y choferes: superadministrador o llave «administrar»
     $('flBtnChofer').hidden = t !== 'choferes' || !PERM.admin;
     try { history.replaceState(null, '', '#' + t); } catch (e) { /* sin historial: no importa */ }
     if (t === 'solicitudes' && S.vista === 'calendario') cargarCal();
@@ -1139,8 +1139,8 @@
     }).join('');
     html += PERM.admin
       ? '<button type="button" class="fl-ccard fl-ccard--nuevo" id="flSolNuevoChofer"><span class="fl-ccard-av" aria-hidden="true"><i class="bi bi-person-plus"></i></span><span class="fl-ccard-c"><b>Agregar chofer</b><span class="fl-ccard-s">Lo sumas al repositorio y vuelves acá</span></span></button>'
-      : '<div class="fl-ccard-nota"><i class="bi bi-info-circle"></i>¿Falta alguien? Pídeselo al superadministrador: él agrega los choferes.</div>';
-    cont.innerHTML = lista.length || PERM.admin ? html : '<div class="fl-vacio"><b>Aún no hay choferes</b>El superadministrador los agrega en la pestaña Choferes.</div>';
+      : '<div class="fl-ccard-nota"><i class="bi bi-info-circle"></i>¿Falta alguien? Pídeselo a quien administra la flota: él agrega los choferes.</div>';
+    cont.innerHTML = lista.length || PERM.admin ? html : '<div class="fl-vacio"><b>Aún no hay choferes</b>Quien administra la flota los agrega en la pestaña Choferes.</div>';
   }
   function disponibilidadChoferes() {
     Array.prototype.forEach.call(document.querySelectorAll('#flSolChoferes .fl-ccard-e'), function (el) {
@@ -1201,7 +1201,7 @@
     return isoDe(d) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
   /* Quien PIDE no puede reservar con menos de 24 h de anticipación; la gestión (y quien mueve una reserva) sí. */
-  function limite24Base() { return (PERM.gestionar || PERM.admin) ? null : sumarMin(ahoraCL().dt, antelacionH() * 60); }
+  function limite24Base() { return PERM.gestionar ? null : sumarMin(ahoraCL().dt, antelacionH() * 60); }
   function pkLimite24() { return S.editSol ? null : limite24Base(); }
   /* Hasta qué minuto de ese día rige la regla de 24 h en la AGENDA (0 = nada; 1440 = el día completo). */
   function cierre24(iso) {

@@ -1400,7 +1400,7 @@ class TestAgenda24hEnElFrente(unittest.TestCase):
 
     def test_la_gestion_no_queda_limitada(self):
         i = self.JS.index("function limite24Base()")
-        self.assertIn("(PERM.gestionar || PERM.admin) ? null", self.JS[i:i + 140])
+        self.assertIn("PERM.gestionar ? null", self.JS[i:i + 140])
 
     def test_la_pista_la_lista_el_hueco_y_la_entrada_la_respetan(self):
         for marca in ("cierre24(iso), R[1]",                                    # franja ámbar en la pista
