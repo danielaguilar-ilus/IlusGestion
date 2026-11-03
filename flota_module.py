@@ -230,6 +230,7 @@ def register_flota_routes(app, ctx):
             "ALTER TABLE flota_choferes ADD COLUMN archivado_por VARCHAR(190) NULL",
             "ALTER TABLE flota_choferes ADD COLUMN archivado_at DATETIME NULL",
             "ALTER TABLE flota_choferes ADD COLUMN telefono VARCHAR(30) NULL",
+            "ALTER TABLE flota_solicitudes ADD COLUMN sla_aviso VARCHAR(20) NULL",
         )
         for sql_col in columnas_nuevas:
             try:
@@ -1201,6 +1202,51 @@ def register_flota_routes(app, ctx):
             },
         }
 
+    # ── Correos de la flota (Daniel, 03-nov-2026: «activa en comunicaciones sus mails»; REGLA #33) ──────────────────
+    def _gestores_flota():
+        """ids de los usuarios ACTIVOS que gestionan la flota: el permiso «Gestionar solicitudes» EXPLÍCITO (por persona manda sobre el
+        rol; el atajo del superadministrador no cuenta). De respaldo, los superadministradores, para que el aviso no se pierda."""
+        ids = []
+        try:
+            filas = mysql_fetchall(
+                "SELECT u.id, "
+                "(SELECT up.permitido FROM usuario_permisos up WHERE up.user_id=u.id AND up.permiso='flota_gestionar' LIMIT 1) AS ov, "
+                "(SELECT rp.permitido FROM rol_permisos rp WHERE rp.rol_slug=u.role AND rp.modulo='flota' AND rp.accion='gestionar' LIMIT 1) AS rolp "
+                "FROM `" + _AUTH + "` u WHERE u.active=1") or []
+            for f in filas:
+                v = f.get("ov") if f.get("ov") is not None else f.get("rolp")
+                if v is not None and int(v):
+                    ids.append(int(f["id"]))
+        except Exception as e:
+            print(f"[flota] gestores: {type(e).__name__}", flush=True)
+        if not ids:
+            try:
+                ids = [int(f["id"]) for f in (mysql_fetchall("SELECT id FROM `" + _AUTH + "` WHERE active=1 AND role='superadmin'") or [])]
+            except Exception:
+                ids = []
+        return ids
+
+    def _correo_flota(clave, uids, titulo, cuerpo):
+        """Por la puerta única con su clave del registro (comm_correos_registro). Nunca rompe lo que la persona estaba haciendo."""
+        fn = ctx.get("_aviso_interno_correo")
+        uids = [u for u in (uids or []) if u]
+        if not fn or not uids:
+            return 0
+        try:
+            return fn(clave, uids, titulo, cuerpo, "/flota#solicitudes", "Solicitudes de vehículo")
+        except Exception as e:
+            print(f"[flota] correo {clave}: {type(e).__name__}", flush=True)
+            return 0
+
+    def _cuerpo_correo(r, primera=""):
+        """Texto del aviso desde la fila de la solicitud (sin depender de quién está conectado: también lo usa el barrido)."""
+        veh = " ".join(x for x in (fr.patente_con_guion(r.get("v_patente")), r.get("v_tipo"), r.get("v_marca"), r.get("v_modelo")) if x)
+        lineas = [primera] if primera else []
+        lineas += [f"Solicitud: {r.get('numero') or ''}", f"Vehículo: {veh}", f"Cuándo: {fr.rango_texto(r['inicio'], r['fin'])}",
+                   f"Área: {r.get('area') or '—'} · pidió {r.get('solicitante_nombre') or '—'}",
+                   f"Retira la llave: {r.get('chofer_nombre') or '—'}", f"Motivo: {r.get('motivo') or '—'}"]
+        return "\n".join(lineas)
+
     def _sol_fila(sid):
         return mysql_fetchone(_SQL_SOL + " WHERE s.id=%s", (sid,))
 
@@ -1436,10 +1482,22 @@ def register_flota_routes(app, ctx):
     @app.route("/flota/api/solicitudes", methods=["POST"])
     @_flota_required
     def flota_api_solicitud_crear():
-        datos, errores = fr.validar_solicitud(request.get_json(silent=True) or {}, _ahora_chile())
+        payload = request.get_json(silent=True) or {}
+        datos, errores = fr.validar_solicitud(payload, _ahora_chile())
         if errores:
             return _error("Revisa los campos marcados.", 400, errores=errores)
-        return _respuesta_reserva(*_reservar(datos))
+        # Origen (Daniel, 03-nov-2026: «cuando se cree la orden de trabajo no debería mandar correo, pero si lo hacen por el menú sí»):
+        # una reserva que nace desde una OT (origen="ot") no avisa por correo; la del menú Solicitudes de vehículo, sí.
+        desde_ot = str(payload.get("origen") or "").strip().lower() == "ot"
+        cuerpo, http = _reservar(datos)
+        if cuerpo.get("ok") and not desde_ot:
+            r = _sol_fila(cuerpo["id"])
+            if r:
+                r = dict(r)
+                _correo_flota("flota_solicitud_nueva", [u for u in _gestores_flota() if u != _uid()],
+                              f"Nueva solicitud {r.get('numero') or ''}: {fr.patente_con_guion(r.get('v_patente'))}",
+                              _cuerpo_correo(r, "Pidieron un vehículo de la flota. Revísala y confírmala en Solicitudes de vehículo."))
+        return _respuesta_reserva(cuerpo, http)
 
     @app.route("/flota/api/solicitudes/<int:sid>", methods=["GET"])
     @_flota_required
@@ -1449,7 +1507,7 @@ def register_flota_routes(app, ctx):
             return _error("No encontré esa solicitud.", 404)
         eventos = []
         titulos = {"creada": "Solicitud creada", "confirmada": "Confirmada por la gestión", "llave_entregada": "Llave entregada",
-                   "editada": "Reserva modificada", "cancelada": "Cancelada"}
+                   "editada": "Reserva modificada", "cancelada": "Cancelada", "sla_aviso": "Aviso de llave atrasada a la gestión"}
         for f in mysql_fetchall(
                 "SELECT id, accion, detalle, usuario, created_at FROM flota_solicitud_log WHERE solicitud_id=%s ORDER BY id DESC LIMIT 200",
                 (sid,)) or []:
@@ -1502,9 +1560,17 @@ def register_flota_routes(app, ctx):
     @app.route("/flota/api/solicitudes/<int:sid>/confirmar", methods=["POST"])
     @_flota_gestion_required
     def flota_api_solicitud_confirmar(sid):
-        return _transicion(
+        resp = _transicion(
             sid, "UPDATE flota_solicitudes SET estado='confirmada', confirmada_por=%s, confirmada_at=NOW() WHERE id=%s AND estado='solicitada'",
             (current_username(), sid), "confirmada", {})
+        if not isinstance(resp, tuple):
+            r = _sol_fila(sid)
+            if r and r.get("solicitante_id") and r["solicitante_id"] != _uid():
+                r = dict(r)
+                _correo_flota("flota_solicitud_confirmada", [r["solicitante_id"]],
+                              f"Tu solicitud {r.get('numero') or ''} quedó confirmada",
+                              _cuerpo_correo(r, f"{current_username() or 'La gestión'} confirmó tu reserva. La llave se entrega de 08:00 a 13:00 y de 14:00 a 17:00."))
+        return resp
 
     @app.route("/flota/api/solicitudes/<int:sid>/llave", methods=["POST"])
     @_flota_gestion_required
@@ -1531,7 +1597,60 @@ def register_flota_routes(app, ctx):
         motivo, err = fr.validar_motivo_cambio((request.get_json(silent=True) or {}).get("motivo"))
         if err:
             return _error(err, 400, errores={"motivo": err})
-        return _transicion(
+        resp = _transicion(
             sid, "UPDATE flota_solicitudes SET estado='cancelada', cancelada_por=%s, cancelada_at=NOW(), cancelada_motivo=%s "
                  "WHERE id=%s AND estado IN ('solicitada','confirmada','llave_entregada')",
             (current_username(), motivo, sid), "cancelada", {"motivo": motivo, "estado_antes": fila["estado"]})
+        if not isinstance(resp, tuple):
+            r = dict(_sol_fila(sid) or fila)
+            quien = current_username() or "Alguien"
+            primera = f"{quien} canceló esta reserva. Motivo: {motivo}. El horario quedó libre."
+            if r.get("solicitante_id") and r["solicitante_id"] != _uid():
+                destino = [r["solicitante_id"]]
+            else:
+                destino = [u for u in _gestores_flota() if u != _uid()]
+            _correo_flota("flota_solicitud_cancelada", destino, f"Solicitud {r.get('numero') or ''} cancelada", _cuerpo_correo(r, primera))
+        return resp
+
+
+    # ── Barrido del SLA de la llave (cuelga de Cloud Scheduler `simpliroute-poll`, cada 10 min) ─────────────────────────────
+    def _flota_sla_barrido():
+        """Avisa por correo a la gestión cuando una llave se atrasa (15 min hábiles) y otra vez cuando el atraso es crítico (60). Solo
+        dentro del horario de llaves, una vez por nivel y por reserva (`flota_solicitudes.sla_aviso`, UPDATE atómico). Nunca levanta."""
+        ahora = _ahora_chile()
+        if not fr.en_horario(ahora, _feriados(ahora.year)):
+            return {"fuera_de_horario": True}
+        try:
+            filas = mysql_fetchall(_SQL_SOL + " WHERE s.estado IN ('solicitada','confirmada') AND s.inicio <= %s AND s.fin > %s "
+                                   "ORDER BY s.inicio LIMIT 200", (ahora, ahora)) or []
+        except Exception as e:
+            print(f"[flota] barrido SLA: {type(e).__name__}: {e}", flush=True)
+            return {"error": True}
+        avisos, gestores = 0, None
+        for r in filas:
+            r = dict(r)
+            sla = fr.sla_llave(r["estado"], r["inicio"], r["fin"], ahora, _feriados(r["inicio"].year, ahora.year))
+            if not sla or sla["estado"] not in ("atrasada", "critica"):
+                continue
+            ya = r.get("sla_aviso") or ""
+            if ya == sla["estado"] or ya == "critica":
+                continue
+            try:
+                n = mysql_rowcount("UPDATE flota_solicitudes SET sla_aviso=%s WHERE id=%s AND (sla_aviso IS NULL OR sla_aviso<>%s)",
+                                   (sla["estado"], r["id"], sla["estado"]))
+            except Exception as e:
+                print(f"[flota] barrido SLA (marcar): {type(e).__name__}", flush=True)
+                continue
+            if not n:
+                continue
+            _slog(r["id"], "sla_aviso", {"nivel": sla["estado"], "texto": sla["texto"]})
+            if gestores is None:
+                gestores = _gestores_flota()
+            _correo_flota("flota_llave_atrasada", gestores,
+                          f"{'Atraso crítico' if sla['estado'] == 'critica' else 'Llave atrasada'}: {r.get('numero') or ''} · "
+                          f"{fr.patente_con_guion(r.get('v_patente'))}",
+                          _cuerpo_correo(r, sla["texto"] + ". Entrega la llave o actualiza la solicitud en Solicitudes de vehículo."))
+            avisos += 1
+        return {"revisadas": len(filas), "avisos": avisos}
+
+    ctx["_flota_sla_barrido"] = _flota_sla_barrido

@@ -1108,6 +1108,28 @@
     cont.innerHTML = html;
   }
   function fr_mes(n) { return ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][n - 1] || ''; }
+  function pkSlots() {
+    var out = [];
+    (S.horario.tramos || [[480, 780], [840, 1020]]).forEach(function (t) { for (var m = t[0]; m < t[1]; m += PK_PASO) out.push(m); });
+    return out;
+  }
+  function pkFinJornada() { var t = S.horario.tramos || [[480, 780], [840, 1020]]; return t[t.length - 1][1]; }
+  /* Vehículo cuya jornada se muestra: el elegido en el paso 2 o, si no hay, el primero habilitado. */
+  function pkVeh() {
+    var v = vehSel() || S.pk.veh;
+    if (v && vehPorId(v)) return String(v);
+    var h = S.veh.filter(function (x) { return x.habilitado; })[0];
+    return h ? String(h.id) : '';
+  }
+  function pkLibresTexto(vid, iso, ahora) {
+    var libres = pkSlots().filter(function (x) {
+      return !pkOcupante(vid, iso, x) && !(iso < ahora.iso || (iso === ahora.iso && x + PK_PASO <= minutos(ahora.hm)));
+    }).length;
+    return libres ? (libres / 2 + ' h libres').replace('.5 h', ',5 h') : 'Sin horas libres';
+  }
+  /* Bloques de media hora como el Paso 4 de /retiros/solicitar (Daniel, 03-nov-2026: «no me gusta cómo se reserva la hora, me
+     gustaría que se vea como Retiros»): pestaña por vehículo con su foto, y la jornada de llaves en tarjetas «Mañana» y «Tarde»
+     con la colación al medio. Se toca el bloque donde parte y el bloque donde termina. */
   function pkPintarBloques() {
     var cont = $('flPkBloques');
     if (!cont) return;
@@ -1115,40 +1137,46 @@
     if (!iso) { cont.innerHTML = '<div class="fl-pk-vacio"><i class="bi bi-hand-index"></i>Elige un día en el calendario.</div>'; $('flPkSel').innerHTML = ''; return; }
     if (!S.meses[iso.slice(0, 7)]) { cont.innerHTML = '<div class="fl-pk-cargando"><span class="fl-pk-spin"></span>Leyendo la agenda…</div>'; return; }
     var d = diaInfo(iso), ahora = ahoraCL(), vehs = S.veh.filter(function (v) { return v.habilitado; });
-    var vsel = vehSel(), md = minutos(vSol('hora_desde')), mh = minutos(vSol('hora_hasta'));
+    var vid = pkVeh(), md = minutos(vSol('hora_desde')), mh = minutos(vSol('hora_hasta'));
     var otroDia = $('flSolOtroDia').checked && vSol('fecha_hasta') && vSol('fecha_hasta') !== iso;
+    var elegido = String(vehSel()) === vid;
     var html = '<div class="fl-pk-dia-cab"><b>' + esc(DIAS_LARGO[(aFecha(iso).getDay() + 6) % 7] + ' ' + fechaCorta(iso)) + '</b>' +
       (d.nombre ? '<span class="fl-pk-fer"><i class="bi bi-flag-fill"></i>Feriado: ' + esc(d.nombre) + '</span>' : (d.no_laboral ? '<span class="fl-pk-fer"><i class="bi bi-moon-stars"></i>Fin de semana: ILUS no opera</span>' : '')) + '</div>';
-    html += '<div class="fl-pk-escala" aria-hidden="true"><span></span>';
-    for (var m = PK_DESDE; m < PK_HASTA; m += 60) html += '<span>' + pad(m / 60) + '</span>';
-    html += '</div>';
-    vehs.forEach(function (v) {
-      var libres = 0;
-      var celdas = '';
-      for (var x = PK_DESDE; x < PK_HASTA; x += PK_PASO) {
-        var ocu = pkOcupante(v.id, iso, x);
-        var pasado = iso < ahora.iso || (iso === ahora.iso && x + PK_PASO <= minutos(ahora.hm));
-        var enSel = String(v.id) === String(vsel) && md != null && (otroDia ? x >= md : (mh != null && x >= md && x < mh));
-        var fueraH = !enHorarioLlaves(iso, x, false);
-        var cls = ocu ? 'ocu fla-a--' + areaKey(ocu.area) : (pasado ? 'pas' : (fueraH ? 'lib fh' : 'lib'));
-        if (!ocu && !pasado) libres++;
-        if (enSel) cls += ocu ? ' choca' : ' sel';
-        if (S.pk.ancla && String(S.pk.ancla.veh) === String(v.id) && S.pk.ancla.m === x) cls += ' ancla';
-        var t = hhmm(x) + '–' + hhmm(x + PK_PASO) + ': ' + (ocu ? 'ocupado · ' + ocu.numero + ' · ' + ocu.area + ' · ' + horaEnDia(ocu, iso) + ' (pidió ' + (ocu.solicitante || 'otra persona') + ')'
-          : (pasado ? 'ya pasó' : (fueraH ? 'libre, pero fuera del horario de llaves' + (x >= 780 && x < 840 ? ' (colación)' : '') : 'libre')));
-        celdas += '<button type="button" class="fl-pk-s ' + cls + '" data-pkveh="' + v.id + '" data-pkm="' + x + '"' + (pasado && !ocu ? ' disabled' : '') +
-          ' title="' + esc(t) + '" aria-label="' + esc(v.patente_fmt + ', ' + t) + '"></button>';
+    html += '<div class="fl-pk-vtabs" role="tablist" aria-label="Vehículo">' + vehs.map(function (v) {
+      var on = String(v.id) === vid;
+      return '<button type="button" class="fl-pk-vtab' + (on ? ' on' : '') + '" role="tab" aria-selected="' + on + '" data-pkv="' + v.id + '">' + vehFoto(v, 'fl-pk-vtab-foto') +
+        '<span><b class="fl-pat">' + esc(v.patente_fmt) + '</b><span>' + esc(v.tipo || '') + '</span><span class="fl-pk-libres">' + esc(pkLibresTexto(v.id, iso, ahora)) + '</span></span></button>';
+    }).join('') + '</div>';
+    html += '<div class="fl-pk-leg" aria-hidden="true"><span><i class="fl-pk-dot fl-pk-dot--lib"></i>Disponible</span><span><i class="fl-pk-dot fl-pk-dot--ocu"></i>Ocupado</span>' +
+      '<span><i class="fl-pk-dot fl-pk-dot--col"></i>Colación</span><span><i class="fl-pk-dot fl-pk-dot--sel"></i>Tu reserva</span></div>';
+    function boton(x) {
+      var ocu = pkOcupante(vid, iso, x);
+      var pasado = iso < ahora.iso || (iso === ahora.iso && x + PK_PASO <= minutos(ahora.hm));
+      var cls = ['fl-pk-slot'], t;
+      if (ocu) { cls.push('is-ocu', 'fla-a--' + areaKey(ocu.area)); t = 'Ocupado · ' + ocu.numero + ' · ' + ocu.area + ' · ' + horaEnDia(ocu, iso) + ' (pidió ' + (ocu.solicitante || 'otra persona') + ')'; }
+      else if (pasado) { cls.push('is-pasado'); t = 'Ya pasó'; }
+      else t = 'Disponible ' + hhmm(x) + '–' + hhmm(x + PK_PASO);
+      if (elegido && md != null) {
+        var dentro = otroDia ? x >= md : (mh != null && x >= md && x < mh);
+        if (dentro) cls.push(ocu ? 'is-choca' : 'is-rango');
+        if (x === md || (!otroDia && mh != null && x === mh - PK_PASO)) cls.push('is-sel');
       }
-      html += '<div class="fl-pk-fila' + (String(v.id) === String(vsel) ? ' on' : '') + '">' +
-        '<div class="fl-pk-veh">' + vehFoto(v, 'fl-pk-foto') + '<span><b class="fl-pat">' + esc(v.patente_fmt) + '</b><span>' + esc(v.tipo || '') + '</span>' +
-        '<span class="fl-pk-libres">' + (libres ? plural(libres / 2, 'h libre', 'h libres').replace('.5 h', ',5 h') : 'Sin horas libres') + '</span></span></div>' +
-        '<div class="fl-pk-tira">' + celdas + '</div></div>';
+      if (S.pk.ancla && String(S.pk.ancla.veh) === vid && S.pk.ancla.m === x) cls.push('is-ancla');
+      var bloq = ocu || pasado;
+      return '<button type="button" class="' + cls.join(' ') + '" data-pkveh="' + vid + '" data-pkm="' + x + '"' + (bloq ? ' aria-disabled="true"' : '') +
+        ' title="' + esc(t) + '" aria-label="' + esc(t) + '">' + (ocu ? '<i class="bi bi-lock-fill"></i>' : esc(hhmm(x))) + '</button>';
+    }
+    var tramos = S.horario.tramos || [[480, 780], [840, 1020]];
+    tramos.forEach(function (tr, i) {
+      var slots = pkSlots().filter(function (x) { return x >= tr[0] && x < tr[1]; });
+      html += '<div class="fl-pk-sec">' + (i === 0 ? '☀️ Mañana' : '🌤 Tarde') + ' · ' + hhmm(tr[0]) + '–' + hhmm(tr[1]) + '</div>' +
+        '<div class="fl-pk-grid">' + slots.map(boton).join('') + '</div>';
+      if (i < tramos.length - 1) html += '<div class="fl-pk-colacion"><i class="bi bi-cup-hot"></i>Colación ' + hhmm(tr[1]) + '–' + hhmm(tramos[i + 1][0]) + ' · no se entregan llaves</div>';
     });
     html += '<div class="fl-pk-atajos" role="group" aria-label="Horarios rápidos">' +
       '<button type="button" class="fl-pk-at" data-pkat="08:00-13:00"><i class="bi bi-sunrise"></i>Mañana 08–13</button>' +
-      '<button type="button" class="fl-pk-at" data-pkat="14:00-18:00"><i class="bi bi-sunset"></i>Tarde 14–18</button>' +
-      '<button type="button" class="fl-pk-at" data-pkat="08:00-18:00"><i class="bi bi-brightness-high"></i>Jornada 08–18</button>' +
-      '<span class="fl-pk-ayuda"><i class="bi bi-key"></i>Llaves: 08–13 y 14–17 · lo oscuro queda fuera de horario</span></div>';
+      '<button type="button" class="fl-pk-at" data-pkat="14:00-17:00"><i class="bi bi-sunset"></i>Tarde 14–17</button>' +
+      '<button type="button" class="fl-pk-at" data-pkat="08:00-17:00"><i class="bi bi-brightness-high"></i>Jornada 08–17</button></div>';
     cont.innerHTML = html;
     pkPintarSel();
   }
@@ -1156,11 +1184,15 @@
     var el = $('flPkSel');
     if (!el) return;
     var v = vehPorId(vehSel()), ven = ventana();
-    if (!v || !ven) { el.className = 'fl-pk-sel'; el.innerHTML = '<i class="bi bi-info-circle"></i><span>' + (S.pk.ancla ? 'Ahora toca el bloque donde terminas.' : 'Elige el vehículo y el horario tocando los bloques verdes.') + '</span>'; return; }
+    if (!v || !ven) {
+      el.className = 'fl-pk-sel';
+      el.innerHTML = '<i class="bi bi-hand-index-thumb"></i><span>' + (S.pk.ancla ? 'Ahora toca el bloque donde terminas.' : 'Toca el bloque donde partes y luego el bloque donde terminas.') + '</span>';
+      return;
+    }
     var ch = choques('v', v.id, ven);
     el.className = 'fl-pk-sel ' + (ch.length ? 'bad' : 'ok');
     el.innerHTML = vehFoto(v, 'fl-pk-sel-foto') + '<span><b>' + esc(v.patente_fmt + ' · ' + (v.titulo || v.tipo)) + '</b>' +
-      '<span>' + esc(diaTexto(ven.f) + ' ' + vSol('hora_desde') + (ven.fh !== ven.f ? ' → ' + diaTexto(ven.fh) : ' a') + ' ' + vSol('hora_hasta') + ' · ' + duracionTexto(ven.ini, ven.fin)) + '</span></span>' +
+      '<span>' + esc(diaTexto(ven.f) + ' de ' + vSol('hora_desde') + (ven.fh !== ven.f ? ' al ' + diaTexto(ven.fh) : '') + ' a ' + vSol('hora_hasta') + ' · ' + duracionTexto(ven.ini, ven.fin)) + '</span></span>' +
       '<span class="fl-pk-sel-est">' + (ch.length ? '<i class="bi bi-x-octagon-fill"></i>Choca con ' + esc(ch[0].numero + ' · ' + ch[0].area) : '<i class="bi bi-check-circle-fill"></i>Libre') + '</span>';
   }
   function pkPintar() { pkPintarMes(); pkPintarBloques(); }
@@ -1169,10 +1201,18 @@
     pkPintarMes();
     return Promise.all([cargarMes(mes), cargarMes(sumarDias(mes + '-01', 40).slice(0, 7))]).then(pkPintar);
   }
+  function pkElegirVeh(vid) {
+    S.pk.veh = String(vid);
+    S.pk.ancla = null;
+    var r = document.querySelector('#flSolVehiculos input[value="' + vid + '"]');
+    if (r && !r.disabled) { r.checked = true; S.solTocados.vehiculo_id = true; }
+    evaluarSol();
+  }
   function pkPonerHoras(vid, a, b) {
     var f = $('flFormSol');
     var r = document.querySelector('#flSolVehiculos input[value="' + vid + '"]');
     if (r && !r.disabled) r.checked = true;
+    S.pk.veh = String(vid);
     f.elements.hora_desde.value = hhmm(a);
     f.elements.hora_hasta.value = hhmm(Math.min(b, 1439));
     ['vehiculo_id', 'hora_desde', 'hora_hasta'].forEach(function (c) { S.solTocados[c] = true; });
@@ -1181,25 +1221,28 @@
   function pkTocar(vid, m) {
     var iso = vSol('fecha'), ocu = pkOcupante(vid, iso, m);
     if (ocu) { toast(vehPorId(vid).patente_fmt + ' está ocupado a esa hora: ' + ocu.numero + ' · ' + ocu.area + ' · ' + horaEnDia(ocu, iso) + '.', 'warning'); return; }
+    var ahora = ahoraCL();
+    if (iso < ahora.iso || (iso === ahora.iso && m + PK_PASO <= minutos(ahora.hm))) { toast('Ese bloque ya pasó.', 'warning'); return; }
     var a = S.pk.ancla;
     if (a && String(a.veh) === String(vid) && m >= a.m) {
-      for (var x = a.m; x <= m; x += PK_PASO) {      // el tramo no puede cruzar otra reserva
-        if (pkOcupante(vid, iso, x)) { toast('Entre esas horas hay otra reserva. Elige un tramo sin bloques rojos.', 'warning'); return; }
+      for (var x = a.m; x <= m; x += PK_PASO) {      // el tramo no puede cruzar otra reserva (la colación sí: el vehículo sigue afuera)
+        if (pkOcupante(vid, iso, x)) { toast('Entre esas horas hay otra reserva. Elige un tramo sin bloques ocupados.', 'warning'); return; }
       }
       S.pk.ancla = null;
       pkPonerHoras(vid, a.m, m + PK_PASO);
       return;
     }
     S.pk.ancla = { veh: vid, m: m };
-    var fin = m + PK_PASO;
-    while (fin < m + 120 && fin < PK_HASTA && !pkOcupante(vid, iso, fin)) fin += PK_PASO;   // propone 2 h o hasta la próxima reserva
+    var fin = m + PK_PASO, tope = pkFinJornada();
+    (S.horario.tramos || []).forEach(function (t) { if (m >= t[0] && m < t[1]) tope = t[1]; });   // no propone cruzar la colación
+    while (fin < m + 120 && fin < tope && !pkOcupante(vid, iso, fin)) fin += PK_PASO;   // propone 2 h o hasta la próxima reserva
     pkPonerHoras(vid, m, fin);
   }
   function pkAtajo(rango) {
     var p = rango.split('-'), a = minutos(p[0]), b = minutos(p[1]), iso = vSol('fecha');
     if (!iso) { toast('Primero elige el día.', 'warning'); return; }
     var vehs = S.veh.filter(function (v) { return v.habilitado; });
-    var pref = vehSel() ? [vehPorId(vehSel())].concat(vehs) : vehs;
+    var pref = [vehPorId(pkVeh())].concat(vehs);
     var libre = null;
     pref.forEach(function (v) {
       if (libre || !v) return;
@@ -1209,8 +1252,9 @@
     });
     S.pk.ancla = null;
     if (!libre) { toast('Ningún vehículo está libre ' + p[0] + '–' + p[1] + ' ese día. Prueba otro horario u otro día.', 'warning'); return; }
+    var antes = pkVeh();
     pkPonerHoras(libre.id, a, b);
-    if (vehSel() && String(libre.id) !== String(vehSel())) toast('El vehículo que tenías está ocupado en ese horario; te dejé ' + libre.patente_fmt + '.', 'info');
+    if (String(libre.id) !== String(antes)) toast('El vehículo que mirabas está ocupado en ese horario; te dejé ' + libre.patente_fmt + '.', 'info');
   }
 
   function refrescarOcup() {
@@ -1240,6 +1284,8 @@
     f.elements.motivo.value = s ? s.motivo : '';
     tarjetasAreas(s ? s.area : '');
     S.pk.ancla = null;
+    S.pk.veh = s ? String(s.vehiculo.id) : (pref.vehiculo_id ? String(pref.vehiculo_id) : null);
+    $('flPkManual').open = false;
     var mesPk = (f.elements.fecha.value || S.hoy || '').slice(0, 7);
     delete S.meses[mesPk];                     // la agenda del modal se lee fresca al abrir
     S.pk.mes = mesPk;
@@ -1278,6 +1324,7 @@
     if (ev.faltan.length) {
       toast('Falta: ' + ev.faltan.map(function (c) { return NOMBRES_SOL[c]; }).join(', ') + '.', 'warning');
       var malo = document.querySelector('#flFormSol .fl-campo.bad');
+      if (malo && $('flPkManual').contains(malo)) $('flPkManual').open = true;     // el día y la hora a mano viven plegados
       if (malo) { var i = malo.querySelector('input,textarea,select'); if (i) i.focus(); }
       return;
     }
@@ -1877,8 +1924,10 @@
     $('flPkBloques').addEventListener('click', function (ev) {
       var at = ev.target.closest('[data-pkat]');
       if (at) { pkAtajo(at.getAttribute('data-pkat')); return; }
-      var b = ev.target.closest('.fl-pk-s[data-pkveh]');
-      if (b && !b.disabled) pkTocar(b.getAttribute('data-pkveh'), parseInt(b.getAttribute('data-pkm'), 10));
+      var tab = ev.target.closest('[data-pkv]');
+      if (tab) { pkElegirVeh(tab.getAttribute('data-pkv')); return; }
+      var b = ev.target.closest('.fl-pk-slot[data-pkveh]');      // un bloque ocupado también responde: pkTocar dice quién lo tiene
+      if (b) pkTocar(b.getAttribute('data-pkveh'), parseInt(b.getAttribute('data-pkm'), 10));
     });
 
     /* Choferes */
