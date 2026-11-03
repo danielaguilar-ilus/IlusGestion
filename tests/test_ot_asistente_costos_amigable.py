@@ -65,6 +65,7 @@ class TestElCostoYaNoMiente(unittest.TestCase):
             "function esInterno(){ return false; }",
             "function _o2mFinEsManual(){ return false; } function _o2mFinPideMotivo(){ return false; }",
             "function _o2mFinEnvioEsManual(){ return false; } function _o2mFinObsFalta(){ return false; }",
+            "function _o2mFinDespachoPendiente(){ return false; }",       # el despacho tiene sus propias pruebas (TestElDespachoEsUnaPregunta)
             _js_funcion("_o2mFinSubEstado"),
             "console.log(JSON.stringify(_o2mFinSubEstado('costo')));"])
         return _correr(prog)
@@ -283,10 +284,10 @@ class TestMenosCamposQueRepitenLaPlata(unittest.TestCase):
         self.assertFalse(vis({"fin_zz_envio": {"monto": 0}}))
         self.assertTrue(vis({"_fpAbierto": {"despacho": True}}), "o si la persona lo pidió")
 
-    def test_el_costo_del_despacho_sigue_en_la_pagina_con_su_enlace(self):
+    def test_el_costo_del_despacho_sigue_en_la_pagina_con_su_pregunta(self):
         f = _js_funcion("pintarFinanzas")
         self.assertIn("id=\"o2mFinDespWrap\"'+(_o2mFinDespachoVisible() ? '' : ' hidden')", f)
-        self.assertIn('id="o2mFinCostoDesp"', f, "el campo no se quitó: solo se esconde")
+        self.assertIn('id="o2mFinCostoDesp"', f, "el campo no se quitó: solo se esconde detrás de «Sí»")
         self.assertIn("OT2C.finDespachoAbrir()", f)
         self.assertIn("if (me.falta_despacho) _o2mFinDespachoMostrar(false);", _js_funcion("_pintarFinMargenDom"))
 
@@ -338,8 +339,74 @@ class TestMenosCamposQueRepitenLaPlata(unittest.TestCase):
         self.assertIn("OT2C.anexoAgregarItem()", h)
 
     def test_estan_expuestos_para_el_html(self):
-        for n in ("finDespachoAbrir", "finValorizarAbrir", "anexoPartidasAbrir"):
+        for n in ("finDespachoAbrir", "finDespachoCerrar", "finValorizarAbrir", "anexoPartidasAbrir"):
             self.assertIn("%s:%s" % (n, n), H, n)
+
+
+@unittest.skipUnless(shutil.which("node"), "sin Node")
+class TestElDespachoEsUnaPregunta(unittest.TestCase):
+    """3-nov-2026 (Daniel, Juan Pablo al crear una OT: «no se percibe dónde colocar el despacho a mano… siempre estamos subsanando cosas acá»):
+    el despacho dejó de ser un enlace azul chico («Agregar costo de despacho») y pasó a ser una pregunta a la vista con dos tarjetas."""
+
+    def _funcs(self, estado, cuerpo, extra=""):
+        prog = "\n".join(["var S = %s;" % json.dumps(estado),
+                          "var _salida = {};",
+                          "function _o2mFormatearMiles(v){ return String(v==null?'':v); }",
+                          "var document = {getElementById: function(id){ return id === 'o2mFinCostoDesp' ? _inp : null; }}; var _inp = {value: 'x'};",
+                          _js_funcion("_o2mFinDespachoVisible"), _js_funcion("_o2mFinDespachoPendiente"), extra, cuerpo])
+        return _correr(prog)
+
+    def test_la_pregunta_esta_a_la_vista_y_el_enlace_chico_ya_no_existe(self):
+        f = _js_funcion("pintarFinanzas")
+        self.assertIn("¿Te cobran despacho?", f)
+        for pista in ('id="o2mFinDespNo"', 'id="o2mFinDespSi"', "OT2C.finDespachoCerrar()", "OT2C.finDespachoAbrir()", 'class="o2m-cobro-toggle"',
+                      "No, sin despacho", "Sí, me cobran despacho", 'id="o2mFinDespAviso"'):
+            self.assertIn(pista, f, pista)
+        self.assertNotIn("Agregar costo de despacho", H)
+        self.assertNotIn("o2mFinDespBtn", H)
+
+    def test_un_no_explicito_gana_sobre_un_valor_y_sobre_el_despacho_del_cliente(self):
+        def vis(estado):
+            return self._funcs(dict({"_fpAbierto": {}, "fin_costo_despacho": "", "fin_zz_envio": None}, **estado),
+                               "console.log(JSON.stringify(_o2mFinDespachoVisible()));")
+        self.assertFalse(vis({}), "sin tocar nada queda en «No»: el caso común no pide un campo más")
+        self.assertTrue(vis({"fin_zz_envio": {"monto": 50000}}))
+        self.assertFalse(vis({"fin_zz_envio": {"monto": 50000}, "_despNo": True, "fin_costo_despacho": "0"}))
+        self.assertTrue(vis({"_despNo": True, "_fpAbierto": {"despacho": True}}), "«Sí» elegido después del «No» vuelve a abrir el campo")
+
+    def test_con_si_y_sin_monto_falta_el_dato_pero_con_no_o_sin_tocar_no(self):
+        def pend(estado):
+            return self._funcs(dict({"_fpAbierto": {}, "fin_costo_despacho": ""}, **estado), "console.log(JSON.stringify(_o2mFinDespachoPendiente()));")
+        self.assertFalse(pend({}), "nunca tocado: sigue siendo opcional")
+        self.assertTrue(pend({"_fpAbierto": {"despacho": True}}))
+        self.assertTrue(pend({"_fpAbierto": {"despacho": True}, "fin_costo_despacho": "  "}))
+        self.assertFalse(pend({"_fpAbierto": {"despacho": True}, "fin_costo_despacho": "20000"}))
+        self.assertFalse(pend({"_fpAbierto": {"despacho": True}, "fin_costo_despacho": "0"}), "0 declarado es un dato")
+        # el despacho que se le cobra al cliente NO exige el monto por sí solo (lo avisa el margen, como antes): solo la elección explícita de «Sí»
+        self.assertFalse(pend({"fin_zz_envio": {"monto": 50000}}))
+
+    def test_el_paso_y_la_creacion_leen_el_mismo_pendiente(self):
+        self.assertIn("if (_o2mFinDespachoPendiente()) return false;", H, "completo('finanzas')")
+        self.assertIn("if (_o2mFinDespachoPendiente()) return {cls:'falta', txt:'Falta el costo del despacho'};", _js_funcion("_o2mFinSubEstado"))
+        self.assertIn("_o2mFinDespachoPintar();", _js_funcion("_o2mFinEstadosDom"), "las tarjetas siguen al monto mientras se escribe")
+
+    def test_elegir_no_deja_el_despacho_en_cero_solo_si_al_cliente_se_le_cobra(self):
+        extra = "\n".join(["function _o2mFinDespachoPintar(){} function _pintarFinMargenDom(){} function _o2mFinEstadosDom(){} function _o2mAnexoSeguirCostos(){}",
+                           _js_funcion("finDespachoCerrar")])
+        sin_cobro = self._funcs({"_fpAbierto": {"despacho": True}, "fin_costo_despacho": "20000", "fin_zz_envio": None},
+                                "finDespachoCerrar(); console.log(JSON.stringify({d: S.fin_costo_despacho, no: S._despNo, si: S._fpAbierto.despacho, v: _o2mFinDespachoVisible()}));", extra)
+        self.assertEqual(sin_cobro, {"d": "", "no": True, "si": False, "v": False}, "vacío = la clave no viaja (como antes)")
+        con_cobro = self._funcs({"_fpAbierto": {}, "fin_costo_despacho": "", "fin_zz_envio": {"monto": 50000}},
+                                "finDespachoCerrar(); console.log(JSON.stringify({d: S.fin_costo_despacho, v: _o2mFinDespachoVisible()}));", extra)
+        self.assertEqual(con_cobro, {"d": "0", "v": False}, "0 explícito: si no, el margen diría «falta el costo del despacho»")
+
+    def test_abrir_con_si_apaga_el_no_y_pide_foco(self):
+        extra = "\n".join(["function _o2mFinDespachoPintar(){ _salida.pinto = true; } function _o2mFinEstadosDom(){ _salida.estados = true; }",
+                           "var document = {getElementById: function(id){ return id === 'o2mFinCostoDesp' ? {focus: function(){ _salida.foco = true; }} : null; }};",
+                           _js_funcion("_o2mFinDespachoMostrar"), _js_funcion("finDespachoAbrir")])
+        r = self._funcs({"_fpAbierto": {}, "_despNo": True, "fin_costo_despacho": ""},
+                        "finDespachoAbrir(); console.log(JSON.stringify({no: S._despNo, si: S._fpAbierto.despacho, s: _salida}));", extra)
+        self.assertEqual(r, {"no": False, "si": True, "s": {"pinto": True, "foco": True, "estados": True}})
 
 
 @unittest.skipUnless(shutil.which("node"), "sin Node")

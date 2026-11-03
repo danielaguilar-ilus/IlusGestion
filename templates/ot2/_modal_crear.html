@@ -833,6 +833,11 @@
   box-shadow:0 4px 14px rgba(245,158,11,.18),0 0 0 1px #f59e0b}
 .o2m-op.sel-warn .ic{color:#d97706}
 .o2m-op.sel-ok .ic{color:#16a34a}
+/* 🚚 2026-11-03: la pregunta «¿Te cobran despacho?» del sub-paso «¿Cuánto nos cuesta?» (mismas tarjetas de arriba, con su pregunta a la vista). */
+.o2m-desp{margin-top:14px}
+.o2m-desp-q{font-weight:800;font-size:1rem;color:#0a0a0a}
+.o2m-desp-d{font-size:.85rem;color:#6b7280;line-height:1.4;margin:2px 0 8px}
+.o2m-desp .o2m-cobro-toggle{margin-bottom:8px}
 .o2m-gar-resumen{display:grid;grid-template-columns:1fr 1fr;gap:10px;background:#fffbeb;
   border:1.5px solid #fcd34d;border-radius:11px;padding:12px;margin-bottom:10px}
 .o2m-gar-resumen .c{min-width:0}
@@ -1883,6 +1888,8 @@ window.OT2C = (function(){
          fin_valorizado:'',
          // 2026-10-25: sub-pasos de Costos que son solo REFERENCIA y quedan plegados en una línea hasta que alguien los abre (ver _o2mFpasoHtml).
          _fpAbierto:{},
+         // 2026-11-03: «No, sin despacho» elegido a mano (gana sobre un valor o el despacho que se le cobra al cliente; ver _o2mFinDespachoVisible).
+         _despNo:false,
          // 2026-10-25: el costo $0 del técnico propio lo sugiere el sistema (visible y editable); solo vale mientras nadie lo escriba (ver _o2mFinCostoAuto).
          _finCostoAuto:false,
          // 💰 2026-09-15 (Daniel: "toda OT debe salir VALORIZADA, se cobre o
@@ -2251,6 +2258,8 @@ window.OT2C = (function(){
         // «sí, se puede siempre retractar y solo queda sellada después de firmarla el responsable»): también en garantía/regalía/arriendo
         // el costo del servicio se declara al crear (0 si es técnico propio). Se corrige después hasta que se firma.
         if (String(S.fin_costo_proveedor||'').trim() === '') return false;
+        // 2026-11-03: con «Sí, me cobran despacho» elegido a mano, el monto del despacho es el dato que no puede faltar (con «No» queda en $0).
+        if (_o2mFinDespachoPendiente()) return false;
         return true;
       // 2026-08-29: solo aparece si el líder es externo (ver pasos()) --
       // ahí sí es obligatorio, es lo que Daniel llamó "indispensable para
@@ -6996,20 +7005,45 @@ window.OT2C = (function(){
     _pintarFinMargenDom();
   }
   function setFinCostoProveedor(el){ S._finCostoAuto = false; _o2mInputDineroCambio(el, 'fin_costo_proveedor'); _pintarFinCostoChipDom(); _o2mFinEstadosDom(); _o2mAnexoSeguirCostos(); }
-  /* El costo del despacho solo se muestra si ya trae un valor, si al cliente se le cobra despacho o si la persona lo pidió. */
+  /* 🚚 2026-11-03 (Daniel, Juan Pablo al crear una OT: «no se percibe dónde colocar el despacho a mano… siempre estamos subsanando cosas acá»): el despacho
+     ya no se esconde tras un enlace azul chico. Es una PREGUNTA con dos tarjetas («No, sin despacho» · «Sí, me cobran despacho») debajo del costo del
+     servicio; «Sí» abre el campo del monto. «Sí» es "hay despacho": el monto se exige (si no, es el dato que después hay que subsanar); «No» deja el
+     despacho en $0 (queda vacío, salvo que al cliente se le cobre despacho: ahí viaja 0 explícito). Sigue siendo opcional como antes: sin tocar nada = «No».
+     Está en «Sí» si la persona lo pidió, si ya trae un valor o si al cliente se le cobra despacho; un «No» explícito gana sobre las dos últimas. */
   function _o2mFinDespachoVisible(){
     if (S._fpAbierto.despacho) return true;
+    if (S._despNo) return false;
     if (String(S.fin_costo_despacho == null ? '' : S.fin_costo_despacho).trim() !== '') return true;
     var env = S.fin_zz_envio ? parseFloat(S.fin_zz_envio.monto) : NaN;
     return isFinite(env) && env > 0;
   }
+  /* Con «Sí» elegido a mano y el monto vacío falta el dato (completo('finanzas') y el estado del sub-paso «¿Cuánto nos cuesta?» lo leen). */
+  function _o2mFinDespachoPendiente(){
+    return !!S._fpAbierto.despacho && String(S.fin_costo_despacho == null ? '' : S.fin_costo_despacho).trim() === '';
+  }
+  /* Sincroniza las dos tarjetas, el campo del monto y el aviso con el estado (nulo-seguro: solo actúa si el sub-paso está pintado). */
+  function _o2mFinDespachoPintar(){
+    var si = _o2mFinDespachoVisible();
+    var tiene = String(S.fin_costo_despacho == null ? '' : S.fin_costo_despacho).trim() !== '';
+    var w = document.getElementById('o2mFinDespWrap'), cn = document.getElementById('o2mFinDespNo'),
+        cs = document.getElementById('o2mFinDespSi'), av = document.getElementById('o2mFinDespAviso');
+    if (w) w.hidden = !si;
+    if (cn){ cn.className = 'o2m-op' + (si ? '' : ' sel-ok'); cn.setAttribute('aria-pressed', si ? 'false' : 'true'); }
+    if (cs){ cs.className = 'o2m-op' + (si ? (tiene ? ' sel-ok' : ' sel-warn') : ''); cs.setAttribute('aria-pressed', si ? 'true' : 'false'); }
+    if (av) av.hidden = !(si && !tiene);
+  }
   function _o2mFinDespachoMostrar(foco){
-    var w = document.getElementById('o2mFinDespWrap'), b = document.getElementById('o2mFinDespBtn');
-    if (w) w.hidden = false;
-    if (b) b.hidden = true;
+    _o2mFinDespachoPintar();
     if (foco){ var i = document.getElementById('o2mFinCostoDesp'); if (i) i.focus(); }
   }
-  function finDespachoAbrir(){ S._fpAbierto.despacho = true; _o2mFinDespachoMostrar(true); }
+  function finDespachoAbrir(){ S._fpAbierto.despacho = true; S._despNo = false; _o2mFinDespachoMostrar(true); _o2mFinEstadosDom(); }
+  function finDespachoCerrar(){
+    S._fpAbierto.despacho = false; S._despNo = true;
+    var env = S.fin_zz_envio ? parseFloat(S.fin_zz_envio.monto) : NaN;
+    S.fin_costo_despacho = (isFinite(env) && env > 0) ? '0' : '';   // al cliente se le cobra despacho: «No me cobran» se declara como 0 (si no, quedaría «falta el costo»)
+    var i = document.getElementById('o2mFinCostoDesp'); if (i) i.value = _o2mFormatearMiles(S.fin_costo_despacho);
+    _o2mFinDespachoPintar(); _pintarFinMargenDom(); _o2mFinEstadosDom(); _o2mAnexoSeguirCostos();
+  }
   /* 🤝 2026-10-25 (Daniel: «al crear una OT los costos se hacen largos y dan pereza rellenar valores duplicados o similares»): con un técnico PROPIO
      el costo del servicio es $0 y queda SUGERIDO ya escrito (visible y editable, igual que en la desinstalación: _diAutoCosto), así el caso más
      común no pide ni un toque. Con uno externo se deja vacío para que lo escriba (o use la tarifa de su ficha). Lo que la persona escribe nunca se
@@ -7262,21 +7296,35 @@ window.OT2C = (function(){
             'value="'+esc(_o2mFormatearMiles(S.fin_costo_proveedor))+'" placeholder="0 si no hay proveedor externo" '+
             'oninput="OT2C.setFinCostoProveedor(this)"></div>'+
           '</div>'+
-          // 🤝 2026-10-25 (Daniel: «dan pereza rellenar valores duplicados o similares»): el costo del despacho es opcional, así que solo se ve si ya
-          // trae un valor, si al cliente se le cobra despacho (entonces falta saber lo que cuesta) o si la persona lo pide con «Agregar costo de
-          // despacho». El caso común queda con UN solo campo de plata en este sub-paso.
-          '<div class="col-12 col-sm-6" id="o2mFinDespWrap"'+(_o2mFinDespachoVisible() ? '' : ' hidden')+'>'+
-            // 🔧 2026-09-27 (Daniel: "el despacho... a veces no es
-            // necesario, ese valor es opcional"): sin asterisco, siempre.
-            '<label class="fl">Costo del despacho <span class="text-muted" style="font-weight:400">(opcional)</span></label>'+
-            '<div class="o2m-money sm"><span class="pre">$</span>'+
-            '<input type="text" inputmode="numeric" id="o2mFinCostoDesp" '+
-            'value="'+esc(_o2mFormatearMiles(S.fin_costo_despacho))+'" placeholder="0 si no hubo despacho" '+
-            'oninput="OT2C.setFinCostoDespacho(this)"></div>'+
-          '</div>'+
         '</div>'+
-        '<button type="button" class="o2m-linkbtn" id="o2mFinDespBtn" onclick="OT2C.finDespachoAbrir()"'+(_o2mFinDespachoVisible() ? ' hidden' : '')+'>'+
-          '<i class="bi bi-plus-lg me-1"></i>Agregar costo de despacho (opcional)</button>'+
+        // 🚚 2026-11-03 (Daniel, Juan Pablo: «no se percibe dónde colocar el despacho a mano»): el despacho es una PREGUNTA a la vista, con dos tarjetas
+        // (mismo lenguaje que «¿Cómo se cobra esta OT?»), no un enlace chico. «No» deja el despacho en $0; «Sí» abre el campo del monto y lo exige.
+        // 2026-10-25 (Daniel: «dan pereza rellenar valores duplicados»): sin tocar nada queda en «No»: el caso común sigue con UN solo campo de plata.
+        '<div class="o2m-desp" id="o2mFinDesp">'+
+          '<div class="o2m-desp-q">¿Te cobran despacho?</div>'+
+          '<div class="o2m-desp-d">Es el flete o envío del equipo, que cobra el proveedor o el courier. Si no hubo, deja «No».</div>'+
+          '<div class="o2m-cobro-toggle">'+
+            '<button type="button" class="o2m-op'+(_o2mFinDespachoVisible() ? '' : ' sel-ok')+'" id="o2mFinDespNo" aria-pressed="'+(_o2mFinDespachoVisible() ? 'false' : 'true')+'" onclick="OT2C.finDespachoCerrar()">'+
+              '<i class="bi bi-dash-circle ic"></i><span class="tx"><span class="n">No, sin despacho</span>'+
+              '<span class="l">El despacho queda en $0</span></span></button>'+
+            '<button type="button" class="o2m-op'+(_o2mFinDespachoVisible() ? (String(S.fin_costo_despacho == null ? '' : S.fin_costo_despacho).trim() !== '' ? ' sel-ok' : ' sel-warn') : '')+'" id="o2mFinDespSi" aria-pressed="'+(_o2mFinDespachoVisible() ? 'true' : 'false')+'" onclick="OT2C.finDespachoAbrir()">'+
+              '<i class="bi bi-truck ic"></i><span class="tx"><span class="n">Sí, me cobran despacho</span>'+
+              '<span class="l">Escribe cuánto te cobran por el despacho</span></span></button>'+
+          '</div>'+
+          '<div class="row g-2">'+
+            '<div class="col-12 col-sm-6" id="o2mFinDespWrap"'+(_o2mFinDespachoVisible() ? '' : ' hidden')+'>'+
+              // 🔧 2026-09-27 (Daniel: "el despacho... a veces no es necesario, ese valor es opcional"): lo opcional es la PREGUNTA (con «No» queda en $0);
+              // si se elige «Sí», el monto es el dato que no puede faltar.
+              '<label class="fl" for="o2mFinCostoDesp">Costo del despacho <span style="color:#b45309">*</span></label>'+
+              '<div class="o2m-money sm"><span class="pre">$</span>'+
+              '<input type="text" inputmode="numeric" id="o2mFinCostoDesp" '+
+              'value="'+esc(_o2mFormatearMiles(S.fin_costo_despacho))+'" placeholder="Cuánto te cobran" '+
+              'oninput="OT2C.setFinCostoDespacho(this)"></div>'+
+            '</div>'+
+          '</div>'+
+          '<div class="o2m-aviso" id="o2mFinDespAviso"'+((_o2mFinDespachoVisible() && String(S.fin_costo_despacho == null ? '' : S.fin_costo_despacho).trim() === '') ? '' : ' hidden')+'><i class="bi bi-exclamation-triangle me-1"></i>'+
+            'Escribe cuánto te cobran por el despacho, o elige «No, sin despacho».</div>'+
+        '</div>'+
         '<div id="o2mFinMargen"></div>';
     }
 
@@ -8032,6 +8080,7 @@ window.OT2C = (function(){
         // 2026-10-25 (Daniel: «dice opcional, pero no me deja avanzar… esto debe ser amigable»): desde el 23-oct el costo del servicio se declara
         // SIEMPRE (garantía, regalía y arriendo incluidos: 0 si el técnico es propio). La tarjeta seguía diciendo «Opcional» mientras
         // completo('finanzas') lo exigía: una etiqueta que miente y un paso que no deja avanzar sin decir por qué.
+        if (_o2mFinDespachoPendiente()) return {cls:'falta', txt:'Falta el costo del despacho'};
         return (String(S.fin_costo_proveedor||'').trim() !== '')
           ? {cls:'listo', txt:'Listo'} : {cls:'falta', txt:'Falta este dato'};
     }
@@ -8046,6 +8095,7 @@ window.OT2C = (function(){
       var est = document.getElementById('o2mFpEst-'+sub);
       if (est) est.textContent = e.txt;
     });
+    _o2mFinDespachoPintar();   // 2026-11-03: las tarjetas del despacho siguen al monto (ámbar sin monto → verde con monto)
   }
   /* Al intentar avanzar/crear con algo pendiente: el sub-paso culpable late
      dos veces, se centra en pantalla y el toast dice su estado. Devuelve
@@ -13538,7 +13588,7 @@ window.OT2C = (function(){
           usarEnvioDocumento:usarEnvioDocumento,   // 🧹 2026-10-08 «Usar este monto» del transporte del documento
           // 💰 2026-09-15: paso Costos rediseñado (valorización de toda OT)
           setFinCobro:setFinCobro, setFinCeroMotivo:setFinCeroMotivo, setFinIntencion:setFinIntencion, usarFuenteValor:usarFuenteValor, usarTarifaProveedor:usarTarifaProveedor, usarCostoCero:usarCostoCero, fpasoTog:fpasoTog, avisoEnvioTog:avisoEnvioTog,
-          finDespachoAbrir:finDespachoAbrir, finValorizarAbrir:finValorizarAbrir, anexoPartidasAbrir:anexoPartidasAbrir,
+          finDespachoAbrir:finDespachoAbrir, finDespachoCerrar:finDespachoCerrar, finValorizarAbrir:finValorizarAbrir, anexoPartidasAbrir:anexoPartidasAbrir,
           _o2mFinCostoInternoHeroCambio:_o2mFinCostoInternoHeroCambio, usarCostoInternoAuto:usarCostoInternoAuto,
           _o2mFinHeroBlur:_o2mFinHeroBlur,
           setAnexoItemMonto:setAnexoItemMonto, setAnexoItemConcepto:setAnexoItemConcepto,
