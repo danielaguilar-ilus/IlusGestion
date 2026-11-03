@@ -376,6 +376,7 @@ ESTADOS = {
     "solicitada": "Por confirmar",
     "confirmada": "Confirmada",
     "llave_entregada": "Llave entregada",
+    "devuelta": "Devuelta",
     "cancelada": "Cancelada",
 }
 ESTADOS_OCUPAN = ("solicitada", "confirmada", "llave_entregada")     # los que bloquean el calendario del vehículo
@@ -439,7 +440,16 @@ def numero_solicitud(sid, anio):
 
 
 # ── Validación de la solicitud ─────────────────────────────────────────────
-def validar_solicitud(payload, ahora=None, editando=False):
+def primer_horario(ahora, horas):
+    """El primer bloque de media hora que cumple la anticipación mínima: ahora + horas, redondeado hacia arriba a :00 o :30."""
+    t = ahora + timedelta(hours=horas)
+    base = t.replace(minute=0, second=0, microsecond=0)
+    if t > base:
+        base += timedelta(minutes=30 if t <= base + timedelta(minutes=30) else 60)
+    return base
+
+
+def validar_solicitud(payload, ahora=None, editando=False, antelacion_horas=None):
     """Normaliza lo que llega del formulario de solicitud. Devuelve (datos, errores).
     `ahora` = la hora de Chile (naive). Con `editando=True` (la gestión mueve una reserva) un uso que ya empezó puede seguir, pero uno que
     ya terminó no. El horario es OBLIGATORIO: «necesito que me declaren el horario en que necesitan el camión»."""
@@ -502,6 +512,10 @@ def validar_solicitud(payload, ahora=None, editando=False):
             errores["hora_hasta"] = "La hora de término debe ser después de la de inicio."
         elif fin <= ahora:
             errores["hora_hasta"] = "Ese horario ya terminó. Elige uno que no haya pasado."
+        elif antelacion_horas and not editando and inicio < ahora + timedelta(hours=antelacion_horas):
+            p = primer_horario(ahora, antelacion_horas)
+            errores["hora_desde"] = (f"Se pide con al menos {antelacion_horas} horas de anticipación: el primer horario disponible es "
+                                    f"{fecha_dia_texto(p.date())} {p.strftime('%H:%M')}.")
         elif fin - inicio > timedelta(days=MAX_DIAS_USO):
             errores["hora_hasta"] = f"Una solicitud puede durar hasta {MAX_DIAS_USO} días."
     return datos, errores
@@ -678,12 +692,21 @@ def lineas_de_cambios_chofer(cambios_):
 #  agregar vehículos ni choferes, solamente gestionar solicitudes»; «yo le dejaría una foto, haz la tabla bien inteligente y con
 #  calidad de información».
 # ═══════════════════════════════════════════════════════════════════════════
+# Fotos de la devolución (Daniel: «declaren la gasolina con una foto… le tomen una foto al odómetro… una foto interna y una externa»).
+FOTOS_DEVOLUCION = (
+    ("dev_odometro", "Odómetro"),
+    ("dev_combustible", "Indicador de combustible"),
+    ("dev_interior", "Interior"),
+    ("dev_exterior", "Exterior"),
+)
 TIPOS_ARCHIVO = {
     "vehiculo": ("foto",) + tuple(c for c, _n in DOCUMENTOS),
     "chofer": ("licencia",),
+    "solicitud": tuple(c for c, _n in FOTOS_DEVOLUCION),
 }
 ARCHIVO_MAX_BYTES = {"imagen": 10 * 1024 * 1024, "pdf": 15 * 1024 * 1024}
-ETIQUETAS_ARCHIVO = {"foto": "Foto", "licencia": "Licencia de conducir", **{c: n for c, n in DOCUMENTOS}}
+ETIQUETAS_ARCHIVO = {"foto": "Foto", "licencia": "Licencia de conducir", **{c: n for c, n in DOCUMENTOS},
+                     **{c: "Devolución · " + n for c, n in FOTOS_DEVOLUCION}}
 
 
 def niveles(permisos):
@@ -780,7 +803,10 @@ def validar_archivo(entidad, tipo, data):
     clase, ct, ext = det
     if tipo == "foto" and clase != "imagen":
         return None, "La foto del vehículo debe ser una imagen (JPG, PNG o WebP)."
-    if tipo != "foto" and tipo != "licencia" and clase != "pdf":
+    if tipo.startswith("dev_"):
+        if clase != "imagen":
+            return None, "Las fotos de la devolución deben ser imágenes (JPG, PNG o WebP)."
+    elif tipo != "foto" and tipo != "licencia" and clase != "pdf":
         return None, "Los documentos se guardan en PDF."
     if len(data) > ARCHIVO_MAX_BYTES[clase]:
         return None, f"El archivo pesa demasiado (máximo {ARCHIVO_MAX_BYTES[clase] // (1024 * 1024)} MB)."
@@ -911,3 +937,49 @@ def sla_llave(estado, inicio, fin, ahora, feriados=()):
     if m < SLA_CRITICO_MIN:
         return {"estado": "atrasada", "minutos": m, "texto": f"Llave atrasada · {_duracion(m)} hábiles" + extra}
     return {"estado": "critica", "minutos": m, "texto": f"Atraso crítico · {_duracion(m)} hábiles" + extra}
+
+
+# ── Devolución de la llave (FASE 2, 03-nov-2026) ───────────────────────────
+COMBUSTIBLE_NIVELES = (("lleno", "Lleno"), ("3_4", "3/4"), ("1_2", "1/2"), ("1_4", "1/4"), ("reserva", "Reserva"))
+KM_MAX = 2_000_000
+MIN_ANTELACION_H = 24        # Daniel, 03-nov-2026: «colócale una restricción de 24 horas al calendario» (pide quien solicita; la gestión puede antes)
+KM_SALTO_AVISO = 1_500         # más de esto en un solo uso se avisa (no se bloquea: puede ser un viaje largo)
+
+
+def validar_devolucion(payload, km_previo=None):
+    """(datos, errores, avisos) de una devolución. El kilometraje y el combustible son obligatorios; una novedad o daño exige contarla.
+    Un kilometraje MENOR al último registrado o un salto muy grande se AVISAN (no se traban): la foto del odómetro es la evidencia."""
+    p = payload or {}
+    errores, avisos, datos = {}, [], {}
+    txt = re.sub(r"[.\s]", "", str(p.get("km") or ""))
+    if not txt:
+        errores["km"] = "Indica el kilometraje que marca el odómetro al devolverlo."
+        km = None
+    elif not txt.isdigit() or not 0 <= int(txt) <= KM_MAX:
+        errores["km"] = "El kilometraje debe ser un número entero (por ejemplo 56063)."
+        km = None
+    else:
+        km = int(txt)
+    datos["km"] = km
+    if km is not None and km_previo is not None:
+        if km < int(km_previo):
+            avisos.append(f"El kilometraje declarado ({km:,} km) es MENOR al último registrado ({int(km_previo):,} km): revisa la foto del odómetro."
+                          .replace(",", "."))
+        elif km - int(km_previo) > KM_SALTO_AVISO:
+            avisos.append(f"Este uso suma {km - int(km_previo):,} km: revisa que el kilometraje esté bien escrito.".replace(",", "."))
+    nivel = str(p.get("combustible") or "").strip()
+    if nivel not in dict(COMBUSTIBLE_NIVELES):
+        errores["combustible"] = "Elige cuánto combustible le queda."
+    datos["combustible"] = nivel if nivel in dict(COMBUSTIBLE_NIVELES) else None
+    novedad = str(p.get("novedad") or "").strip().lower() in ("1", "true", "si", "sí", "on")
+    obs = re.sub(r"\s+", " ", str(p.get("observaciones") or "")).strip()
+    if len(obs) > 500:
+        errores["observaciones"] = "Máximo 500 caracteres."
+    elif novedad and len(obs) < 10:
+        errores["observaciones"] = "Cuenta qué pasó (daño, falla, multa, lo que sea): mínimo 10 caracteres."
+    datos["novedad"], datos["observaciones"] = novedad, obs or None
+    return datos, errores, avisos
+
+
+def combustible_texto(nivel):
+    return dict(COMBUSTIBLE_NIVELES).get(nivel or "", "")

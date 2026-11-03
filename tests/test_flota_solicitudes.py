@@ -280,7 +280,7 @@ class Falsa(BaseFalsa):
         v = self.veh[s["vehiculo_id"]]
         c = self.cho.get(s["chofer_id"])
         u = self.usr.get(c["usuario_id"], {}) if c else {}
-        return dict(s, v_patente=v["patente"], v_tipo=v["tipo"], v_marca=v["marca"], v_modelo=v["modelo"],
+        return dict(s, v_patente=v["patente"], v_tipo=v["tipo"], v_marca=v["marca"], v_modelo=v["modelo"], v_km=v.get("km_actual"),
                     chofer_nombre=u.get("nombre") or (c or {}).get("nombre_completo"), chofer_phone=u.get("phone") or (c or {}).get("telefono"))
 
     def _ocupa_row(self, s):
@@ -295,6 +295,8 @@ class Falsa(BaseFalsa):
             return [dict(self.sol[p[0]])] if p[0] in self.sol else []
         if s.startswith("SELECT u.id, (SELECT up.permitido FROM usuario_permisos up WHERE up.user_id=u.id AND up.permiso='flota_gestionar'"):
             return [{"id": 2, "ov": 1, "rolp": None}, {"id": 4, "ov": None, "rolp": 0}]      # Beto gestiona la flota; Dani no
+        if s.startswith("SELECT id, tipo, nombre_original, content_type, bytes, subido_por, subido_at FROM flota_archivos WHERE entidad='solicitud'"):
+            return [dict(a) for a in sorted(self.arch.values(), key=lambda a: a["id"]) if a["entidad"] == "solicitud" and a["entidad_id"] == p[0] and a["activo"]]
         if s.startswith("SELECT IS_NULLABLE FROM information_schema.COLUMNS"):
             return [{"IS_NULLABLE": "YES"}]
         if s.startswith("SELECT id, nombre_completo FROM flota_choferes WHERE rut=%s"):
@@ -472,6 +474,21 @@ class Falsa(BaseFalsa):
             if not x or x["estado"] != "confirmada":
                 return 0, None
             x.update(estado="llave_entregada", llave_por=por, llave_at=dt.datetime.utcnow(), llave_nota=nota)
+            return 1, None
+        if s.startswith("UPDATE flota_solicitudes SET estado='devuelta'"):
+            por, km, comb, obs, nov, sid = p
+            x = self.sol.get(sid)
+            if not x or x["estado"] != "llave_entregada":
+                return 0, None
+            x.update(estado="devuelta", devuelta_por=por, devuelta_at=dt.datetime.utcnow(), dev_km=km, dev_combustible=comb, dev_obs=obs,
+                     dev_novedad=nov)
+            return 1, None
+        if s.startswith("UPDATE flota_vehiculos SET km_actual=%s, updated_by=%s WHERE id=%s AND (km_actual IS NULL OR km_actual < %s)"):
+            km, _por, vid, _km2 = p
+            v = self.veh.get(vid)
+            if not v or (v.get("km_actual") is not None and v["km_actual"] >= km):
+                return 0, None
+            v["km_actual"] = km
             return 1, None
         if s.startswith("UPDATE flota_solicitudes SET estado='cancelada'"):
             por, motivo, sid = p
@@ -1227,3 +1244,144 @@ class TestCorreosFlota(unittest.TestCase):
             self.assertIsNotNone(c, k)
             self.assertEqual((c["modulo_ui"], c["llave"]), ("flota", "comunicacion_interna"))
             self.assertFalse(c["nace_apagado"])
+
+
+class TestDevolucion(unittest.TestCase):
+    """FASE 2 (Daniel, 02/03-nov-2026): devolver la llave con kilometraje, combustible y cuatro fotos (odómetro, combustible, interior y
+    exterior). Lo raro se avisa; la foto es la evidencia."""
+    JPG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+
+    def setUp(self):
+        from test_flota_vehiculos import BucketFalso
+        self.enviados = []
+        self.base = Falsa()
+        self.bucket = BucketFalso()
+        aviso = lambda clave, uids, titulo, cuerpo, url, etiqueta="", ref=None: self.enviados.append((clave, titulo, cuerpo)) or 1
+        self.app = _app(self.base, self.bucket, extra={"_aviso_interno_correo": aviso})
+        self.c = self.app.test_client()
+        self.vid = self.c.post("/flota/api/vehiculos", json={"patente": "PHVD21-7", "tipo": "Camión", "licencia_clases": ["B"], "km_actual": 56000},
+                               headers=SUPER).get_json()["vehiculo"]["id"]
+        cid = self.c.post("/flota/api/choferes", json=dict(_datos_chofer(1), usuario_id=1), headers=SUPER).get_json()["chofer"]["id"]
+        dia = (dt.date.today() + dt.timedelta(days=5)).isoformat()
+        self.sid = self.c.post("/flota/api/solicitudes", json={"vehiculo_id": self.vid, "chofer_id": cid, "area": "Logística",
+                               "motivo": "Reparto zona norte", "fecha": dia, "hora_desde": "09:00", "hora_hasta": "11:00"},
+                               headers=SUPER).get_json()["solicitud"]["id"]
+        self.c.post(f"/flota/api/solicitudes/{self.sid}/confirmar", json={}, headers=SUPER)
+        self.c.post(f"/flota/api/solicitudes/{self.sid}/llave", json={"nota": ""}, headers=SUPER)
+        self.enviados.clear()
+
+    def devolver(self, quitar=(), **campos):
+        import io
+        data = {"km": "56.240", "combustible": "1_2", "observaciones": "", "novedad": ""}
+        data.update(campos)
+        for tipo, _n in R.FOTOS_DEVOLUCION:
+            if tipo not in quitar:
+                data[tipo] = (io.BytesIO(self.JPG), tipo + ".jpg", "image/jpeg")
+        return self.c.post(f"/flota/api/solicitudes/{self.sid}/devolucion", data=data, content_type="multipart/form-data", headers=SUPER)
+
+    def test_devolucion_completa(self):
+        r = self.devolver()
+        self.assertEqual(r.status_code, 200, r.get_json())
+        s = r.get_json()["solicitud"]
+        self.assertEqual(s["estado"], "devuelta")
+        self.assertEqual((s["devolucion"]["km"], s["devolucion"]["combustible_texto"]), (56240, "1/2"))
+        self.assertEqual(self.base.veh[self.vid]["km_actual"], 56240)                 # el vehículo sube su kilometraje
+        d = self.c.get(f"/flota/api/solicitudes/{self.sid}", headers=SUPER).get_json()
+        self.assertEqual(sorted(f["etiqueta"] for f in d["fotos_devolucion"]), ["Exterior", "Indicador de combustible", "Interior", "Odómetro"])
+        self.assertEqual(d["eventos"][0]["titulo"], "Vehículo devuelto")
+        self.assertEqual([e[0] for e in self.enviados], ["flota_devolucion"])
+
+    def test_faltan_fotos_o_datos(self):
+        r = self.devolver(quitar=("dev_odometro",), km="", combustible="")
+        self.assertEqual(r.status_code, 400)
+        e = r.get_json()["errores"]
+        self.assertTrue({"dev_odometro", "km", "combustible"} <= set(e))
+        self.assertEqual(self.base.sol[self.sid]["estado"], "llave_entregada")
+
+    def test_novedad_exige_contarla(self):
+        r = self.devolver(novedad="1", observaciones="raya")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("observaciones", r.get_json()["errores"])
+        r = self.devolver(novedad="1", observaciones="Rayón en la puerta trasera derecha")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("con novedad", self.enviados[0][1])
+
+    def test_km_menor_se_avisa_y_no_pisa_el_vehiculo(self):
+        r = self.devolver(km="50000")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(any("MENOR" in a for a in r.get_json()["avisos"]))
+        self.assertEqual(self.base.veh[self.vid]["km_actual"], 56000)
+
+    def test_no_se_devuelve_dos_veces(self):
+        self.assertEqual(self.devolver().status_code, 200)
+        self.assertEqual(self.devolver().status_code, 409)
+
+    def test_reglas_puras(self):
+        d, e, a = R.validar_devolucion({"km": "1.234", "combustible": "lleno"}, km_previo=1000)
+        self.assertEqual((d["km"], e, a), (1234, {}, []))
+        _d, _e, a = R.validar_devolucion({"km": "9000", "combustible": "lleno"}, km_previo=1000)
+        self.assertTrue(a)                                                             # salto grande: se avisa
+        self.assertEqual(R.validar_archivo("solicitud", "dev_odometro", b"%PDF-1.4 x")[1],
+                         "Las fotos de la devolución deben ser imágenes (JPG, PNG o WebP).")
+
+
+class TestAntelacion24(unittest.TestCase):
+    """03-nov-2026 (Daniel): «colócale una restricción de 24 horas al calendario». Quien pide reserva con al menos 24 h de aviso; la gestión
+    puede reservar antes (con un aviso). Los márgenes de la prueba son amplios para no depender de la zona horaria de quien la corre."""
+    PEDIR = {"X-Rol": "ejecutivo", "X-Flota": "flota_solicitar"}
+
+    def setUp(self):
+        self.base = Falsa()
+        self.app = _app(self.base)
+        self.c = self.app.test_client()
+        self.vid = self.c.post("/flota/api/vehiculos", json={"patente": "PHVD21-7", "tipo": "Camión", "licencia_clases": ["B"]},
+                               headers=SUPER).get_json()["vehiculo"]["id"]
+        self.cid = self.c.post("/flota/api/choferes", json=dict(_datos_chofer(1), usuario_id=1), headers=SUPER).get_json()["chofer"]["id"]
+
+    def pedir(self, horas, headers):
+        ini = dt.datetime.now().replace(second=0, microsecond=0) + dt.timedelta(hours=horas)
+        fin = ini + dt.timedelta(minutes=90)
+        return self.c.post("/flota/api/solicitudes", json={
+            "vehiculo_id": self.vid, "chofer_id": self.cid, "area": "Logística", "motivo": "Reparto zona norte",
+            "fecha": ini.date().isoformat(), "hora_desde": ini.strftime("%H:%M"),
+            "fecha_hasta": fin.date().isoformat(), "hora_hasta": fin.strftime("%H:%M")}, headers=headers)
+
+    def test_quien_pide_no_reserva_con_menos_de_24_horas(self):
+        r = self.pedir(1, self.PEDIR)
+        self.assertEqual(r.status_code, 400, r.get_json())
+        self.assertIn("24 horas", r.get_json()["errores"]["hora_desde"])
+        self.assertEqual(len(self.base.sol), 0)
+
+    def test_con_mas_de_24_horas_pasa(self):
+        r = self.pedir(72, self.PEDIR)
+        self.assertEqual(r.status_code, 200, r.get_json())
+
+    def test_la_gestion_puede_reservar_antes_y_queda_avisado(self):
+        r = self.pedir(1, SUPER)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertTrue(any("24 horas" in a for a in r.get_json()["avisos"]))
+
+    def test_la_configuracion_dice_cuanto_es(self):
+        d = self.c.get("/flota/api/vehiculos", headers=SUPER).get_json()
+        self.assertEqual(d["config"]["antelacion_horas"], 24)
+
+    def test_primer_horario_redondea_hacia_arriba_a_la_media_hora(self):
+        f = lambda h, m: dt.datetime(2026, 11, 3, h, m)
+        self.assertEqual(R.primer_horario(f(10, 0), 24), dt.datetime(2026, 11, 4, 10, 0))
+        self.assertEqual(R.primer_horario(f(10, 10), 24), dt.datetime(2026, 11, 4, 10, 30))
+        self.assertEqual(R.primer_horario(f(10, 40), 24), dt.datetime(2026, 11, 4, 11, 0))
+
+    def test_devolver_otro_dia_se_agenda_varios_dias_y_bloquea_a_los_demas(self):
+        dia = dt.date.today() + dt.timedelta(days=10)
+        r = self.c.post("/flota/api/solicitudes", json={
+            "vehiculo_id": self.vid, "chofer_id": self.cid, "area": "Logística", "motivo": "Gira zona sur",
+            "fecha": dia.isoformat(), "hora_desde": "14:00", "fecha_hasta": (dia + dt.timedelta(days=2)).isoformat(), "hora_hasta": "11:00"},
+            headers=SUPER)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        s = r.get_json()["solicitud"]
+        self.assertEqual((s["fecha"], s["fecha_hasta"]), (dia.isoformat(), (dia + dt.timedelta(days=2)).isoformat()))
+        otro = self.c.post("/flota/api/solicitudes", json={
+            "vehiculo_id": self.vid, "chofer_id": self.cid, "area": "Marketing", "motivo": "Evento",
+            "fecha": (dia + dt.timedelta(days=1)).isoformat(), "hora_desde": "09:00", "hora_hasta": "10:00"}, headers=SUPER)
+        self.assertEqual(otro.status_code, 409)                  # el día del medio el vehículo está afuera
+        self.assertEqual(otro.get_json()["error_codigo"], "CHOQUE_VEHICULO")
