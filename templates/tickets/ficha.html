@@ -79,7 +79,10 @@
      y avance, se ve bien profesional… y una barra de avance del tiempo, justo
      como en Retiros»): el estado en grande, el avance de la guía en % y el
      reloj del SLA de respuesta con su barra verde→ámbar→roja. Solo muestra lo
-     que el servidor ya calculó (d.guia y t.sla_resp); no decide nada. #}
+     que el servidor ya calculó (d.guia y t.sla_resp); no decide nada.
+     03-nov (Daniel: «sí, fusiónalo»): tickets_ficha_v2.js lo MUEVE dentro de la
+     barra negra de la guía (ponerEstadoAvance), al lado del progreso; la columna
+     «Avance» se oculta ahí porque repetía la guía. Sin guía, queda aquí como siempre. #}
   <section class="tk-ea" id="tkEstadoAvance" aria-label="Estado, avance y plazo del ticket" hidden>
     <div class="tk-ea-col tk-ea-estado">
       <span class="tk-ea-k"><i class="bi bi-flag-fill"></i>Estado</span>
