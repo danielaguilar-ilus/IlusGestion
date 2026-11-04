@@ -326,6 +326,9 @@ class Falsa(BaseFalsa):
             filas = list(self.sol.values())
             if s.endswith("WHERE s.id=%s"):
                 return [self._sol_row(self.sol[p[0]])] if p[0] in self.sol else []
+            if s.endswith("WHERE s.vehiculo_id=%s AND s.estado IN ('llave_entregada','devuelta') ORDER BY s.inicio DESC LIMIT 200"):
+                return [self._sol_row(x) for x in sorted(filas, key=lambda x: x["inicio"], reverse=True)
+                        if x["vehiculo_id"] == p[0] and x["estado"] in ("llave_entregada", "devuelta")]
             if s.endswith("WHERE s.fin < %s ORDER BY s.inicio DESC, s.id DESC LIMIT 500"):
                 return [self._sol_row(x) for x in sorted(filas, key=lambda x: (x["inicio"], x["id"]), reverse=True) if x["fin"] < p[0]]
             if s.endswith("WHERE s.fin >= %s ORDER BY s.inicio, s.id LIMIT 500"):
@@ -355,6 +358,9 @@ class Falsa(BaseFalsa):
             return [dict(x) for x in sorted(self.slog, key=lambda x: -x["id"]) if x["solicitud_id"] == p[0]]
         if s.startswith("SELECT id, accion, detalle, usuario, created_at FROM flota_chofer_log WHERE chofer_id=%s"):
             return [dict(x) for x in sorted(self.clog, key=lambda x: -x["id"]) if x["chofer_id"] == p[0]]
+        if s == "SELECT id, usuario_id FROM flota_choferes WHERE id=%s":
+            c = self.cho.get(p[0])
+            return [{"id": c["id"], "usuario_id": c["usuario_id"]}] if c else []
         return None
 
     def fetchone(self, q, p=None):
@@ -1306,11 +1312,37 @@ class TestDevolucion(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("con novedad", self.enviados[0][1])
 
-    def test_km_menor_se_avisa_y_no_pisa_el_vehiculo(self):
+    def test_km_menor_no_se_acepta_y_el_mismo_si(self):
+        # Daniel, 03-nov-2026: «si el kilometraje está declarado en 56.240, no va a poder declarar 45.000»
         r = self.devolver(km="50000")
-        self.assertEqual(r.status_code, 200)
-        self.assertTrue(any("MENOR" in a for a in r.get_json()["avisos"]))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("menor al último kilometraje", r.get_json()["errores"]["km"])
         self.assertEqual(self.base.veh[self.vid]["km_actual"], 56000)
+        self.assertEqual(self.base.sol[self.sid]["estado"], "llave_entregada")          # no quedó devuelta a medias
+        self.assertEqual(self.devolver(km="56.000").status_code, 200)                     # el mismo km sí
+
+    def test_usos_en_la_ficha_del_vehiculo(self):
+        # Daniel, 03-nov-2026: «se van a guardar en la ficha del camión y se van a poder registrar las entregas de cada uno»
+        self.assertEqual(self.devolver().status_code, 200)
+        d = self.c.get(f"/flota/api/vehiculos/{self.vid}/usos", headers=SUPER).get_json()
+        self.assertTrue(d["ok"])
+        u = d["usos"][0]
+        self.assertEqual((u["estado"], u["dev_km"]), ("devuelta", 56240))
+        self.assertIn("desvio_retiro", u)
+        self.assertNotIn("inicio", u)                                                  # al navegador va el texto, no la hora cruda
+
+    def test_reglas_de_usos_plan_contra_real(self):
+        D = dt.datetime
+        r = R.resumen_usos([
+            {"inicio": D(2026, 11, 3, 8), "fin": D(2026, 11, 3, 12), "llave_cl": D(2026, 11, 3, 8, 40), "devuelta_cl": D(2026, 11, 3, 12, 5), "dev_km": 56240},
+            {"inicio": D(2026, 11, 4, 8), "fin": D(2026, 11, 4, 12), "llave_cl": D(2026, 11, 4, 7, 30), "devuelta_cl": None, "dev_km": None},
+            {"inicio": D(2026, 11, 2, 8), "fin": D(2026, 11, 2, 12), "llave_cl": None, "devuelta_cl": None, "dev_km": 56000}])
+        self.assertEqual([u["inicio"].day for u in r], [4, 3, 2])                     # el más nuevo primero
+        self.assertEqual((r[1]["km_uso"], r[2]["km_uso"]), (240, None))               # contra la devolución anterior
+        self.assertEqual((r[1]["desvio_retiro"]["estado"], r[1]["desvio_retiro"]["texto"]), ("tarde", "40 min tarde"))
+        self.assertEqual(r[1]["desvio_devolucion"]["estado"], "a_tiempo")             # 5 min: dentro de la tolerancia
+        self.assertEqual(r[0]["desvio_retiro"]["estado"], "antes")
+        self.assertIsNone(r[0]["desvio_devolucion"])                                   # todavía en uso
 
     def test_no_se_devuelve_dos_veces(self):
         self.assertEqual(self.devolver().status_code, 200)

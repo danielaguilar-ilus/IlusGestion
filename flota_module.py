@@ -640,6 +640,36 @@ def register_flota_routes(app, ctx):
             (vid,)) or []
         return jsonify({"ok": True, "eventos": _eventos_historial(filas)})
 
+    # Usos del vehículo (Daniel, 03-nov-2026: «se van a guardar en la ficha del camión y se van a poder registrar las entregas de
+    # cada uno»): cada retiro y devolución con lo reservado contra lo real y los km de ese uso. Lo ve quien entra a la flota (los
+    # mismos datos que ya muestra la lista de solicitudes); las fotos siguen en el detalle de cada solicitud.
+    def _utc_a_chile(dt):
+        if not dt:
+            return None
+        try:
+            dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(_TZ_CL).replace(tzinfo=None) if _TZ_CL else dt.replace(tzinfo=None)
+        except Exception:
+            return None
+
+    @app.route("/flota/api/vehiculos/<int:vid>/usos", methods=["GET"])
+    @_flota_required
+    def flota_api_vehiculo_usos(vid):
+        filas = mysql_fetchall(_SQL_SOL + " WHERE s.vehiculo_id=%s AND s.estado IN ('llave_entregada','devuelta') "
+                               "ORDER BY s.inicio DESC LIMIT 200", (vid,)) or []
+        usos = fr.resumen_usos([{"id": r["id"], "numero": r.get("numero") or "", "estado": r.get("estado"), "estado_texto": fr.ESTADOS.get(r.get("estado"), ""),
+                 "chofer": r.get("chofer_nombre") or "(sin nombre)", "area": r.get("area"), "solicitante": r.get("solicitante_nombre"),
+                 "rango_texto": fr.rango_texto(r["inicio"], r["fin"]), "inicio": r["inicio"], "fin": r["fin"],
+                 "llave_cl": _utc_a_chile(r.get("llave_at")), "devuelta_cl": _utc_a_chile(r.get("devuelta_at")),
+                 "llave_fmt": _hora_chile(r.get("llave_at")), "llave_por": r.get("llave_por"),
+                 "devuelta_fmt": _hora_chile(r.get("devuelta_at")), "devuelta_por": r.get("devuelta_por"),
+                 "dev_km": r.get("dev_km"), "combustible_texto": fr.combustible_texto(r.get("dev_combustible")),
+                 "novedad": bool(r.get("dev_novedad"))} for r in (dict(x) for x in filas)])
+        for u in usos:                    # las horas crudas solo sirven para calcular el desvío: al navegador va el texto en hora Chile
+            for k in ("inicio", "fin", "llave_cl", "devuelta_cl"):
+                u.pop(k, None)
+        return jsonify({"ok": True, "usos": usos, "tolerancia_min": fr.DESVIO_TOLERANCIA_MIN})
+
     _TITULOS_HISTORIAL = {
         "creado": "Registrado", "editado": "Datos modificados", "inhabilitado": "Inhabilitado", "habilitado": "Habilitado",
         "archivado": "Archivado", "desarchivado": "Desarchivado", "eliminado": "Borrado definitivo",
@@ -972,8 +1002,11 @@ def register_flota_routes(app, ctx):
     @_flota_admin_required
     def flota_api_chofer_crear():
         payload = request.get_json(silent=True) or {}
-        if payload.get("externo") in (True, 1, "1", "true", "si"):
-            return _chofer_externo_crear(payload)
+        # Daniel, 03-nov-2026: «todos tienen que pertenecer a la página. Si no está registrado, no puede retirar el camión».
+        if payload.get("externo") in (True, 1, "1", "true", "si") or not payload.get("usuario_id"):
+            return _error("El chofer tiene que ser un usuario de ILUS: si no está registrado, no puede retirar el vehículo. "
+                          "Créale su usuario y después agrégalo aquí.", 400, errores={"usuario_id": "Elige un usuario de ILUS."},
+                          error_codigo="CHOFER_SIN_USUARIO")
         datos, errores = fr.validar_chofer(payload)
         if errores:
             return _error("Revisa los campos marcados.", 400, errores=errores)
@@ -997,33 +1030,6 @@ def register_flota_routes(app, ctx):
         if not fila:
             return _error("El chofer se guardó pero no se pudo leer de vuelta. Recarga la pantalla.", 500)
         _clog(fila["id"], "creado", {"usuario": u.get("nombre"), "licencia_clases": datos["licencia_clases"]})
-        return _chofer_respuesta(fila["id"])
-
-    def _chofer_externo_crear(payload):
-        """Chofer EXTERNO (sin usuario de ILUS): mismo formulario y mismas reglas de licencia, con teléfono propio obligatorio. Para no
-        duplicar personas, su RUT no puede estar ya en el repositorio."""
-        datos, errores = fr.validar_chofer(payload, externo=True)
-        if errores:
-            return _error("Revisa los campos marcados.", 400, errores=errores)
-        otro = mysql_fetchone("SELECT id, nombre_completo FROM flota_choferes WHERE rut=%s LIMIT 1", (datos["rut"],))
-        if otro:
-            msg = f"Ya hay un chofer con ese RUT ({otro.get('nombre_completo') or 'en el repositorio'})."
-            return _error(msg, 409, errores={"rut": msg})
-        try:
-            mysql_execute(
-                "INSERT INTO flota_choferes (usuario_id, telefono, rut, nombre_completo, direccion, direccion_lat, direccion_lng, "
-                "direccion_place_id, licencia_clases, licencia_vence, notas, created_by, updated_by) "
-                "VALUES (NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (datos["telefono"], datos["rut"], datos["nombre_completo"], datos["direccion"], datos["direccion_lat"],
-                 datos["direccion_lng"], datos["direccion_place_id"], datos["licencia_clases"], datos["licencia_vence"],
-                 datos["notas"], current_username(), current_username()))
-        except Exception as e:
-            print(f"[flota] crear chofer externo: {type(e).__name__}: {e}", flush=True)
-            return _error("No se pudo guardar el chofer. Intenta de nuevo.", 500)
-        fila = mysql_fetchone(_SQL_CHOF + " WHERE c.usuario_id IS NULL AND c.rut=%s ORDER BY c.id DESC LIMIT 1", (datos["rut"],))
-        if not fila:
-            return _error("El chofer se guardó pero no se pudo leer de vuelta. Recarga la pantalla.", 500)
-        _clog(fila["id"], "creado", {"externo": True, "nombre": datos["nombre_completo"], "licencia_clases": datos["licencia_clases"]})
         return _chofer_respuesta(fila["id"])
 
     @app.route("/flota/api/choferes/<int:cid>", methods=["PUT"])
@@ -1241,14 +1247,16 @@ def register_flota_routes(app, ctx):
                 ids = []
         return ids
 
-    def _correo_flota(clave, uids, titulo, cuerpo):
-        """Por la puerta única con su clave del registro (comm_correos_registro). Nunca rompe lo que la persona estaba haciendo."""
+    def _correo_flota(clave, uids, titulo, cuerpo, sid=None):
+        """Por la puerta única con su clave del registro (comm_correos_registro). Nunca rompe lo que la persona estaba haciendo.
+        El botón abre ESA solicitud (03-nov-2026: con la llave entregada, directo en la devolución)."""
         fn = ctx.get("_aviso_interno_correo")
         uids = [u for u in (uids or []) if u]
         if not fn or not uids:
             return 0
         try:
-            return fn(clave, uids, titulo, cuerpo, "/flota#solicitudes", "Solicitudes de vehículo")
+            enlace = f"/flota?sol={int(sid)}#solicitudes" if sid else "/flota#solicitudes"
+            return fn(clave, uids, titulo, cuerpo, enlace, "Solicitudes de vehículo")
         except Exception as e:
             print(f"[flota] correo {clave}: {type(e).__name__}", flush=True)
             return 0
@@ -1353,7 +1361,11 @@ def register_flota_routes(app, ctx):
             if not ch:
                 conn.rollback()
                 return {"ok": False, "error": "No encontré a ese chofer.", "errores": {"chofer_id": "Elige un chofer de la lista."}}, 400
-            chofer_ev = {"nombre": ch.get("u_nombre"), "habilitado": bool(ch.get("habilitado")) and bool(ch.get("u_activo")),
+            if ch.get("usuario_id") is None:
+                conn.rollback()
+                msg = f"{ch.get('u_nombre') or 'Ese chofer'} no tiene usuario de ILUS: solo retira el vehículo quien está registrado en la plataforma."
+                return {"ok": False, "error": msg, "error_codigo": "CHOFER_SIN_USUARIO", "errores": {"chofer_id": msg}}, 400
+            chofer_ev ={"nombre": ch.get("u_nombre"), "habilitado": bool(ch.get("habilitado")) and bool(ch.get("u_activo")),
                          "licencia_clases": ch.get("licencia_clases"), "licencia_vence": ch.get("licencia_vence")}
             err_lic, aviso_lic = fr.evaluar_chofer(chofer_ev, veh.get("licencia_clases"), fin, ahora.date())
             if err_lic:
@@ -1515,7 +1527,7 @@ def register_flota_routes(app, ctx):
                 r = dict(r)
                 _correo_flota("flota_solicitud_nueva", [u for u in _gestores_flota() if u != _uid()],
                               f"Nueva solicitud {r.get('numero') or ''}: {fr.patente_con_guion(r.get('v_patente'))}",
-                              _cuerpo_correo(r, "Pidieron un vehículo de la flota. Revísala y confírmala en Solicitudes de vehículo."))
+                              _cuerpo_correo(r, "Pidieron un vehículo de la flota. Revísala y confírmala en Solicitudes de vehículo."), sid=r.get("id"))
         return _respuesta_reserva(cuerpo, http)
 
     @app.route("/flota/api/solicitudes/<int:sid>", methods=["GET"])
@@ -1605,7 +1617,7 @@ def register_flota_routes(app, ctx):
                 r = dict(r)
                 _correo_flota("flota_solicitud_confirmada", [r["solicitante_id"]],
                               f"Tu solicitud {r.get('numero') or ''} quedó confirmada",
-                              _cuerpo_correo(r, f"{current_username() or 'La gestión'} confirmó tu reserva. La llave se entrega de 08:00 a 13:00 y de 14:00 a 17:00."))
+                              _cuerpo_correo(r, f"{current_username() or 'La gestión'} confirmó tu reserva. La llave se entrega de 08:00 a 13:00 y de 14:00 a 17:00."), sid=r.get("id"))
         return resp
 
     @app.route("/flota/api/solicitudes/<int:sid>/llave", methods=["POST"])
@@ -1614,6 +1626,12 @@ def register_flota_routes(app, ctx):
         nota = re.sub(r"\s+", " ", str((request.get_json(silent=True) or {}).get("nota") or "")).strip()
         if len(nota) > 300:
             return _error("La nota puede tener hasta 300 caracteres.", 400, errores={"nota": "Máximo 300 caracteres."})
+        # Sin usuario de ILUS no se retira el vehículo (03-nov-2026): una reserva antigua con un chofer externo se cambia de chofer primero.
+        fila = _sol_fila(sid)
+        ch = mysql_fetchone("SELECT id, usuario_id FROM flota_choferes WHERE id=%s", (fila["chofer_id"],)) if fila else None
+        if ch and "usuario_id" in ch and ch["usuario_id"] is None:
+            return _error(f"{fila.get('chofer_nombre') or 'El chofer'} no tiene usuario de ILUS: no puede retirar el vehículo. "
+                          "Cambia el chofer de la reserva por uno registrado.", 409, error_codigo="CHOFER_SIN_USUARIO")
         return _transicion(
             sid, "UPDATE flota_solicitudes SET estado='llave_entregada', llave_por=%s, llave_at=NOW(), llave_nota=%s "
                  "WHERE id=%s AND estado='confirmada'",
@@ -1645,7 +1663,7 @@ def register_flota_routes(app, ctx):
                 destino = [r["solicitante_id"]]
             else:
                 destino = [u for u in _gestores_flota() if u != _uid()]
-            _correo_flota("flota_solicitud_cancelada", destino, f"Solicitud {r.get('numero') or ''} cancelada", _cuerpo_correo(r, primera))
+            _correo_flota("flota_solicitud_cancelada", destino, f"Solicitud {r.get('numero') or ''} cancelada", _cuerpo_correo(r, primera), sid=r.get("id"))
         return resp
 
 
@@ -1685,7 +1703,7 @@ def register_flota_routes(app, ctx):
             _correo_flota("flota_llave_atrasada", gestores,
                           f"{'Atraso crítico' if sla['estado'] == 'critica' else 'Llave atrasada'}: {r.get('numero') or ''} · "
                           f"{fr.patente_con_guion(r.get('v_patente'))}",
-                          _cuerpo_correo(r, sla["texto"] + ". Entrega la llave o actualiza la solicitud en Solicitudes de vehículo."))
+                          _cuerpo_correo(r, sla["texto"] + ". Entrega la llave o actualiza la solicitud en Solicitudes de vehículo."), sid=r.get("id"))
             avisos += 1
         return {"revisadas": len(filas), "avisos": avisos}
 
@@ -1696,7 +1714,7 @@ def register_flota_routes(app, ctx):
     #  FASE 2 · DEVOLUCIÓN DE LA LLAVE CON EVIDENCIA (03-nov-2026)
     #  Daniel: «el hueveo va a ser cuando declaren la gasolina, que tuviera una foto, y que declaren el odómetro con una foto… para
     #  creerles el kilometraje. Además una foto interna y una externa». Kilometraje + nivel de combustible + 4 fotos obligatorias.
-    #  Lo raro (km menor al último, salto grande) se AVISA y queda en la bitácora: no se traba, la foto es la evidencia.
+    #  Un km MENOR al último no se acepta (03-nov-2026); un salto grande se AVISA y queda en la bitácora: la foto es la evidencia.
     # ═══════════════════════════════════════════════════════════════════════
     def _guardar_imagen_solicitud(sid, tipo, archivo):
         """Sube UNA foto de la devolución al almacenamiento privado y la registra. (fila_id, error)."""
@@ -1768,7 +1786,7 @@ def register_flota_routes(app, ctx):
                           solicitud=_sol_json(dict(actual)))
         _slog(sid, "devuelta", {"km": datos["km"], "combustible": datos["combustible"], "novedad": datos["novedad"],
                                 "observaciones": datos["observaciones"], "avisos": avisos})
-        # El kilometraje del vehículo sube con la devolución (nunca baja solo: un km menor queda avisado, no se pisa el registro).
+        # El kilometraje del vehículo sube con la devolución (nunca baja: un km menor ya lo rechazó validar_devolucion).
         try:
             if mysql_rowcount("UPDATE flota_vehiculos SET km_actual=%s, updated_by=%s WHERE id=%s AND (km_actual IS NULL OR km_actual < %s)",
                               (datos["km"], current_username(), fila["vehiculo_id"], datos["km"])):
@@ -1785,5 +1803,5 @@ def register_flota_routes(app, ctx):
             primera += " Ojo: " + " ".join(avisos)
         _correo_flota("flota_devolucion", [u for u in _gestores_flota() if u != _uid()],
                       f"Vehículo devuelto {r.get('numero') or ''}: {fr.patente_con_guion(r.get('v_patente'))}"
-                      + (" · con novedad" if datos["novedad"] else ""), _cuerpo_correo(r, primera))
+                      + (" · con novedad" if datos["novedad"] else ""), _cuerpo_correo(r, primera), sid=r.get("id"))
         return jsonify({"ok": True, "solicitud": _sol_json(r), "avisos": avisos})

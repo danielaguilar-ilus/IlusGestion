@@ -360,8 +360,10 @@
         (c.faltan.length ? '<ul class="fl-faltan">' + c.faltan.map(function (f) { return '<li>' + esc(f) + '</li>'; }).join('') + '</ul>' : '<p class="fl-t-ok">La ficha está completa y al día.</p>');
     }
     var repo = PERM.documentos ? '<h6 class="fl-ficha-h">Repositorio de documentos</h6><div class="fl-repo" id="flRepo"><span class="fl-t-mute">Cargando…</span></div>' : '';
-    $('flFichaCuerpo').innerHTML = cab + datos + docs + repo + cal;
+    var usos = '<h6 class="fl-ficha-h">Usos y devoluciones</h6><div class="fl-usos" id="flUsos"><span class="fl-t-mute">Cargando…</span></div>';
+    $('flFichaCuerpo').innerHTML = cab + datos + usos + docs + repo + cal;
     if (PERM.documentos) pintarRepositorio(v.id);
+    USOS.pag = 1; cargarUsos(v.id);
     var b = [];
     if (admin) {
       b.push('<button type="button" class="btn btn-outline-secondary" data-facc="editar"><i class="bi bi-pencil me-1"></i>Editar datos</button>');
@@ -375,6 +377,52 @@
     }
     b.push('<button type="button" class="btn btn-dark" data-bs-dismiss="modal">Cerrar</button>');
     $('flFichaAcc').innerHTML = b.join('');
+  }
+  /* Usos y devoluciones (Daniel, 03-nov-2026: «se van a poder registrar las entregas de cada uno… ver qué tan fuera del plan maneja
+     los tiempos cada quien»): cada retiro con lo reservado contra lo real y los km de ese uso. Paginado como Etiquetas (REGLA #4.3). */
+  var USOS = { lista: [], pag: 1, por: 10, vid: null };
+  function chipDesvio(d, vacio) {
+    if (!d) return '<span class="fl-dsv fl-dsv--nada">' + esc(vacio) + '</span>';
+    return '<span class="fl-dsv fl-dsv--' + esc(d.estado) + '">' + esc(d.texto) + '</span>';
+  }
+  function cargarUsos(vid) {
+    USOS.vid = vid;
+    api(API + '/' + vid + '/usos').then(function (d) {
+      if (S.fichaId !== vid) return;
+      USOS.lista = d.ok ? (d.usos || []) : null;
+      pintarUsos(d.ok ? '' : (d.error || 'No se pudieron leer los usos.'));
+    });
+  }
+  function pintarUsos(error) {
+    var el = document.querySelector('#flFichaCuerpo .fl-usos');
+    if (!el) return;
+    if (error) { el.innerHTML = '<span class="fl-t-mute">' + esc(error) + '</span>'; return; }
+    var L = USOS.lista || [];
+    if (!L.length) { el.innerHTML = '<span class="fl-t-mute">Todavía no tiene usos: aquí aparece cada retiro de llave y su devolución.</span>'; return; }
+    var tarde = L.filter(function (u) { return (u.desvio_retiro && u.desvio_retiro.estado === 'tarde') || (u.desvio_devolucion && u.desvio_devolucion.estado === 'tarde'); }).length;
+    var conKm = L.filter(function (u) { return u.km_uso != null; });
+    var km = conKm.reduce(function (t, u) { return t + u.km_uso; }, 0);
+    var paginas = Math.max(1, Math.ceil(L.length / USOS.por)), p = Math.min(USOS.pag, paginas), desde = (p - 1) * USOS.por;
+    var filas = L.slice(desde, desde + USOS.por).map(function (u) {
+      return '<tr><td data-label="Uso"><b>' + esc(u.numero) + '</b><span class="fl-sub">' + esc(u.rango_texto) + '</span></td>' +
+        '<td data-label="Chofer"><b>' + esc(u.chofer) + '</b><span class="fl-sub">' + esc((u.area || '') + (u.solicitante ? ' · pidió ' + u.solicitante : '')) + '</span></td>' +
+        '<td data-label="Retiró la llave">' + esc(u.llave_fmt || '—') + chipDesvio(u.desvio_retiro, 'Sin registro') + '</td>' +
+        '<td data-label="Devolvió">' + (u.estado === 'devuelta' ? esc(u.devuelta_fmt || '—') + chipDesvio(u.desvio_devolucion, 'Sin registro')
+          : '<span class="fl-dsv fl-dsv--uso">En uso</span>') + '</td>' +
+        '<td data-label="Kilometraje">' + (u.dev_km != null ? '<b>' + num(u.dev_km) + ' km</b>' : '—') +
+          (u.km_uso != null ? '<span class="fl-sub">+' + num(u.km_uso) + ' km en este uso</span>' : '') + '</td>' +
+        '<td data-label="Combustible y estado">' + esc(u.combustible_texto || '—') +
+          (u.estado === 'devuelta' ? '<span class="fl-sub' + (u.novedad ? ' fl-t-warn' : '') + '">' + (u.novedad ? 'Con novedad' : 'Sin novedad') + '</span>' : '') + '</td></tr>';
+    }).join('');
+    el.innerHTML = '<div class="fl-usos-res"><span><b>' + L.length + '</b> ' + (L.length === 1 ? 'uso' : 'usos') + '</span>' +
+      (conKm.length ? '<span><b>' + num(km) + ' km</b> recorridos</span>' : '<span>Los km de cada uso se cuentan desde la segunda devolución</span>') +
+      '<span class="' + (tarde ? 'fl-t-warn' : 'fl-t-ok') + '"><b>' + tarde + '</b> fuera de horario (más de 15 min)</span></div>' +
+      '<div class="fl-ftabla-wrap"><table class="fl-ftabla fl-ftabla--usos"><thead><tr><th>Uso</th><th>Chofer</th><th>Retiró la llave</th><th>Devolvió</th><th>Kilometraje</th><th>Combustible y estado</th></tr></thead><tbody>' +
+      filas + '</tbody></table></div>' +
+      '<div class="fl-pie fl-pie--usos"><div class="fl-pie-info">Mostrando ' + (desde + 1) + '–' + Math.min(desde + USOS.por, L.length) + ' de ' + L.length + '</div>' +
+      '<div class="fl-pie-ctrl"><button type="button" class="fl-pg" data-upag="-1"' + (p <= 1 ? ' disabled' : '') + '>Anterior</button>' +
+      '<span class="fl-pg-n">Página ' + p + ' de ' + paginas + '</span>' +
+      '<button type="button" class="fl-pg" data-upag="1"' + (p >= paginas ? ' disabled' : '') + '>Siguiente</button></div></div>';
   }
   /* Repositorio: TODO lo que se le ha subido al vehículo, el vigente y los anteriores (Daniel, 02-nov-2026). Nada se borra. */
   function pintarRepositorio(vid) {
@@ -792,6 +840,8 @@
       if (im && im.tagName === 'IMG') { var d = document.createElement('i'); d.className = 'bi bi-truck-front'; im.replaceWith(d); }
     }, true);
     $('flFichaCuerpo').addEventListener('click', function (ev) {
+      var pg = ev.target.closest('[data-upag]');
+      if (pg) { USOS.pag = Math.max(1, USOS.pag + parseInt(pg.getAttribute('data-upag'), 10)); pintarUsos(''); return; }
       var b = ev.target.closest('[data-farch]');
       if (!b) return;
       if (b.getAttribute('data-farch') === 'subir') elegirArchivo(b.getAttribute('data-tipo'));

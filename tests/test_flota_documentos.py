@@ -668,8 +668,9 @@ if __name__ == "__main__":
 
 
 class TestChoferExternoYRepositorio(unittest.TestCase):
-    """02-nov-2026 (Daniel): «un chofer que no esté dentro del sistema y que se lleve el camión» y «necesito un repositorio con los
-    documentos». El externo no tiene usuario de ILUS: su nombre y teléfono son propios; reserva con las mismas reglas de licencia."""
+    """02-nov-2026 se abrió un chofer externo (sin usuario de ILUS). 03-nov-2026 (Daniel): «eliminaras esa parte donde el usuario externo
+    de chofer todos tienen que pertenecer a la página. Si no está registrado, no puede retirar el camión». Ya no se crean; uno que quedó
+    de antes se puede editar o archivar, pero no se elige en una reserva ni recibe la llave."""
 
     def setUp(self):
         self.bucket = BucketFalso()
@@ -677,53 +678,59 @@ class TestChoferExternoYRepositorio(unittest.TestCase):
         self.app = TS._app(self.base, self.bucket)
         self.c = self.app.test_client()
 
-    def _externo(self, **extra):
+    def _externo_antiguo(self):
+        """Un externo que quedó en el repositorio de antes: se inserta directo, porque la API ya no los crea."""
+        self.base.execute(
+            "INSERT INTO flota_choferes (usuario_id, telefono, rut, nombre_completo, direccion, direccion_lat, direccion_lng, "
+            "direccion_place_id, licencia_clases, licencia_vence, notas, created_by, updated_by) VALUES (NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            ("+56987654321", "111111111", "Pedro Ignacio Lagos Fuentes", "Av. Siempre Viva 742, Providencia", None, None, None, "B",
+             dt.date.fromisoformat(TS.FUTURO), None, "prueba", "prueba"))
+        return max(self.base.cho)
+
+    def test_ya_no_se_crea_un_chofer_externo(self):
         d = dict(TS._datos_chofer(9), externo=True, nombre_completo="Pedro Ignacio Lagos Fuentes", rut="11.111.111-1",
                  telefono="+56 9 8765 4321")
         d.pop("usuario_id", None)
-        d.update(extra)
-        return self.c.post("/flota/api/choferes", json=d, headers=SUPER)
-
-    def test_alta_de_un_chofer_externo(self):
-        r = self._externo()
-        self.assertEqual(r.status_code, 200, r.get_json())
-        ch = r.get_json()["chofer"]
-        self.assertTrue(ch["externo"])
-        self.assertIsNone(ch["usuario_id"])
-        self.assertEqual(ch["nombre"], "Pedro Ignacio Lagos Fuentes")
-        self.assertEqual(ch["telefono"], "+56987654321")
-        self.assertTrue(ch["usuario_activo"])
-        self.assertTrue(ch["disponible"])
-
-    def test_externo_exige_telefono_y_no_repite_rut(self):
-        r = self._externo(telefono="")
+        r = self.c.post("/flota/api/choferes", json=d, headers=SUPER)
         self.assertEqual(r.status_code, 400)
-        self.assertIn("telefono", r.get_json()["errores"])
-        self.assertEqual(self._externo().status_code, 200)
-        r = self._externo(nombre_completo="Otra Persona Distinta")
-        self.assertEqual(r.status_code, 409)
-        self.assertIn("rut", r.get_json()["errores"])
+        self.assertEqual(r.get_json()["error_codigo"], "CHOFER_SIN_USUARIO")
+        self.assertFalse(self.base.cho)                                                # no se guardó nada
+        self.assertEqual(self.c.post("/flota/api/choferes", json={k: v for k, v in d.items() if k != "externo"},
+                                     headers=SUPER).status_code, 400)                  # sin usuario, tampoco
 
-    def test_un_externo_puede_retirar_la_llave(self):
-        cid = self._externo().get_json()["chofer"]["id"]
+    def test_un_externo_antiguo_no_reserva_ni_recibe_la_llave(self):
+        cid = self._externo_antiguo()
+        ch = self.c.get("/flota/api/choferes", headers=SUPER).get_json()["choferes"][0]
+        self.assertTrue(ch["externo"])
         vid = self.c.post("/flota/api/vehiculos", json={"patente": "PHVD21-7", "tipo": "Camión", "licencia_clases": ["B"]},
                           headers=SUPER).get_json()["vehiculo"]["id"]
         dia = (dt.date.today() + dt.timedelta(days=3)).isoformat()
         r = self.c.post("/flota/api/solicitudes", json={"vehiculo_id": vid, "chofer_id": cid, "area": "Logística", "motivo": "Reparto zona sur",
                         "fecha": dia, "hora_desde": "09:00", "hora_hasta": "12:00"}, headers=SUPER)
-        self.assertEqual(r.status_code, 200, r.get_json())
-        self.assertEqual(r.get_json()["solicitud"]["chofer"]["nombre"], "Pedro Ignacio Lagos Fuentes")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.get_json()["error_codigo"], "CHOFER_SIN_USUARIO")
+        self.assertFalse(self.base.sol)
+        # Una reserva antigua que ya lo tenía: la llave no se entrega hasta cambiarle el chofer por uno registrado
+        bueno = self.c.post("/flota/api/choferes", json=dict(TS._datos_chofer(1), usuario_id=1), headers=SUPER).get_json()["chofer"]["id"]
+        sid = self.c.post("/flota/api/solicitudes", json={"vehiculo_id": vid, "chofer_id": bueno, "area": "Logística", "motivo": "Reparto zona sur",
+                          "fecha": dia, "hora_desde": "09:00", "hora_hasta": "12:00"}, headers=SUPER).get_json()["solicitud"]["id"]
+        self.c.post(f"/flota/api/solicitudes/{sid}/confirmar", json={}, headers=SUPER)
+        self.base.sol[sid]["chofer_id"] = cid                                         # como quedó de antes del 03-nov
+        r = self.c.post(f"/flota/api/solicitudes/{sid}/llave", json={"nota": ""}, headers=SUPER)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.get_json()["error_codigo"], "CHOFER_SIN_USUARIO")
+        self.assertEqual(self.base.sol[sid]["estado"], "confirmada")
 
-    def test_editar_el_telefono_de_un_externo(self):
-        ch = self._externo().get_json()["chofer"]
-        d = dict(TS._datos_chofer(9), nombre_completo=ch["nombre_completo"], rut="11.111.111-1", telefono="+56 2 2345 6789")
+    def test_editar_el_telefono_de_un_externo_antiguo(self):
+        cid = self._externo_antiguo()
+        d = dict(TS._datos_chofer(9), nombre_completo="Pedro Ignacio Lagos Fuentes", rut="11.111.111-1", telefono="+56 2 2345 6789")
         d.pop("usuario_id", None)
-        r = self.c.put(f"/flota/api/choferes/{ch['id']}", json=d, headers=SUPER)
+        r = self.c.put(f"/flota/api/choferes/{cid}", json=d, headers=SUPER)
         self.assertEqual(r.status_code, 200, r.get_json())
         self.assertEqual(r.get_json()["chofer"]["telefono"], "+56223456789")
 
     def test_un_usuario_que_ya_es_chofer_no_vacia_la_lista_por_un_externo(self):
-        self._externo()
+        self._externo_antiguo()
         r = self.c.get("/flota/api/choferes/usuarios", headers=SUPER)
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.get_json()["usuarios"])
