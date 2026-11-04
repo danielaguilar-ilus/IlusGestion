@@ -203,6 +203,50 @@ class TestServidor(unittest.TestCase):
         self.assertIn("LEFT JOIN mant_maquinas m ON m.id = t.maquina_id", src)
 
 
+class TestConsultaDeVerdad(unittest.TestCase):
+    """La consulta real de `_ot_hallazgos_sin_foto_tareas` (con el filtro real `_ot_tarea_no_trabajable_sql`), ejecutada de verdad en SQLite con
+    datos de mentira. Si la consulta fallara en producción el candado se abriría EN SILENCIO (fail-open), así que se prueba el SQL, no un doble."""
+
+    def test_trae_el_equipo_y_respeta_fotos_no_aplica_baja_huerfanas_y_otras_ot(self):
+        import sqlite3
+        con = sqlite3.connect(":memory:")
+        self.addCleanup(con.close)
+        con.row_factory = sqlite3.Row
+        con.executescript("""
+            CREATE TABLE mant_maquinas (id INTEGER PRIMARY KEY, nombre TEXT, estado TEXT);
+            CREATE TABLE mant_visita_tareas (id INTEGER PRIMARY KEY, visita_id INT, maquina_id INT, titulo TEXT,
+                                             tipo_respuesta TEXT, valor_json TEXT, opciones_lista_json TEXT);
+            CREATE TABLE mant_visita_fotos (id INTEGER PRIMARY KEY, tarea_id INT);
+            INSERT INTO mant_maquinas VALUES (6451, 'Escaladora ILUS X1', 'activo'), (8233, 'ILUS Dynamis Seated Leg Press', 'activo'),
+                                             (9, 'Trotadora de baja', 'baja');
+            INSERT INTO mant_visita_tareas VALUES
+              (1, 536, 6451, 'Prueba de funcionamiento del motor y consola', 'verificacion', '{"valor":"falla"}', NULL),
+              (2, 536, 8233, 'Verificar tapas y protecciones.', 'verificacion', '{"valor":"falla"}', NULL),
+              (3, 536, 6451, 'Poleas', 'verificacion', '{"valor":"falla","na":true}', NULL),
+              (4, 536, 9, 'Cable', 'verificacion', '{"valor":"falla"}', NULL),
+              (5, 536, NULL, 'Huérfana', 'verificacion', '{"valor":"falla"}', NULL),
+              (6, 536, 6451, 'Aprobada', 'verificacion', '{"valor":"aprobado"}', NULL),
+              (7, 999, 6451, 'De otra OT', 'verificacion', '{"valor":"falla"}', NULL),
+              (8, 536, 8233, 'Resultado del control', 'lista', '{"opcion":"Reparar"}',
+               '["Apto","Apto con observaciones","Reparar","Dar de baja","Fuera de servicio","No llegó","Pendiente de diagnóstico"]');
+            INSERT INTO mant_visita_fotos VALUES (1, 2);
+        """)
+
+        def fetchall(sql, params=()):
+            return [dict(r) for r in con.execute(sql.replace("%s", "?"), tuple(params)).fetchall()]
+
+        amb = FA.cargar(["_ot_tarea_no_trabajable_sql", "_ot_hallazgos_sin_foto_tareas", "_ot_hallazgos_sin_foto_razones"],
+                        extra={"mysql_fetchall": fetchall, "_oh": OH})
+        sin = amb["_ot_hallazgos_sin_foto_tareas"](536)
+        self.assertEqual([(t["id"], t["maquina_nombre"]) for t in sin],
+                         [(1, "Escaladora ILUS X1"), (8, "ILUS Dynamis Seated Leg Press")],
+                         "con foto (2), «No aplica» (3), equipo de baja (4), huérfana (5), aprobada (6) y otra OT (7) no se exigen")
+        self.assertEqual([t["id"] for t in amb["_ot_hallazgos_sin_foto_tareas"](536, {6451})], [8], "un equipo excluido del cierre no se exige")
+        razon = amb["_ot_hallazgos_sin_foto_razones"](536)[0]
+        self.assertIn("2 hallazgo(s)", razon)
+        self.assertIn("Escaladora ILUS X1 — Prueba de funcionamiento del motor y consola", razon)
+
+
 class TestPantalla(unittest.TestCase):
     def test_la_constante_solo_vale_con_la_ot_sin_firmar(self):
         m = re.search(r"const OTD_FOTO_HALLAZGO_ESTRICTA = (\{\{.*?\}\});", D)
