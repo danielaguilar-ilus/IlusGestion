@@ -2351,6 +2351,10 @@ document.getElementById('rpFile').addEventListener('change', async function(e){
   this.value = '';
   for(const f of files){ await rpSubirArchivo(f); }
 });
+// 03-nov (Impeccable): el clip es un <button> (se alcanza con Tab y se activa con Enter o Espacio) y abre el mismo
+// selector de archivos (#rpFile) que antes abría el <label>.
+if (document.getElementById('rpBtnAdjuntar') && document.getElementById('rpFile'))
+document.getElementById('rpBtnAdjuntar').addEventListener('click', function(){ document.getElementById('rpFile').click(); });
 // 2026-07-13 (Daniel): pegar una imagen copiada (Ctrl+V) directo en el
 // editor de la respuesta debe adjuntarla, igual que si se hubiera elegido
 // con el clip 📎 — reutiliza EXACTAMENTE el mismo flujo de subida inmediata

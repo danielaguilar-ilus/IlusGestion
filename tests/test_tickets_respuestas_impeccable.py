@@ -190,9 +190,22 @@ def test_el_visor_se_recorre_con_teclado_y_tiene_nombre():
 def test_imagenes_avatares_y_botones_de_icono_tienen_su_nombre():
     assert re.search(r'<img src="\'\+esc\(url\)\+\'" alt="" loading="lazy"', _JS), "la imagen del adjunto quedó sin alt (el nombre va al lado)"
     assert "'<div class=\"rp-avatar\" aria-hidden=\"true\">'" in _JS, "las iniciales se leerían dos veces (avatar y autor)"
-    for bid in ("rpBtnDictar", "rpGuardarPlantilla", "rpBtnTraducir"):
+    for bid in ("rpBtnDictar", "rpGuardarPlantilla", "rpBtnTraducir", "rpBtnAdjuntar"):
         boton = re.search(r'<button[^>]*id="%s"[^>]*>' % bid, _FICHA).group(0)
         assert 'aria-label="' in boton, bid
+
+
+def test_el_clip_de_adjuntar_se_alcanza_con_teclado_y_abre_el_mismo_selector():
+    """Era un <label> con el input oculto: ni Tab ni Enter/Espacio lo alcanzaban. Ahora es un <button> real que
+    dispara el MISMO #rpFile (su listener de «change» no cambió)."""
+    clip = re.search(r'<button[^>]*id="rpBtnAdjuntar"[^>]*>', _FICHA).group(0)
+    assert 'type="button"' in clip and 'class="btn btn-sm btn-outline-secondary"' in clip       # se ve como los demás botones
+    assert 'title="Adjuntar fotos o archivos"' in clip
+    assert 'id="rpFile" hidden multiple accept="image/*,video/*,application/pdf"' in _FICHA     # el selector de siempre
+    assert '<label class="btn btn-sm btn-outline-secondary" style="margin:0;" title="Adjuntar' not in _FICHA
+    assert re.search(r"getElementById\('rpBtnAdjuntar'\)\.addEventListener\('click', function\(\)\{ "
+                     r"document\.getElementById\('rpFile'\)\.click\(\); \}\);", _JS)
+    assert "document.getElementById('rpFile').addEventListener('change', async function(e){" in _JS   # la subida no cambió
 
 
 # ───────────────────────── 5. Tamaño mínimo de la línea de autor y fecha ─────────────────────────

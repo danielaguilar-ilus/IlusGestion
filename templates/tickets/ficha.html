@@ -595,10 +595,11 @@
       </div>
       <div class="rp-toolbar-extra">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <label class="btn btn-sm btn-outline-secondary" style="margin:0;" title="Adjuntar fotos o archivos">
-            <i class="bi bi-paperclip"></i>
-            <input type="file" id="rpFile" hidden multiple accept="image/*,video/*,application/pdf">
-          </label>
+          {# 03-nov (Impeccable, «Sí, corrígelo»): el clip era un <label> con el input oculto: no se alcanzaba con Tab. Ahora es un
+             botón real (Tab, Enter y Espacio) que abre el MISMO selector (#rpFile); se ve y funciona igual. #}
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="rpBtnAdjuntar" style="margin:0;" title="Adjuntar fotos o archivos" aria-label="Adjuntar fotos o archivos">
+            <i class="bi bi-paperclip"></i></button>
+          <input type="file" id="rpFile" hidden multiple accept="image/*,video/*,application/pdf">
           <button class="btn btn-sm btn-outline-secondary" id="rpBtnDictar" type="button" title="Dictar mensaje por voz" aria-label="Dictar mensaje por voz">
             <i class="bi bi-mic"></i></button>
           <div class="dropdown">
