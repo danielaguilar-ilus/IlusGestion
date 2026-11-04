@@ -177,5 +177,53 @@ class TestDocumentoYEncabezado(unittest.TestCase):
         self.assertIn("margin: 42mm 0mm 16mm;", PDF, "el margen superior calibrado para el encabezado del PDF sigue igual")
 
 
+class TestVisorItemsEnCelular(unittest.TestCase):
+    """Medido EN PRODUCCIÓN (4-nov, iframe a 390 px, cotización COT-000205): la tabla de ítems del visor medía 417 px en una hoja de 369 y la página
+    tenía ≈ 45 px de scroll de lado, con letra de 9 a 11 px. Bajo 768 px cada ítem pasa a una tarjeta de 2 líneas (12-13 px, 57 px de alto,
+    339 px de ancho, sin scroll). SOLO el visor: el PDF de Playwright y la impresión no usan estas reglas."""
+
+    @staticmethod
+    def _bloque_movil():
+        i = PDF.index("@media (max-width: 768px) {")
+        return PDF[i:PDF.index("</style>", i)]
+
+    def test_el_cuerpo_marca_el_visor_y_el_pdf_no(self):
+        self.assertIn('<body class="{% if modo_visor %}es-visor{% endif %}">', PDF)
+
+    def test_las_reglas_de_items_van_solo_bajo_body_es_visor(self):
+        """Cada selector que toca `table.items` en el bloque móvil empieza por `body.es-visor`: sin la clase (PDF e impresión) no se aplica ninguna."""
+        sin_coment = re.sub(r"/\*.*?\*/", "", self._bloque_movil(), flags=re.S)
+        vistas = 0
+        for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", sin_coment):
+            sel = " ".join(m.group(1).split())
+            if "table.items" not in sel:
+                continue
+            vistas += 1
+            for parte in sel.split(","):
+                self.assertTrue(parte.strip().startswith("body.es-visor "), "regla de ítems sin body.es-visor: %r" % parte.strip())
+        self.assertGreaterEqual(vistas, 15, "las reglas de las tarjetas de ítems deben estar todas")
+
+    def test_los_items_apilados_no_bajan_de_12_px(self):
+        sin_coment = re.sub(r"/\*.*?\*/", "", self._bloque_movil(), flags=re.S)
+        for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", sin_coment):
+            if "table.items" not in m.group(1):
+                continue
+            for px in re.findall(r"font-size:\s*(\d+(?:\.\d+)?)px", m.group(2)):
+                self.assertGreaterEqual(float(px), 12.0, "letra de ítems < 12 px en %r" % " ".join(m.group(1).split()))
+
+    def test_se_conservan_todas_las_columnas_como_etiquetas(self):
+        """Nada se quita (REGLA #4.2): el # y la descripción, el documento, la cantidad (con «Cant.»), el precio UF (con «UF») y el total siguen."""
+        b = self._bloque_movil()
+        for trozo in ("td.num { order: 1", "td:not([class]) { order: 2", "td.doc { order: 4", "td.cant { order: 5", 'content: "Cant. "',
+                      "td.puf { order: 6", 'content: "UF "', "td.tot { order: 7"):
+            self.assertIn(trozo, b)
+        self.assertIn("tr.col-row { display: none; }", b, "los encabezados de columna sobran: cada dato lleva su etiqueta")
+
+    def test_el_pdf_real_no_usa_el_ancho_movil(self):
+        """Las reglas móviles solo aplican bajo 768 px de ancho: la hoja del PDF mide 794 px (@page A4 con márgenes laterales en 0)."""
+        self.assertIn("margin: 42mm 0mm 16mm;", PDF)
+        self.assertIn("margin: 0;", PDF)
+
+
 if __name__ == "__main__":
     unittest.main()
