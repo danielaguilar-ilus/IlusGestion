@@ -201,7 +201,7 @@ class TestRutasFinancierasExigenGestion(unittest.TestCase):
             mant_contrato_clausulas_get mant_contrato_clausulas mant_contrato_analisis_pdf mant_informe_ficha
             mant_contrato_analizar mant_contrato_update mant_contrato_subir mant_contrato_re_subir mant_contrato_delete
             mant_contrato_ai_editar mant_contrato_auto_calendar mant_agente_contrato mant_contrato_backfill_cloudinary
-            mant_adjuntos_list mant_adjunto_subir mant_ia_alertas_diarias_manual""".split()
+            mant_adjuntos_list mant_adjunto_subir mant_ia_alertas_diarias_manual mant_cliente_cotizaciones""".split()
         faltan = [n for n in cerradas if n not in por_nombre]
         self.assertEqual(faltan, [], f"rutas que ya no existen: {faltan}")
         sin = [n for n in cerradas if "@_no_tecnico" not in [d.split("  #")[0].strip() for d in por_nombre[n]["decs"]]]
@@ -212,7 +212,8 @@ class TestRutasFinancierasExigenGestion(unittest.TestCase):
             tk_cotizacion_pdf tk_cotizacion_ver tk_cotizacion_detalle_calculo tk_cotizacion_detalle_calculo_pdf
             tk_cotizaciones_historico tk_api_cotizacion_desde_erp tk_api_cotizacion_recalcular
             tk_api_cotizacion_generar_ticket tk_api_cotizacion_get tk_api_cotizacion_buscar tk_api_cotizacion_actualizar
-            tk_api_cotizacion_estado tk_api_cotizacion_eliminar tk_api_cotizacion_log tk_api_cotizacion_enviar""".split()
+            tk_api_cotizacion_estado tk_api_cotizacion_eliminar tk_api_cotizacion_log tk_api_cotizacion_enviar
+            tk_cotizaciones_list""".split()
         por_nombre = {r["fn"]: r for r in _rutas("tickets_module.py")}
         for n in nombres:
             self.assertIn(n, por_nombre)

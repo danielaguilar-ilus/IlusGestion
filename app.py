@@ -160741,6 +160741,7 @@ def mant_cliente_evidencias(cid):
 # ══════════════════════════════════════════════════════════════════════
 @app.route("/mantenciones/api/clientes/<int:cid>/cotizaciones", methods=["GET"])
 @_mant_required
+@_no_tecnico  # 2026-10-31 (REGLA #26): lleva montos de cotizaciones; la ficha del cliente que lo llama ya rechaza a la familia técnico
 def mant_cliente_cotizaciones(cid):
     """Historial de cotizaciones (tk_cotizaciones, módulo Cotizador de
     Tickets) generadas para este cliente, cruzadas por cuerpo de RUT.

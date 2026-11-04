@@ -364,11 +364,16 @@
       <div class="tk-card tk-ot-card" id="cardCotizacion">
         <h6><i class="bi bi-file-earmark-text"></i>Cotización</h6>
         <div id="cotSideVacio" class="tk-ot-side-hint">
-          Este ticket todavía no tiene cotizaciones. Genérala aquí mismo: el asistente llega con el cliente y los equipos del ticket.
+          {% if es_tecnico %}Las cotizaciones las gestiona el equipo comercial y de gestión.{% else %}Este ticket todavía no tiene cotizaciones. Genérala aquí mismo: el asistente llega con el cliente y los equipos del ticket.{% endif %}
         </div>
         <div id="cotSideLista"></div>
+        {#- 🔒 2026-10-31 (REGLA #26, Daniel: «sí, ciérrala»): a la familia técnico se le oculta el botón. La página de
+            cotizaciones y su alta ya les respondían con aviso/403, así que el botón era un callejón; ambos scripts
+            (tickets_ficha.js y tickets_ficha_v2.js) lo buscan con guarda y no fallan si no existe. -#}
+        {% if not es_tecnico %}
         <button class="btn fw-bold w-100 tk-ot-side-btn" id="btnGenerarCotizacionSide" type="button" style="margin-top:4px;">
           <i class="bi bi-file-earmark-plus me-1"></i>Generar cotización</button>
+        {% endif %}
         {# 2026-09-05 (Daniel: "puedo llamar una cotización de un ticket y
            viceversa"): hasta hoy la ÚNICA forma de que una cotización
            quedara pegada a un ticket era nacer desde él. El caso real es el
