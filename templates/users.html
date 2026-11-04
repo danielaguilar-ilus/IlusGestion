@@ -58,6 +58,7 @@
     .conx-never{color:#6b7280}
     .badge-active{background:#dcfce7;color:#166534;font-weight:700;padding:3px 9px;border-radius:50px;font-size:.7rem}
     .badge-inactive{background:#fee2e2;color:#991b1b;font-weight:700;padding:3px 9px;border-radius:50px;font-size:.7rem}
+    .badge-espera{background:#fff8e1;color:#92400e;font-weight:700;padding:3px 9px;border-radius:50px;font-size:.7rem;white-space:nowrap}
 
     /* ── LED online/offline (REGLA #1: paleta ILUS) ───────────────── */
     .user-status{
@@ -169,7 +170,9 @@
         </thead>
         <tbody>
           {% for user in users %}
-          <tr data-user-id="{{ user.id }}" {% if not user.active %}style="opacity:.55"{% endif %}>
+          {#- 🕓 2026-11-04: «en espera» = invitado que todavía no completó su registro (inactivo + sin clave propia + nunca entró). Misma regla que usuarios_registro.esta_en_espera. -#}
+          {% set _espera = (not user.active) and user.requires_password_change and not user.last_login_at %}
+          <tr data-user-id="{{ user.id }}" {% if not user.active %}style="opacity:{{ '.85' if _espera else '.55' }}"{% endif %}>
             <td class="status-cell" data-label="En línea">
               {% if user.online %}
                 <span class="user-status online" title="En línea ahora (actividad en los últimos 3 minutos)"></span>
@@ -210,6 +213,8 @@
             <td data-label="Estado">
               {% if user.active %}
                 <span class="badge-active"><i class="bi bi-check-circle me-1"></i>Activo</span>
+              {% elif _espera %}
+                <span class="badge-espera" title="Todavía no completó su registro (nombre, RUT, teléfono, dirección y contraseña). Se activa sola al terminarlo."><i class="bi bi-hourglass-split me-1"></i>En espera de registro</span>
               {% else %}
                 <span class="badge-inactive"><i class="bi bi-x-circle me-1"></i>Inactivo</span>
               {% endif %}
@@ -267,6 +272,14 @@
                         onclick="verHistorialConexiones({{ user.id }}, '{{ user.nombre|e }}', '{{ user.username|e }}')">
                   <i class="bi bi-clock-history"></i>
                 </button>
+                {% if _espera %}
+                <button type="button" class="btn btn-sm btn-outline-success"
+                        title="Reenviar la invitación de registro"
+                        aria-label="Reenviar la invitación de registro"
+                        onclick="reenviarInvitacion({{ user.id }}, '{{ user.username|e }}', this)">
+                  <i class="bi bi-envelope-arrow-up"></i>
+                </button>
+                {% endif %}
                 <button type="button" class="btn btn-sm btn-outline-primary"
                         title="Solicitar cambio de contraseña por email"
                         aria-label="Solicitar cambio de contraseña por email"
@@ -351,6 +364,32 @@ async function verHistorialConexiones(uid, nombre, email) {
   } catch (e) {
     body.innerHTML = '<div class="alert alert-danger mb-0">Error de red al cargar el historial.</div>';
   }
+}
+
+/* 🕓 2026-11-04: reenvía la invitación de REGISTRO a un usuario «en espera» (enlace de 7 días a /welcome). */
+async function reenviarInvitacion(uid, email, btn) {
+  const ok = await ilusConfirm({
+    title: 'Reenviar invitación',
+    message: `¿Reenviar la invitación de registro a ${email}?`,
+    sub: 'Recibirá un enlace nuevo, válido por 7 días, para completar sus datos y crear su contraseña.',
+    okLabel: 'Reenviar', cancelLabel: 'Cancelar', type: 'question',
+  });
+  if (!ok) return;
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
+  try {
+    const r = await fetch(`/admin/users/${uid}/invite`, {method: 'POST'});
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) {
+      ilusToast('Invitación reenviada a ' + email, { type: 'success' });
+    } else {
+      await ilusAlert({ title: 'No se pudo reenviar', message: d.error || 'Error desconocido', type: 'error' });
+    }
+  } catch (e) {
+    await ilusAlert({ title: 'Error de red', message: 'No se pudo contactar al servidor. Reintenta en unos segundos.', type: 'error' });
+  }
+  btn.innerHTML = orig; btn.disabled = false;
 }
 
 async function enviarPasswordLink(uid, nombre, email, btn) {

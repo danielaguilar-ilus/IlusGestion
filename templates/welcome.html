@@ -17,8 +17,16 @@
       margin-bottom:14px;
     }
     .pw-req-list { background:#111;border:1px solid #222;border-radius:8px;padding:11px 14px;margin-top:8px }
-    .pw-req-title { color:#555;font-size:.68rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;margin-bottom:7px }
-    .pw-req { color:#555;font-size:.76rem;line-height:1.85;display:flex;align-items:center;gap:7px;transition:color .15s }
+    /* 2026-11-04: #555 sobre #111 daba 2,5:1 (ilegible); #9ca3af da ~7:1. El título pasa de 10,9 px a 11,5 px. */
+    .pw-req-title { color:#9ca3af;font-size:.72rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;margin-bottom:7px }
+    .pw-req { color:#9ca3af;font-size:.76rem;line-height:1.85;display:flex;align-items:center;gap:7px;transition:color .15s }
+    .w-msg { min-height:18px;margin-top:5px;font-size:.76rem;line-height:1.45;color:#9ca3af }
+    .w-msg.ok  { color:#4ade80 }
+    .w-msg.err { color:#fca5a5 }
+    .w-msg.warn{ color:#fde68a }
+    .form-control.is-pending { border-color:#d97706 !important }
+    .form-control.is-valid-w { border-color:#16a34a !important }
+    .form-control.is-invalid-w { border-color:#dc2626 !important }
     .pw-req .req-icon { width:14px;font-size:.72rem;flex-shrink:0 }
     .pw-req.ok { color:#16a34a }
     .pw-match-ok  { color:#16a34a;font-size:.75rem;margin-top:5px }
@@ -55,7 +63,7 @@
                 max-width:520px;font-weight:500">
         Estamos por activar tu acceso a la plataforma operacional de
         <strong style="color:#fff">{{ marca.name if marca else 'ILUS Fitness' }}</strong>.
-        Solo necesitas crear tu contraseña — toma menos de un minuto.
+        Completa tus datos y crea tu contraseña — toma un par de minutos.
       </p>
     </div>
   </div>
@@ -76,12 +84,13 @@
       </span>
 
       <h5 class="fw-bold mb-1" style="color:#fff">
-        Hola, {{ nombre }}
+        Hola{% if nombre %}, {{ nombre }}{% endif %}
       </h5>
       <p style="color:#aaa;font-size:.86rem;margin-bottom:22px;line-height:1.55">
-        Crea tu contraseña para activar tu cuenta
+        {% if en_espera %}Tu acceso está <strong style="color:#fde68a">en espera</strong> hasta que completes tu registro. {% endif %}
+        Completa tus datos y crea tu contraseña para activar tu cuenta
         <span style="color:#888">{{ email }}</span>.
-        Será privada — el administrador no la conoce ni puede verla.
+        La contraseña será privada — el administrador no la conoce ni puede verla.
       </p>
 
       {% with msgs = get_flashed_messages(with_categories=true) %}
@@ -101,6 +110,66 @@
         <!-- Hint para Chrome/Google: asocia la contraseña nueva al correo de esta cuenta -->
         <input type="text" name="_email_hint" autocomplete="username"
                value="{{ email }}" style="display:none" tabindex="-1" aria-hidden="true">
+
+        {#- 🕓 2026-11-04 (Daniel: «él debe rellenar su RUT, nombre y apellido, su dirección y su teléfono con formato chileno»): los datos
+            personales los declara cada persona al registrarse. RUT con dígito verificador, teléfono chileno y dirección elegida de la lista
+            de Google (el servidor lo vuelve a validar). Mensajes junto a cada campo, nunca ventanas del navegador. -#}
+        <div class="row g-3 mb-1">
+          <div class="col-12">
+            <label class="form-label" for="wNombre" style="color:#ccc;font-size:.82rem;font-weight:600">Tu nombre</label>
+            <input type="text" name="nombre" id="wNombre" required autofocus maxlength="60" autocomplete="given-name"
+                   class="form-control" style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:7px"
+                   placeholder="Ej: María José" value="{{ nombre_in or '' }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label" for="wApellido" style="color:#ccc;font-size:.82rem;font-weight:600">Tu apellido</label>
+            <input type="text" name="apellido" id="wApellido" required maxlength="60" autocomplete="family-name"
+                   class="form-control" style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:7px"
+                   placeholder="Ej: González Pérez" value="{{ apellido_in or '' }}">
+          </div>
+        </div>
+
+        <div class="mb-3 mt-3">
+          <label class="form-label" for="wRut" style="color:#ccc;font-size:.82rem;font-weight:600">Tu RUT</label>
+          <input type="text" name="rut" id="wRut" required maxlength="12" autocomplete="off" autocapitalize="characters"
+                 spellcheck="false" class="form-control" style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:7px"
+                 placeholder="12.345.678-5" value="{{ rut or '' }}">
+          <div class="w-msg" id="wMsgRut">Escríbelo con su dígito verificador; se ordena solo (12.345.678-5).</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label" for="wPhone" style="color:#ccc;font-size:.82rem;font-weight:600">Tu teléfono</label>
+          <div class="input-group">
+            <span class="input-group-text" style="background:#222;border-color:#333;color:#ddd;font-weight:700;border-radius:7px 0 0 7px">+56</span>
+            <input type="tel" name="phone" id="wPhone" required maxlength="12" inputmode="numeric" autocomplete="tel-national"
+                   class="form-control" style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:0 7px 7px 0"
+                   placeholder="9 1234 5678" value="{{ phone_in or '' }}">
+          </div>
+          <div class="w-msg" id="wMsgTel">Celular: 9 + 8 dígitos (9 1234 5678). Fijo: código de área + número. El +56 va solo.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label" for="wDireccion" style="color:#ccc;font-size:.82rem;font-weight:600">Tu dirección</label>
+          <input type="text" name="direccion" id="wDireccion" required maxlength="300" autocomplete="off"
+                 class="form-control" style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:7px"
+                 placeholder="Calle y número, comuna" value="{{ direccion or '' }}">
+          <input type="hidden" name="direccion_lat" id="wDirLat" value="{{ direccion_lat or '' }}">
+          <input type="hidden" name="direccion_lng" id="wDirLng" value="{{ direccion_lng or '' }}">
+          <input type="hidden" name="direccion_place_id" id="wDirPid" value="{{ direccion_place_id or '' }}">
+          <div class="w-msg" id="wMsgDir">Escribe tu calle y número y elige una sugerencia de la lista de Google.</div>
+          <div class="row g-2 mt-1">
+            <div class="col-12">
+              <input type="text" name="comuna" id="wComuna" readonly tabindex="-1" class="form-control form-control-sm"
+                     style="background:#161616;border-color:#2a2a2a;color:#aaa;border-radius:7px" placeholder="Comuna (se completa sola)" value="{{ comuna or '' }}">
+            </div>
+            <div class="col-12">
+              <input type="text" name="ciudad" id="wCiudad" readonly tabindex="-1" class="form-control form-control-sm"
+                     style="background:#161616;border-color:#2a2a2a;color:#aaa;border-radius:7px" placeholder="Ciudad (se completa sola)" value="{{ ciudad or '' }}">
+            </div>
+          </div>
+        </div>
+
+        <hr style="border-color:#222;margin:22px 0">
 
         <div class="mb-3">
           <label class="form-label" style="color:#ccc;font-size:.82rem;font-weight:600">
@@ -150,41 +219,10 @@
           <div id="matchHint" style="min-height:18px"></div>
         </div>
 
-        <hr style="border-color:#222;margin:22px 0">
-
-        <div class="mb-3">
-          <label class="form-label" style="color:#ccc;font-size:.82rem;font-weight:600">
-            Tu RUT
-          </label>
-          <input type="text" name="rut" required
-                 class="form-control"
-                 style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:7px"
-                 placeholder="Ej: 12.345.678-9" value="{{ rut or '' }}">
-        </div>
-
-        <div class="mb-3">
-          <label class="form-label" style="color:#ccc;font-size:.82rem;font-weight:600">
-            Tu dirección
-          </label>
-          <input type="text" name="direccion" required
-                 class="form-control"
-                 style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:7px"
-                 placeholder="Calle, número, depto (si aplica)" value="{{ direccion or '' }}">
-        </div>
-
-        <div class="mb-3">
-          <label class="form-label" style="color:#ccc;font-size:.82rem;font-weight:600">
-            Tu comuna
-          </label>
-          <input type="text" name="comuna" required
-                 class="form-control"
-                 style="background:#1c1c1c;border-color:#333;color:#fff;border-radius:7px"
-                 placeholder="Ej: Providencia" value="{{ comuna or '' }}">
-        </div>
-
-        <p style="color:#666;font-size:.72rem;line-height:1.55;margin-bottom:20px">
+        {#- El RUT, el teléfono y la dirección (con su comuna) ya se piden arriba, antes de la contraseña. -#}
+        <p style="color:#9ca3af;font-size:.74rem;line-height:1.55;margin:18px 0 20px">
           <i class="bi bi-shield-check me-1"></i>
-          Tu RUT y dirección se usan solo para documentos internos y
+          Tu nombre, RUT, teléfono y dirección se usan solo para documentos internos y
           coordinación operativa de {{ marca.name if marca else 'ILUS Fitness' }} —
           nunca se comparten con terceros. Puedes actualizarlos cuando
           quieras desde "Mi cuenta".
@@ -210,6 +248,20 @@
 
 </div>
 
+{#- 🕓 2026-11-04: Google Maps para validar la dirección (mismo cargador perezoso que base.html: el SDK solo se descarga cuando alguien escribe la dirección). -#}
+{% if google_maps_api_key %}
+<script>
+  window.__ILUS_GMAPS_KEY = {{ google_maps_api_key|tojson }};
+  window.__ilusGmapsPending = window.__ilusGmapsPending || [];
+  window.__ilusGmapsReady = function(){
+    window.__ilusGmapsLoaded = true;
+    (window.__ilusGmapsPending || []).forEach(function(fn){ try { fn(); } catch(e) { console.warn('gmaps init:', e); } });
+    window.__ilusGmapsPending = [];
+  };
+</script>
+{% endif %}
+<script src="{{ url_for('static', filename='ilus_persona_fields.js') }}"></script>
+<script src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
 <script>
 function togglePw(id, btn) {
   var inp = document.getElementById(id);
@@ -252,6 +304,139 @@ document.getElementById('pw1').addEventListener('input', function() {
   checkMatch();
 });
 document.getElementById('pw2').addEventListener('input', checkMatch);
+</script>
+
+<script>
+/* ══ Registro del usuario nuevo (2026-11-04) ═══════════════════════════════════════════════
+   RUT con formato chileno y dígito verificador, teléfono chileno de 9 dígitos y dirección elegida de la lista de Google.
+   El servidor vuelve a validar todo (RUT, teléfono, ubicación dentro de Chile): esto solo guía y evita enviar de más.
+   La lógica del RUT vive en static/ilus_persona_fields.js (misma regla que Nuevo/Editar usuario). */
+(function(){
+  var P = window.ilusPersona;
+  function $(id){ return document.getElementById(id); }
+  function msg(id, cls, html){ var m = $(id); if (m){ m.className = 'w-msg' + (cls ? ' ' + cls : ''); m.innerHTML = html || ''; } }
+  function marca(el, estado){
+    el.classList.remove('is-valid-w', 'is-invalid-w', 'is-pending');
+    if (estado === 'ok') el.classList.add('is-valid-w');
+    else if (estado === 'err') el.classList.add('is-invalid-w');
+    else if (estado === 'warn') el.classList.add('is-pending');
+  }
+  var IC_OK = '<i class="bi bi-check-circle-fill me-1"></i>', IC_ERR = '<i class="bi bi-x-circle-fill me-1"></i>', IC_WARN = '<i class="bi bi-exclamation-triangle-fill me-1"></i>';
+
+  // ── RUT ──
+  var rut = $('wRut');
+  function rutRender(final){
+    if (!P || !rut) return 'vacio';
+    var r = P.rutEstado(rut.value);
+    if (r.estado === 'vacio'){ marca(rut, ''); msg('wMsgRut', '', 'Escríbelo con su dígito verificador; se ordena solo (12.345.678-5).'); return 'vacio'; }
+    if (r.estado === 'incompleto'){
+      if (final){ marca(rut, 'err'); msg('wMsgRut', 'err', IC_ERR + 'RUT incompleto: faltan dígitos.'); }
+      else { marca(rut, ''); msg('wMsgRut', '', 'Sigue escribiendo: el RUT lleva 7 u 8 dígitos y su dígito verificador.'); }
+      return 'incompleto';
+    }
+    if (r.estado === 'invalido'){
+      marca(rut, 'err');
+      msg('wMsgRut', 'err', IC_ERR + 'El dígito verificador no coincide' + (r.dvEsperado ? ' (debería ser <strong>' + r.dvEsperado + '</strong>)' : '') + '.');
+      return 'invalido';
+    }
+    marca(rut, 'ok'); msg('wMsgRut', 'ok', IC_OK + 'RUT válido: <strong>' + r.formateado + '</strong>');
+    return 'valido';
+  }
+  if (rut && P){
+    rut.addEventListener('input', function(){
+      var pos = rut.selectionStart == null ? rut.value.length : rut.selectionStart;
+      var aLaDerecha = P.rutLimpiar(rut.value.slice(pos)).length;
+      rut.value = P.rutFormatear(rut.value);
+      var p = rut.value.length, cuenta = 0;
+      while (p > 0 && cuenta < aLaDerecha){ p--; if (/[0-9K]/.test(rut.value.charAt(p))) cuenta++; }
+      try { rut.setSelectionRange(p, p); } catch(e) {}
+      rutRender(false);
+    });
+    rut.addEventListener('blur', function(){ rutRender(true); });
+    if (rut.value) rut.value = P.rutFormatear(rut.value);
+    rutRender(false);
+  }
+
+  // ── Teléfono chileno: solo dígitos, sin el +56, 9 dígitos (9 1234 5678) ──
+  var tel = $('wPhone');
+  function telDigitos(v){
+    var d = String(v || '').replace(/\D/g, '');
+    // El +56 va fijo al lado del campo, pero hay quien lo escribe o lo pega: «+56 9 1234 5678». Se quita en cuanto sobran dígitos
+    // (si no, tecleando seguido el recorte a 9 se comería el final: 5 6912 3456).
+    if (d.length > 9 && d.indexOf('56') === 0) d = d.slice(2);
+    return d.slice(0, 9);
+  }
+  function telFormato(d){ return d.length === 9 ? d.charAt(0) + ' ' + d.slice(1, 5) + ' ' + d.slice(5) : d; }
+  function telRender(final){
+    if (!tel) return 'vacio';
+    var d = telDigitos(tel.value);
+    if (!d){ marca(tel, ''); msg('wMsgTel', '', 'Celular: 9 + 8 dígitos (9 1234 5678). Fijo: código de área + número. El +56 va solo.'); return 'vacio'; }
+    if (/^[2-9][0-9]{8}$/.test(d)){ marca(tel, 'ok'); msg('wMsgTel', 'ok', IC_OK + 'Teléfono válido: <strong>+56 ' + telFormato(d) + '</strong>'); return 'valido'; }
+    if (final || d.length === 9){ marca(tel, 'err'); msg('wMsgTel', 'err', IC_ERR + 'El teléfono chileno lleva 9 dígitos y no empieza con 0 ni 1.'); return 'invalido'; }
+    marca(tel, ''); msg('wMsgTel', '', 'Sigue escribiendo: faltan ' + (9 - d.length) + ' dígito' + (9 - d.length === 1 ? '' : 's') + '.');
+    return 'incompleto';
+  }
+  if (tel){
+    tel.addEventListener('input', function(){ tel.value = telDigitos(tel.value); telRender(false); });
+    tel.addEventListener('blur', function(){ tel.value = telFormato(telDigitos(tel.value)); telRender(true); });
+    if (tel.value){ tel.value = telFormato(telDigitos(tel.value)); }
+    telRender(false);
+  }
+
+  // ── Dirección validada con Google (comuna y ciudad salen de Google) ──
+  var dir = $('wDireccion'), lat = $('wDirLat'), lng = $('wDirLng'), pid = $('wDirPid'), com = $('wComuna'), ciu = $('wCiudad');
+  function tieneGeo(){ return !!(lat.value && lng.value && pid.value); }
+  function dirRender(){
+    if (!dir) return 'vacio';
+    if (!dir.value.trim()){ marca(dir, ''); msg('wMsgDir', '', 'Escribe tu calle y número y elige una sugerencia de la lista de Google.'); return 'vacio'; }
+    if (tieneGeo() && com.value){ marca(dir, 'ok'); msg('wMsgDir', 'ok', IC_OK + 'Dirección verificada con Google Maps.'); return 'verificada'; }
+    marca(dir, 'warn'); msg('wMsgDir', 'warn', IC_WARN + 'Falta elegir una sugerencia de la lista para validar tu dirección.');
+    return 'pendiente';
+  }
+  // La comuna y la ciudad salen de Google con la misma heurística de Nuevo usuario y Mi cuenta (static/ilus_persona_fields.js).
+  function comunaCiudad(comps){ return P && P.comunaCiudad ? P.comunaCiudad(comps) : { comuna: '', ciudad: '' }; }
+  if (dir){
+    var validada = tieneGeo() ? { v: dir.value, la: lat.value, lo: lng.value, p: pid.value, c: com.value, ci: ciu.value } : null;
+    dir.addEventListener('input', function(){
+      if (validada && dir.value === validada.v){ lat.value = validada.la; lng.value = validada.lo; pid.value = validada.p; com.value = validada.c; ciu.value = validada.ci; }
+      else { lat.value = ''; lng.value = ''; pid.value = ''; com.value = ''; ciu.value = ''; }
+      dirRender();
+    });
+    dir.addEventListener('keydown', function(e){ if (e.key === 'Enter') e.preventDefault(); });   // Enter elige la sugerencia; nunca envía el formulario
+    function initGoogle(){
+      if (typeof ilusPlacesAutocomplete !== 'function') return;
+      ilusPlacesAutocomplete('wDireccion', {
+        country: 'cl', types: ['address'],
+        onPlaceSelected: function(place){
+          lat.value = place.lat; lng.value = place.lng; pid.value = place.place_id || '';
+          var cc = comunaCiudad(place.componentes);
+          com.value = cc.comuna; ciu.value = cc.ciudad;
+          validada = { v: dir.value, la: lat.value, lo: lng.value, p: pid.value, c: com.value, ci: ciu.value };
+          dirRender();
+        }
+      });
+    }
+    initGoogle();
+    dirRender();
+  }
+
+  // ── Antes de enviar: nada de ventanas del navegador, el aviso va junto al campo con problema ──
+  var form = dir && dir.form;
+  if (form){
+    form.addEventListener('submit', function(e){
+      var primero = null;
+      function falla(el){ if (!primero) primero = el; }
+      if (!$('wNombre').value.trim()){ marca($('wNombre'), 'err'); falla($('wNombre')); }
+      if (!$('wApellido').value.trim()){ marca($('wApellido'), 'err'); falla($('wApellido')); }
+      if (rutRender(true) !== 'valido') falla(rut);
+      if (telRender(true) !== 'valido') falla(tel);
+      if (dirRender() !== 'verificada') falla(dir);
+      if (!primero) return;
+      e.preventDefault();
+      try { primero.focus(); primero.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(err) {}
+    });
+  }
+})();
 </script>
 
 </body>

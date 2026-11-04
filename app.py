@@ -63,6 +63,7 @@ except ImportError:
 import erp_engine
 import transporte_tarifas as _ttar  # motor de tarifas réplica EXACTA de la macro SPHS
 import usuarios_perfil as _uperf  # datos personales del usuario: fecha de nacimiento y dirección validada con Google
+import usuarios_registro as _uregi  # 2026-11-04: usuario nuevo «en espera» (solo correo y cargo) y su registro (nombre, teléfono chileno): reglas puras con pruebas
 import ot_saldo_servicio as _saldo  # saldo por línea de servicio de cada documento (módulo puro con pruebas)
 import ot_doc_cadena as _cadena  # 2026-10-25: trazabilidad en Random (nota de venta → factura/boleta → guía), sugerencias y alertas: lógica pura con pruebas
 import ot_guia_vs_ot as _gvo  # 2026-10-29: logística (WMS) de cada guía de despacho y «lo que salió» vs «lo que gestiona la OT»: lógica pura con pruebas
@@ -11560,46 +11561,86 @@ def welcome_activate(token):
 
     marca = _get_marca()
 
+    # 🕓 2026-11-04 (Daniel: «él debe rellenar su RUT, nombre y apellido, su dirección y su teléfono con formato chileno · estará stand by si
+    # no se registra»): el usuario nuevo completa SU registro acá. Lo que ya existía (RUT, dirección y comuna, 2026-09-24, Ley 21.719) se
+    # endurece —RUT con dígito verificador, dirección validada con Google— y se suman nombre, apellido y teléfono. Al terminar, la cuenta
+    # «en espera» (inactiva, sin clave y sin haber entrado nunca) se activa sola. Cada quien declara sus propios datos: nadie los tipea por otra persona.
+    _ufila = mysql_fetchone(
+        f"SELECT username, nombre, phone, active, requires_password_change, last_login_at, fecha_nac "
+        f"FROM `{AUTH_TABLE}` WHERE id=%s", (row["user_id"],)) or {}
+    _en_espera = _uregi.esta_en_espera(_ufila)
+    if _uregi.nombre_es_provisional(_ufila.get("nombre"), row["username"]):
+        _n0, _a0 = "", ""
+    else:
+        _n0, _a0 = _uregi.separar_nombre(_ufila.get("nombre"))
+    _tel0 = _uregi.telefono_para_formulario(_ufila.get("phone"))
+
+    def _form_welcome(**datos):
+        base = {"nombre_in": _n0, "apellido_in": _a0, "phone_in": _tel0, "rut": "", "direccion": "", "comuna": "", "ciudad": "",
+                "direccion_lat": "", "direccion_lng": "", "direccion_place_id": ""}
+        base.update(datos)
+        return render_template("welcome.html", token=token, nombre=(_n0 or ""), email=row["username"], marca=marca,
+                               en_espera=_en_espera, **base)
+
     if request.method == "POST":
         pw1 = request.form.get("password", "")
         pw2 = request.form.get("password2", "")
-        # 🔧 2026-09-24 (Daniel: "cuando el usuario se meta el debe completar
-        # con sus propios datos... rut, direccion" -- Ley 21.719): se agrega
-        # ACÁ, en la activación de cuenta NUEVA, no en /auth/restablecer
-        # (esa es la de "olvidé mi clave" de cuentas YA existentes -- REGLA
-        # de alcance de Daniel: "solo usuarios nuevos, desde ahora"). Cada
-        # quien declara sus propios datos -- minimización de datos, nadie
-        # los tipea por otra persona.
+        nombre_in = request.form.get("nombre", "")
+        apellido_in = request.form.get("apellido", "")
+        phone_in = request.form.get("phone", "")
         rut_raw = request.form.get("rut", "")
         direccion = (request.form.get("direccion") or "").strip()[:300]
         comuna = (request.form.get("comuna") or "").strip()[:100]
-        rut_ok, rut_val = validar_rut(rut_raw)
+        ciudad = (request.form.get("ciudad") or "").strip()[:100] or None
+        lat_in = request.form.get("direccion_lat", "")
+        lng_in = request.form.get("direccion_lng", "")
+        pid_in = request.form.get("direccion_place_id", "")
+        eco = dict(nombre_in=nombre_in, apellido_in=apellido_in, phone_in=phone_in, rut=rut_raw, direccion=direccion,
+                   comuna=comuna, ciudad=ciudad or "", direccion_lat=lat_in, direccion_lng=lng_in, direccion_place_id=pid_in)
+
+        problemas = []
+        ok_n, nombre_val = _uregi.validar_parte_nombre(nombre_in, "Tu nombre")
+        if not ok_n:
+            problemas.append(nombre_val)
+        ok_a, apellido_val = _uregi.validar_parte_nombre(apellido_in, "Tu apellido")
+        if not ok_a:
+            problemas.append(apellido_val)
+        ok_t, tel_val = _uregi.telefono_cl(phone_in)
+        if not ok_t:
+            problemas.append(tel_val)
+        if not (rut_raw or "").strip():
+            problemas.append("Tu RUT es obligatorio.")
+            rut_val = None
+        else:
+            ok_r, rut_val = _validar_rut_usuario(rut_raw, excluir_id=row["user_id"])
+            if not ok_r:
+                problemas.append(rut_val)
+                rut_val = None
+        ok_d, dir_val = _uperf.resolver_direccion(direccion, lat_in, lng_in, pid_in)
+        if not ok_d:
+            problemas.append(dir_val)
+        elif dir_val["accion"] != "guardar":
+            problemas.append("Tu dirección es obligatoria: escríbela y elige una sugerencia de la lista de Google.")
+        elif not comuna:
+            problemas.append("No pudimos leer la comuna de esa dirección. Elige otra sugerencia de la lista.")
         if pw1 != pw2:
-            flash("Las contraseñas no coinciden.", "danger")
-            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca,
-                                    rut=rut_raw, direccion=direccion, comuna=comuna)
-
-        strength_errors = _password_strength_errors(pw1)
-        if strength_errors:
-            flash(" ".join(strength_errors), "danger")
-            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca,
-                                    rut=rut_raw, direccion=direccion, comuna=comuna)
-
-        if not rut_ok:
-            flash(f"RUT inválido: {rut_val}", "danger")
-            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca,
-                                    rut=rut_raw, direccion=direccion, comuna=comuna)
-        if not direccion or not comuna:
-            flash("Tu dirección y comuna son obligatorias.", "danger")
-            return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca,
-                                    rut=rut_raw, direccion=direccion, comuna=comuna)
+            problemas.append("Las contraseñas no coinciden.")
+        problemas += _password_strength_errors(pw1) if pw1 == pw2 else []
+        if problemas:
+            for p in problemas:
+                flash(p, "danger")
+            return _form_welcome(**eco)
 
         new_hash = generate_password_hash(pw1)
         with conn.cursor() as cur:
             cur.execute(
-                f"UPDATE `{AUTH_TABLE}` SET password_hash=%s, rut=%s, direccion=%s, comuna=%s WHERE id=%s",
-                (new_hash, rut_val, direccion, comuna, row["user_id"])
+                f"UPDATE `{AUTH_TABLE}` SET password_hash=%s, nombre=%s, phone=%s WHERE id=%s",
+                (new_hash, _uregi.armar_nombre(nombre_val, apellido_val), tel_val, row["user_id"])
             )
+            # RUT + dirección (con su ubicación validada). La fecha de nacimiento no se pide acá: se conserva la que ya tuviera.
+            _guardar_perfil_usuario(cur, "id", row["user_id"], rut_val, _ufila.get("fecha_nac"), dir_val, comuna, ciudad)
+            if _en_espera:
+                cur.execute(f"UPDATE `{AUTH_TABLE}` SET active=1 WHERE id=%s", (row["user_id"],))
             cur.execute(
                 f"UPDATE `{RESETS_TABLE}` SET used=1 WHERE token=%s",
                 (token,)
@@ -11616,12 +11657,12 @@ def welcome_activate(token):
 
         _audit("user_welcome_activate",
                target_type="user", target_id=row["user_id"],
-               details={"username": row["username"]},
+               details={"username": row["username"], "estaba_en_espera": bool(_en_espera)},
                user_override={"id": row["user_id"], "username": row["username"], "role": None})
-        flash(f"¡Cuenta activada! Bienvenido, {row['nombre']}. Ya puedes iniciar sesión.", "success")
+        flash(f"¡Cuenta activada! Bienvenido, {_uregi.armar_nombre(nombre_val, apellido_val)}. Ya puedes iniciar sesión.", "success")
         return redirect(url_for("login"))
 
-    return render_template("welcome.html", token=token, nombre=row["nombre"], email=row["username"], marca=marca)
+    return _form_welcome()
 
 
 # ── PERFIL DE USUARIO (autogestión) ─────────────────────────────────────
@@ -14079,6 +14120,16 @@ def new_user():
         manual_password = request.form.get("manual_password", "")
         is_superadmin = bool(g.permissions.get("superadmin")) if getattr(g, "permissions", None) else False
 
+        # 🕓 2026-11-04 (Daniel: «para crear un usuario nuevo solo necesito su correo y su cargo; él debe rellenar su RUT, nombre y apellido,
+        # su dirección y su teléfono con formato chileno… estará stand by si no se registra»): el alta por defecto es la INVITACIÓN RÁPIDA —
+        # solo correo y cargo (el rol). El usuario nace «en espera» (inactivo, sin clave, sin haber entrado) y se activa solo cuando completa
+        # su registro en /welcome/<token>. El formulario completo de siempre sigue disponible (modo=completo), sin quitar nada (REGLA #4.2).
+        rapido = request.form.get("modo", "invitar") != "completo"
+        if rapido:
+            nombre = _uregi.nombre_provisional(username)
+            phone, wa_number, manual_password = "", "", ""
+            active, send_invite = 0, True
+
         errors = []
         if not username:
             errors.append("El correo es requerido.")
@@ -14101,19 +14152,25 @@ def new_user():
         if get_auth_user_by_username(username):
             errors.append("Ese correo ya está registrado.")
 
-        ok_rut, rut_val = _validar_rut_usuario(request.form.get("rut", ""))
-        if not ok_rut:
-            errors.append(rut_val)
-        ok_fn, fecha_nac_val = _uperf.validar_fecha_nacimiento(request.form.get("fecha_nac", ""))
-        if not ok_fn:
-            errors.append(fecha_nac_val)
-        ok_dir, dir_val = _uperf.resolver_direccion(
-            request.form.get("direccion", ""), request.form.get("direccion_lat", ""),
-            request.form.get("direccion_lng", ""), request.form.get("direccion_place_id", ""))
-        if not ok_dir:
-            errors.append(dir_val)
-        comuna = (request.form.get("comuna", "").strip()[:100]) or None
-        ciudad = (request.form.get("ciudad", "").strip()[:100]) or None
+        if rapido:
+            # Invitación rápida: RUT, dirección y demás los declara la propia persona al registrarse (nadie los tipea por ella).
+            rut_val, fecha_nac_val = None, None
+            dir_val = {"accion": "limpiar", "direccion": None, "lat": None, "lng": None, "place_id": None}
+            comuna = ciudad = None
+        else:
+            ok_rut, rut_val = _validar_rut_usuario(request.form.get("rut", ""))
+            if not ok_rut:
+                errors.append(rut_val)
+            ok_fn, fecha_nac_val = _uperf.validar_fecha_nacimiento(request.form.get("fecha_nac", ""))
+            if not ok_fn:
+                errors.append(fecha_nac_val)
+            ok_dir, dir_val = _uperf.resolver_direccion(
+                request.form.get("direccion", ""), request.form.get("direccion_lat", ""),
+                request.form.get("direccion_lng", ""), request.form.get("direccion_place_id", ""))
+            if not ok_dir:
+                errors.append(dir_val)
+            comuna = (request.form.get("comuna", "").strip()[:100]) or None
+            ciudad = (request.form.get("ciudad", "").strip()[:100]) or None
 
         if errors:
             return render_template("user_form.html", errors=errors, user=None, fd=request.form,
@@ -14180,7 +14237,11 @@ def new_user():
                             print(f"[new_user/bg-notify] fail: {_se}", flush=True)
                 threading.Thread(target=_send_bg, daemon=True).start()
                 ch = "email + WhatsApp" if snap_phone else "email"
-                flash(f"✅ Usuario creado. Invitación enviada por {ch} a {username} en segundo plano.", "success")
+                if rapido:
+                    flash(f"✅ Invitación enviada a {username}. Queda «en espera» y se activa sola cuando complete su registro "
+                          f"(nombre, RUT, teléfono y dirección). Si no le llega, usa «Reenviar invitación» desde la lista.", "success")
+                else:
+                    flash(f"✅ Usuario creado. Invitación enviada por {ch} a {username} en segundo plano.", "success")
             except Exception as _ie:
                 flash(f"Usuario creado, pero falló el envío de invitación: {_ie}", "warning")
         else:
@@ -14330,8 +14391,16 @@ def invite_user(user_id):
     if not user:
         return jsonify({"error": "Usuario no encontrado"}), 404
     try:
-        token, _expires = _issue_password_token(user_id, minutes=1440)
-        set_url = url_for("reset_password", token=token, _external=True)
+        # 🕓 2026-11-04: un usuario «en espera» (nunca completó su registro) recibe el enlace de REGISTRO (/welcome, 7 días), no el de
+        # cambio de clave: tiene que poner sus datos además de la contraseña.
+        _fila_espera = mysql_fetchone(
+            f"SELECT active, requires_password_change, last_login_at FROM `{AUTH_TABLE}` WHERE id=%s", (user_id,))
+        if _uregi.esta_en_espera(_fila_espera):
+            token, _expires = _issue_password_token(user_id, minutes=10080)
+            set_url = url_for("welcome_activate", token=token, _external=True)
+        else:
+            token, _expires = _issue_password_token(user_id, minutes=1440)
+            set_url = url_for("reset_password", token=token, _external=True)
         result = _notify_user_access(user["username"], user["nombre"], user.get("phone") or "", mode="token", action_url=set_url)
         if result.get("email") or result.get("whatsapp"):
             msg, _level = _access_notification_flash(result, token_mode=True)

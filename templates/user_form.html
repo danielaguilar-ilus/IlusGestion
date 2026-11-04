@@ -127,6 +127,45 @@
 
 <form method="post" novalidate>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if not user %}
+  {#- 🕓 2026-11-04 (Daniel: «para crear un usuario nuevo solo necesito su correo y su cargo; él debe rellenar su RUT, nombre y apellido, su
+      dirección y su teléfono con formato chileno · estará stand by si no se registra»). Por defecto el alta es una INVITACIÓN RÁPIDA: correo y
+      cargo (el rol). El usuario queda «en espera» y se activa solo cuando completa su registro. El formulario completo de siempre sigue aquí
+      (REGLA #4.2: nada se quita); lo que hace el modo rápido es esconder lo que la persona declara por sí misma. -#}
+  {% set _modo = (fd.get('modo', 'invitar') if fd else 'invitar') %}
+  <input type="hidden" name="modo" id="ufModo" value="{{ 'completo' if _modo == 'completo' else 'invitar' }}">
+  <style>
+    .uf-rapido .uf-solo-completo{display:none !important}
+    body:not(.uf-rapido) .uf-solo-rapido{display:none !important}
+    .uf-lbl-rapido{display:none}
+    .uf-rapido .uf-lbl-rapido{display:inline}
+    .uf-rapido .uf-lbl-completo{display:none}
+    .uf-modo-card{border-left:4px solid var(--ilus-red)}
+    .uf-modo-card .uf-modo-hint{font-size:.9rem;line-height:1.5;color:#374151}
+    .uf-modo-card .uf-modo-hint b{color:#0a0a0a}
+    .uf-modo-link{background:none;border:0;padding:0;color:#374151;text-decoration:underline;font-size:.85rem;font-weight:600;min-height:44px}
+    .uf-modo-link:hover{color:var(--ilus-red)}
+  </style>
+  <div class="ilus-card mb-3 uf-modo-card">
+    <div class="card-body p-3 d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2">
+      <div class="uf-modo-hint">
+        <div class="uf-solo-rapido">
+          <i class="bi bi-envelope-paper-heart-fill me-2" style="color:var(--ilus-red)"></i><b>Invitación rápida:</b>
+          solo necesitas el <b>correo</b> y el <b>cargo</b>. La persona queda <b>en espera</b> y se activa sola cuando completa su registro
+          (nombre y apellido, RUT, teléfono y dirección).
+        </div>
+        <div class="uf-solo-completo">
+          <i class="bi bi-person-vcard-fill me-2" style="color:var(--ilus-red)"></i><b>Formulario completo:</b>
+          tú ingresas todos los datos del usuario.
+        </div>
+      </div>
+      <button type="button" class="uf-modo-link text-md-end" id="ufModoBtn" onclick="ufSetModo(document.body.classList.contains('uf-rapido') ? 'completo' : 'invitar')">
+        <span class="uf-solo-rapido">Prefiero completar todos los datos yo mismo (avanzado)</span>
+        <span class="uf-solo-completo">Volver a la invitación rápida</span>
+      </button>
+    </div>
+  </div>
+  {% endif %}
   <div class="ilus-card mb-3">
     <div class="ilus-card-header">
       <span><i class="bi bi-person-vcard me-2"></i>Datos del usuario</span>
@@ -154,7 +193,7 @@
           <div class="form-text">Se usa para iniciar sesion</div>
         </div>
 
-        <div class="col-md-6">
+        <div class="col-md-6 uf-solo-completo">
           <div class="uf-step-head">
             <span class="uf-step-circle" id="ufCircle-nombre">
               <span class="uf-step-num">2</span>
@@ -170,7 +209,7 @@
                  required>
         </div>
 
-        <div class="col-md-6">
+        <div class="col-md-6 uf-solo-completo">
           <div class="uf-step-head">
             <span class="uf-step-circle is-optional" id="ufCircle-phone">
               <span class="uf-step-num">3</span>
@@ -258,7 +297,7 @@
         {% endif %}
 
         {% if permissions.superadmin %}
-        <div class="col-12">
+        <div class="col-12 uf-solo-completo">
           <div class="p-3 rounded" style="background:#fff8f8;border:1px solid #f0c2c2;border-left:4px solid var(--ilus-red)">
             <label class="form-label fw-semibold small mb-1">
               <i class="bi bi-key-fill me-1 text-danger"></i>
@@ -288,7 +327,7 @@
                 <span class="uf-step-check"><i class="bi bi-check-lg"></i></span>
               </span>
               <label class="form-label fw-semibold small" for="userRoleSelect">
-                Rol
+                <span class="uf-lbl-completo">Rol</span><span class="uf-lbl-rapido">Cargo (rol del sistema)</span>
                 <a href="{{ url_for('admin_roles') }}" class="ms-1 small text-muted text-decoration-none"
                    title="Crear o editar roles">
                   <i class="bi bi-gear"></i>
@@ -318,7 +357,7 @@
           </div>
         </div>
 
-        <div class="col-md-4">
+        <div class="col-md-4 uf-solo-completo">
           <label class="form-label fw-semibold small">Estado</label>
           {% set active_val = (fd.active or (1 if user and user.active else 0)) if user else fd.get('active','1') %}
           <select name="active" class="form-select">
@@ -336,7 +375,7 @@
      chileno, hay que validar la dirección y la fecha de nacimiento con formato semáforo".
      Los tres son opcionales: vacíos nunca bloquean el alta, pero si traen datos tienen
      que estar correctos (el servidor lo vuelve a validar). #}
-  <div class="ilus-card mb-3">
+  <div class="ilus-card mb-3 uf-solo-completo">
     <div class="ilus-card-header">
       <span><i class="bi bi-person-lines-fill me-2"></i>Datos personales <span class="text-muted fw-normal small">(opcionales)</span></span>
     </div>
@@ -413,7 +452,7 @@
   </div>
 
   {% if not user %}
-  <div class="ilus-card mb-3" style="border-left:4px solid var(--ilus-red)">
+  <div class="ilus-card mb-3 uf-solo-completo" style="border-left:4px solid var(--ilus-red)">
     <div class="ilus-card-header">
       <span><i class="bi bi-envelope-paper me-2 text-danger"></i>Invitacion y acceso</span>
     </div>
@@ -464,7 +503,7 @@
     <a href="{{ url_for('users_index') }}" class="btn btn-outline-secondary px-4">Cancelar</a>
     <button type="submit" class="btn btn-ilus px-5 fw-bold">
       <i class="bi bi-{% if user %}floppy2{% else %}envelope-check{% endif %} me-1"></i>
-      {% if user %}Guardar cambios{% else %}Crear usuario y enviar correo de clave{% endif %}
+      {% if user %}Guardar cambios{% else %}<span class="uf-solo-rapido">Enviar invitación</span><span class="uf-solo-completo">Crear usuario y enviar correo de clave</span>{% endif %}
     </button>
   </div>
 </form>
@@ -472,6 +511,23 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='ilus_persona_fields.js') }}"></script>
+{% if not user %}
+<script>
+/* 🕓 2026-11-04: Invitación rápida (solo correo y cargo) ↔ formulario completo. Todo lo demás lo esconde el CSS con body.uf-rapido. */
+function ufSetModo(m){
+  var rapido = (m !== 'completo');
+  document.body.classList.toggle('uf-rapido', rapido);
+  var h = document.getElementById('ufModo'); if (h) h.value = rapido ? 'invitar' : 'completo';
+  // En la invitación rápida solo quedan el correo (1) y el cargo (2): la numeración de los pasos sigue ese orden.
+  var c = document.getElementById('ufCircle-role'), s = c && c.querySelector('.uf-step-num');
+  if (s) s.textContent = rapido ? '2' : '4';
+}
+document.addEventListener('DOMContentLoaded', function(){
+  var h = document.getElementById('ufModo');
+  ufSetModo(h && h.value === 'completo' ? 'completo' : 'invitar');
+});
+</script>
+{% endif %}
 <script>
 function toggleInviteOptions() {
   var check = document.getElementById('sendInviteCheck');
