@@ -441,10 +441,35 @@
     .sheet-pad { padding-left: 4mm; padding-right: 4mm; }
     .toolbar { padding: 10px 12px; }
     .toolbar .tb-title { font-size: 11pt; overflow-wrap: anywhere; }
+
+    /* 2026-11-05 (auditoría, medido EN PRODUCCIÓN a 390 px): la tabla de ítems medía 417 px en una hoja de 369 y la página tenía scroll de lado
+       (≈ 45 px), con letra de 9 a 11 px. En pantalla chica cada ítem pasa a una tarjeta de 2 líneas: la descripción completa y, debajo, el
+       documento, la cantidad, el precio en UF y el total, con letra de 12-13 px. Nada se quita: los mismos datos, reacomodados.
+       SOLO el visor (body.es-visor) y solo bajo 768 px: el PDF de Playwright y la impresión (hoja de 794 px) no usan estas reglas. */
+    body.es-visor table.items { display: block; width: auto; }
+    body.es-visor table.items thead, body.es-visor table.items tbody { display: block; }
+    body.es-visor table.items thead tr.label-row, body.es-visor table.items thead tr.label-row th { display: block; width: auto; }
+    body.es-visor table.items thead tr.label-row .lr-flex { flex-wrap: wrap; gap: 2px 12px; }
+    body.es-visor table.items thead tr.label-row .lr-sub { white-space: normal; }
+    body.es-visor table.items thead tr.col-row { display: none; }
+    body.es-visor table.items tbody tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 10px; padding: 9px 8px; border-bottom: 1px solid var(--ilus-line); }
+    body.es-visor table.items tbody tr::after { content: ""; order: 3; flex: 0 0 22px; }
+    body.es-visor table.items tbody td { display: block; border: 0; padding: 0; font-size: 12px; line-height: 1.35; }
+    body.es-visor table.items tbody td.num, body.es-visor table.items tbody td.doc, body.es-visor table.items tbody td.cant,
+    body.es-visor table.items tbody td.puf, body.es-visor table.items tbody td.tot { width: auto; }
+    body.es-visor table.items tbody td.num { order: 1; flex: 0 0 22px; font-weight: 700; }
+    body.es-visor table.items tbody td:not([class]) { order: 2; flex: 1 1 calc(100% - 40px); min-width: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+    body.es-visor table.items tbody td.doc { order: 4; white-space: normal; }
+    body.es-visor table.items tbody td.doc .doc-tido { display: inline; margin-right: 4px; font-size: 12px; }
+    body.es-visor table.items tbody td.cant { order: 5; text-align: left; }
+    body.es-visor table.items tbody td.cant::before { content: "Cant. "; color: var(--ilus-mute); }
+    body.es-visor table.items tbody td.puf { order: 6; text-align: left; }
+    body.es-visor table.items tbody td.puf::before { content: "UF "; }
+    body.es-visor table.items tbody td.tot { order: 7; margin-left: auto; font-size: 13px; }
   }
 </style>
 </head>
-<body>
+<body class="{% if modo_visor %}es-visor{% endif %}">
 
 {# Formato chileno de pesos: $1.234.567 — seguro con None #}
 {% macro clp(x) -%}{{ "{:,.0f}".format(x or 0)|replace(",", ".") }}{%- endmacro %}
