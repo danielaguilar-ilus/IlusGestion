@@ -312,6 +312,8 @@
 .o2m-op .ic{font-size:1.53rem;color:var(--ilus-red,#dc2626);display:block;margin-bottom:6px}
 .o2m-op .n{font-weight:800;font-size:1.03rem;color:#0a0a0a;display:block}
 .o2m-op .l{font-size:0.85rem;color:#6b7280;line-height:1.35;display:block;margin-top:3px}
+/* 🚚 2026-11-04: paso «Vehículo» — las tarjetas se acomodan solas (1 columna en el celular, varias en pantalla ancha) y el texto va completo (REGLA #15). */
+.o2m-veh-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:0 0 .75rem}
 /* ✏️ 2026-10-18 (Daniel: «lo creé y no se edita?»): lápiz para editar un
    tipo de trabajo interno sin salir del asistente. */
 .o2m-op-wrap{position:relative;display:flex}
@@ -1786,6 +1788,12 @@ window.OT2C = (function(){
          // existe y la OT se crea como siempre. `manual` = la persona eligió a mano (la sugerencia ya no la pisa).
          resp:{id:null, nombre:'', origen:'', manual:false, hay:null, cargado:false, cargando:false, error:false,
                candidatos:[], sugerido:null, clienteKey:null},
+         // 🚚 2026-11-04 (Daniel: «cuando se seleccionen los técnicos internos… que pueda dejar agendada la solicitud del camión y/o el furgón»):
+         // vehículo opcional de la OT. `vehiculo_id` null = «Sin vehículo». `chofer_id` es el de flota_choferes (quien retira la llave: uno de los
+         // técnicos internos ya enrolados). `desde`/`hasta` siguen la hora de la OT mientras la persona no las cambie (`manualHora`). `data` = lo que
+         // dijo el servidor de la disponibilidad (solo lee). Viaja en crear() como `vehiculo`; el servidor lo revalida todo.
+         veh:{vehiculo_id:null, chofer_id:null, usuario_id:null, desde:'', hasta:'', manualHora:false, manualChofer:false,
+              data:null, cargando:false, error:false, aviso:''},
          // 🩺 2026-10-21 (REGLA #38, Daniel: «que la OT avise para que se tome el caso y se levante una acción que debería ser otra OT»):
          // esta OT es el SEGUIMIENTO de hallazgos de otra OT. Llega de la tarjeta «Hallazgos de esta OT» (OT2C.abrirDesdeHallazgos): el cliente, los
          // equipos, el tipo correctiva, el título y el motivo ya vienen escritos (la persona decide qué queda, REGLA #32) y las fotos del hallazgo
@@ -2059,6 +2067,9 @@ window.OT2C = (function(){
     // tenga sentido desde el primer vistazo al calendario.
     p.push({k:'tecnicos',n:'Técnicos'});
     p.push({k:'agenda',  n:'Agenda'});
+    // 🚚 2026-11-04 (Daniel): con al menos un técnico INTERNO elegido, la OT puede dejar agendado el furgón o el camión. Va después de la Agenda
+    // porque necesita el día y la hora; es opcional (nunca bloquea) y existe solo mientras haya un técnico interno marcado.
+    if (_o2mVehAplica()) p.push({k:'vehiculo', n:'Vehículo'});
     // 28-08-2026: "Evidencia" pasó a "Trabajo" para revision_interna --
     // desde que esta sección también elige el checklist (no solo sube
     // fotos), la etiqueta vieja quedaba corta. Con eso los 3 tipos de
@@ -2285,6 +2296,8 @@ window.OT2C = (function(){
       // 🧩 2026-10-20: verde con «No», con «Por definir» + fecha válida, o con
       // «Sí» + fecha, horario, técnico, costo, cobro (si hay saldo) y checklist por equipo, todo revisado por el servidor.
       case 'desinst':  return _diCompleto();
+      // 🚚 2026-11-04: opcional. Verde con «Sin vehículo»; con un vehículo elegido exige quién maneja y un horario válido.
+      case 'vehiculo': return !S.veh.vehiculo_id || !!(S.veh.chofer_id && S.veh.desde && S.veh.hasta && S.veh.desde < S.veh.hasta);
       default: return false;
     }
   }
@@ -2604,6 +2617,7 @@ window.OT2C = (function(){
       if (p.k==='contraparte') pintarContraparte(b);
       if (p.k==='agenda')   pintarAgenda(b);
       if (p.k==='tecnicos') pintarTecnicos(b);
+      if (p.k==='vehiculo') pintarVehiculo(b);   // 🚚 2026-11-04
       if (p.k==='equipos')  pintarEquipos(b);
       if (p.k==='acceso')   pintarAcceso(b);
       if (p.k==='finanzas') pintarFinanzas(b);
@@ -2634,6 +2648,7 @@ window.OT2C = (function(){
       if (k==='contraparte') pintarContraparte(b);
       if (k==='agenda')   pintarAgenda(b);
       if (k==='tecnicos') pintarTecnicos(b);
+      if (k==='vehiculo') pintarVehiculo(b);   // 🚚 2026-11-04
       if (k==='equipos')  pintarEquipos(b);
       if (k==='acceso')   pintarAcceso(b);
       if (k==='finanzas') pintarFinanzas(b);
@@ -4197,6 +4212,7 @@ window.OT2C = (function(){
   function o2mChequearChoqueDebounced(){
     if (_o2mChoqueTimer) clearTimeout(_o2mChoqueTimer);
     _o2mChoqueTimer = setTimeout(o2mChequearChoque, 500);
+    _o2mVehCargarDebounced();     // 🚚 2026-11-04: cambió el día, la hora o los técnicos → se vuelve a mirar qué vehículos están libres
   }
   function o2mChequearChoque(){
     var warn = document.getElementById('o2mChoqueWarn');
@@ -4560,6 +4576,172 @@ window.OT2C = (function(){
     repintarSeccion('responsable');
   }
 
+  /* ── VEHÍCULO (2026-11-04) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     Daniel: «cuando se seleccionen los técnicos internos al crear una OT nueva, que pueda dejar agendada la solicitud del camión y/o el
+     furgón, para que sea más automático con nosotros». Paso OPCIONAL (nunca bloquea) que aparece mientras haya un técnico INTERNO marcado.
+     Lo que se ve elegido es lo que se reserva (REGLA #32): el sistema solo SUGIERE quién maneja (el líder de la OT si puede) y la persona decide.
+     La disponibilidad la dice el servidor (GET /ot/api/flota/disponibilidad: solo lee); la reserva real ocurre al crear la OT, con las mismas
+     reglas y el mismo sello que Solicitudes de vehículo. Si el vehículo ya no está libre en ese momento, la OT se crea igual y se avisa. */
+  var _o2mVehToken = 0, _o2mVehTimer = null;
+  function _o2mTecInterno(t){ return !!t && !t.empresa_id && !t.es_externo; }
+  function _o2mVehTecIds(){
+    return (cacheTec || []).filter(function(t){ return S.tecnicos.indexOf(t.id) >= 0 && _o2mTecInterno(t); }).map(function(t){ return t.id; });
+  }
+  function _o2mVehAplica(){ return _o2mVehTecIds().length > 0; }
+  function _o2mVehSync(){          // la hora del vehículo sigue la de la OT mientras la persona no la haya cambiado
+    var V = S.veh;
+    if (!V.manualHora){ V.desde = S.hini || ''; V.hasta = S.hfin || ''; }
+    return V;
+  }
+  function _o2mVehPorId(id){
+    var d = S.veh.data;
+    return d ? (d.vehiculos || []).filter(function(v){ return v.id === id; })[0] || null : null;
+  }
+  function _o2mVehElegible(ch, vid){
+    var x = ch && ch.enrolado && ch.por_vehiculo ? ch.por_vehiculo[String(vid)] : null;
+    return !!(x && x.ok);
+  }
+  /* Quién maneja: si el que estaba elegido sigue pudiendo, se queda; si no, se SUGIERE el líder de la OT (si puede) y, si no, el primero que pueda. */
+  function _o2mVehAuto(){
+    var V = S.veh, d = V.data;
+    if (!V.vehiculo_id || !d) return;
+    var v = _o2mVehPorId(V.vehiculo_id);
+    if (!v || !v.libre){
+      V.aviso = (v ? v.titulo : 'El vehículo') + ' ya no está libre en este horario: elige otro o marca «Sin vehículo».';
+      V.vehiculo_id = null; V.chofer_id = null; V.usuario_id = null; V.manualChofer = false;
+      return;
+    }
+    var chs = d.choferes || [];
+    var actual = chs.filter(function(c){ return c.chofer_id && c.chofer_id === V.chofer_id; })[0];
+    if (actual && _o2mVehElegible(actual, V.vehiculo_id)){ V.usuario_id = actual.usuario_id; return; }
+    V.manualChofer = false;
+    var pick = chs.filter(function(c){ return c.usuario_id === S.lider && _o2mVehElegible(c, V.vehiculo_id); })[0]
+            || chs.filter(function(c){ return _o2mVehElegible(c, V.vehiculo_id); })[0] || null;
+    V.chofer_id = pick ? pick.chofer_id : null;
+    V.usuario_id = pick ? pick.usuario_id : null;
+  }
+  function _o2mVehCargar(){
+    if (!document.getElementById('o2mVehCuerpo')) return;
+    var V = _o2mVehSync(), ids = _o2mVehTecIds();
+    if (!ids.length) return;
+    if (!S.fecha){ V.data = null; V.cargando = false; _o2mVehPintar(); return; }
+    var tok = ++_o2mVehToken;
+    V.cargando = true; V.error = false; _o2mVehPintar();
+    var url = '/ot/api/flota/disponibilidad?fecha=' + encodeURIComponent(S.fecha) + '&desde=' + encodeURIComponent(V.desde || '') +
+      '&hasta=' + encodeURIComponent(V.hasta || '') + '&tecnicos=' + ids.join(',');
+    fetch(url, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(j){
+      if (tok !== _o2mVehToken) return;       // llegó tarde: ya cambió el día, la hora o los técnicos
+      V.cargando = false;
+      if (!j || !j.ok){ V.error = true; V.data = null; }
+      else { V.data = j; _o2mVehAuto(); }
+      _o2mVehPintar(); refrescarAnclas();
+      if (V.aviso && window.ilusToast){ ilusToast(V.aviso, {type:'warning', duration:9000}); V.aviso = ''; }
+    }).catch(function(){
+      if (tok !== _o2mVehToken) return;
+      V.cargando = false; V.error = true; _o2mVehPintar();
+    });
+  }
+  function _o2mVehCargarDebounced(){
+    if (!document.getElementById('o2mVehCuerpo')) return;
+    if (_o2mVehTimer) clearTimeout(_o2mVehTimer);
+    _o2mVehTimer = setTimeout(_o2mVehCargar, 450);
+  }
+  function pintarVehiculo(b){
+    b.innerHTML = '<h6 class="t">Vehículo para esta OT</h6>'+
+      '<p class="d">¿Los técnicos necesitan el <strong>furgón</strong> o el <strong>camión</strong>? Déjalo agendado aquí y no tendrán que pedirlo aparte. '+
+      '<strong>Es opcional:</strong> si no lo necesitan, deja «Sin vehículo».</p>'+
+      '<div id="o2mVehCuerpo"></div>';
+    _o2mVehPintar();
+    _o2mVehCargar();
+  }
+  function _o2mVehPintar(){
+    var c = document.getElementById('o2mVehCuerpo'); if (!c) return;
+    var V = S.veh, d = V.data, h = '';
+    var nota = function(t, tono){
+      return '<div style="font-size:.9rem;color:'+(tono || '#6b7280')+';padding:.5rem 0">'+t+'</div>';
+    };
+    if (!S.fecha){ c.innerHTML = nota('Elige el día y la hora en «Agenda» para ver qué vehículos están libres.'); return; }
+    if (V.cargando && !d){ c.innerHTML = nota('<i class="bi bi-hourglass-split me-1"></i>Revisando qué vehículos están libres…'); return; }
+    if (V.error && !d){
+      c.innerHTML = nota('<i class="bi bi-exclamation-triangle-fill me-1"></i>No se pudo revisar la disponibilidad. Puedes crear la OT sin vehículo y pedirlo después desde Solicitudes de vehículo.', '#92400e');
+      return;
+    }
+    if (!d){ c.innerHTML = ''; return; }
+    var ops = '<button type="button" class="o2m-op'+(!V.vehiculo_id ? ' sel-ok' : '')+'" onclick="OT2C.vehSel(0)">'+
+      '<span class="n">'+(!V.vehiculo_id ? '<i class="bi bi-check-circle-fill me-1"></i>' : '')+'Sin vehículo</span>'+
+      '<span class="l">No lo necesitan o van por su cuenta.</span></button>';
+    (d.vehiculos || []).forEach(function(v){
+      var sel = V.vehiculo_id === v.id, off = !v.libre;
+      ops += '<button type="button" class="o2m-op'+(sel ? ' sel-ok' : '')+(off ? ' disabled' : '')+'"'+
+        (off ? ' style="opacity:.7;cursor:not-allowed" aria-disabled="true"' : '')+' onclick="OT2C.vehSel('+v.id+')">'+
+        '<span class="n">'+(sel ? '<i class="bi bi-check-circle-fill me-1"></i>' : '<i class="bi bi-truck me-1"></i>')+esc(v.titulo)+'</span>'+
+        '<span class="l">'+esc(v.marca_modelo || '')+((v.licencia_exigida || []).length ? ' · Licencia clase '+esc(v.licencia_exigida.join(' o ')) : '')+'</span>'+
+        '<span class="l" style="font-weight:700;color:'+(v.libre ? '#166534' : '#92400e')+'">'+
+        (v.libre ? (d.horario_ok ? 'Libre en este horario' : 'Disponible') : esc(v.motivo || 'No disponible'))+'</span></button>';
+    });
+    h += '<div class="o2m-veh-grid">'+ops+'</div>';
+    if (!d.horario_ok) h += nota('Completa la hora de inicio y término en «Agenda» para confirmar que el vehículo está libre.', '#92400e');
+    (d.avisos || []).forEach(function(a){ h += nota('<i class="bi bi-exclamation-triangle-fill me-1"></i>'+esc(a), '#92400e'); });
+    if (V.vehiculo_id){
+      var chs = d.choferes || [], algunoPuede = chs.some(function(x){ return _o2mVehElegible(x, V.vehiculo_id); });
+      h += '<div class="fl" style="margin-top:.25rem">¿Quién maneja? <span style="font-weight:400;color:#6b7280">Solo pueden manejar los técnicos enrolados como choferes.</span></div>';
+      var cops = chs.map(function(c){
+        var ok = _o2mVehElegible(c, V.vehiculo_id), sel = ok && V.chofer_id === c.chofer_id;
+        var x = c.por_vehiculo ? c.por_vehiculo[String(V.vehiculo_id)] : null;
+        var linea = ok ? ('Enrolado · puede manejar este vehículo' + (x && x.aviso ? ' · ' + x.aviso : ''))
+                       : (c.motivo || (x && x.error) || 'No puede manejar este vehículo.');
+        var origen = (sel && !V.manualChofer) ? ' · sugerido'+(c.usuario_id === S.lider ? ': es el líder de la OT' : '') : '';
+        return '<button type="button" class="o2m-op'+(sel ? ' sel-ok' : '')+(ok ? '' : ' disabled')+'"'+
+          (ok ? '' : ' style="opacity:.75;cursor:not-allowed" aria-disabled="true"')+' onclick="OT2C.vehChofer('+(c.chofer_id || 0)+')">'+
+          '<span class="n">'+(sel ? '<i class="bi bi-check-circle-fill me-1"></i>' : '<i class="bi bi-person-badge me-1"></i>')+esc(c.nombre)+'</span>'+
+          '<span class="l" style="color:'+(ok ? '#166534' : '#92400e')+'">'+esc(linea)+esc(origen)+'</span></button>';
+      }).join('');
+      h += '<div class="o2m-veh-grid" style="margin-top:.4rem">'+cops+'</div>';
+      if (!algunoPuede){
+        h += nota('<i class="bi bi-exclamation-triangle-fill me-1"></i>Ninguno de los técnicos elegidos puede manejar este vehículo ahora. Enrola a alguien en Solicitudes de vehículo → Choferes, elige otro técnico, o marca «Sin vehículo».', '#92400e');
+      }
+      h += '<div class="row g-3" style="margin-top:.25rem">'+
+        '<div class="col-6 col-md-3"><label class="fl" for="o2mVehDesde">Sale a las</label>'+
+        '<input type="time" class="form-control" id="o2mVehDesde" value="'+esc(V.desde)+'" onchange="OT2C.vehHora(\'desde\',this.value)"></div>'+
+        '<div class="col-6 col-md-3"><label class="fl" for="o2mVehHasta">Vuelve a las</label>'+
+        '<input type="time" class="form-control" id="o2mVehHasta" value="'+esc(V.hasta)+'" onchange="OT2C.vehHora(\'hasta\',this.value)"></div></div>';
+      if (V.desde && V.hasta && V.desde >= V.hasta) h += nota('La hora de regreso tiene que ser después de la de salida.', '#b91c1c');
+      h += nota('<i class="bi bi-info-circle me-1"></i>Queda «Por confirmar» hasta que la gestión de flota la confirme (responde dentro de '+
+        Math.round((d.sla_respuesta_min || 120) / 60)+' horas hábiles). Las llaves se entregan el día de la reserva, '+esc(d.horario_llaves || '')+
+        '. Esta reserva no envía ningún correo.');
+    }
+    c.innerHTML = h;
+  }
+  function vehSel(id){
+    var V = S.veh;
+    if (!id){ V.vehiculo_id = null; V.chofer_id = null; V.usuario_id = null; V.manualChofer = false; }
+    else {
+      var v = _o2mVehPorId(id);
+      if (!v || !v.libre){
+        if (window.ilusToast) ilusToast(v && v.motivo ? v.motivo : 'Ese vehículo no está disponible en este horario.', {type:'warning'});
+        return;
+      }
+      V.vehiculo_id = id; V.manualChofer = false; V.aviso = '';
+      _o2mVehAuto();
+    }
+    _o2mVehPintar(); refrescarAnclas();
+  }
+  function vehChofer(cid){
+    var V = S.veh, c = ((V.data && V.data.choferes) || []).filter(function(x){ return x.chofer_id === cid; })[0];
+    if (!c) return;
+    if (!_o2mVehElegible(c, V.vehiculo_id)){
+      var x = c.por_vehiculo ? c.por_vehiculo[String(V.vehiculo_id)] : null;
+      if (window.ilusToast) ilusToast(c.motivo || (x && x.error) || 'Esa persona no puede manejar este vehículo.', {type:'warning', duration:8000});
+      return;
+    }
+    V.chofer_id = c.chofer_id; V.usuario_id = c.usuario_id; V.manualChofer = true;
+    _o2mVehPintar(); refrescarAnclas();
+  }
+  function vehHora(campo, v){
+    S.veh[campo] = v || ''; S.veh.manualHora = true;
+    _o2mVehCargarDebounced(); refrescarAnclas();
+  }
+
   function pintarTecnicos(b){
     b.innerHTML = '<h6 class="t">Técnicos asignados</h6>'+
       // 2026-09-16 (Daniel): toda OT sale con técnico; el texto viejo
@@ -4571,6 +4753,9 @@ window.OT2C = (function(){
       .then(function(r){return r.json();})
       .then(function(j){
         cacheTec = Array.isArray(j) ? j : (j.tecnicos || []);
+        // 🚚 2026-11-04: con la lista de técnicos recién cargada se sabe cuáles son internos; si ya había técnicos marcados (OT prellenada),
+        // el paso «Vehículo» aparece (o desaparece) ahora. Se compara contra lo que hay dibujado: no repinta en bucle.
+        if (!!document.getElementById('o2mSec-vehiculo-b') !== _o2mVehAplica()){ pintarFormulario(); return; }
         var c = document.getElementById('o2mTecList'); if(!c) return;
         if (!cacheTec.length){ c.innerHTML = '<div class="p-3 text-muted small">No hay técnicos cargados.</div>'; return; }
         c.innerHTML = _o2mPintarTecGrupos(cacheTec);
@@ -12004,6 +12189,14 @@ window.OT2C = (function(){
           senalarPaso('tecnicos');
           return false;
         }
+        // 🚚 2026-11-04: con un vehículo elegido falta quién lo maneja o la hora está al revés. Siempre se puede volver a «Sin vehículo».
+        if (ps[i].k === 'vehiculo'){
+          if (window.ilusToast) ilusToast(S.veh.desde && S.veh.hasta && S.veh.desde >= S.veh.hasta
+            ? 'En el vehículo, la hora de regreso tiene que ser después de la de salida.'
+            : 'Falta elegir quién maneja el vehículo, o marca «Sin vehículo».', {type:'warning'});
+          senalarPaso('vehiculo');
+          return false;
+        }
         if (window.ilusToast) ilusToast('Falta completar "'+ps[i].n+'"', {type:'warning'});
         senalarPaso(ps[i].k);
         return false;
@@ -12110,6 +12303,12 @@ window.OT2C = (function(){
     // «Pedir autorización a Daniel» (se copia este mismo body): Daniel lee «Incluye desinstalación dd/mm» y, al aprobar, la
     // hija se crea sola con el solicitante como autor.
     if (_o2mDiAplica() && S.desinst.lleva) body.desinstalacion = _diPayload();
+    // 🚚 2026-11-04: el vehículo EXACTAMENTE como se ve elegido (y solo si todavía hay un técnico interno marcado). El servidor lo revalida y lo
+    // reserva con las reglas de Solicitudes de vehículo; viaja también en «Pedir autorización a Daniel» (se copia este mismo body).
+    if (_o2mVehAplica() && S.veh.vehiculo_id && S.veh.chofer_id){
+      var _vh = _o2mVehSync();
+      body.vehiculo = {vehiculo_id: _vh.vehiculo_id, chofer_id: _vh.chofer_id, hora_desde: _vh.desde, hora_hasta: _vh.hasta};
+    }
     // 🩺 2026-10-21 (REGLA #38): si esta OT es el seguimiento de hallazgos de otra, se manda DE CUÁL y de cuáles (y las fotos que la persona dejó como
     // referencia). El servidor lo revalida todo (los hallazgos son de esa OT, siguen disponibles, mismo cliente) y escribe él mismo el vínculo.
     // Viaja también en el payload de «Pedir autorización a Daniel» (se copia este mismo body).
@@ -12332,6 +12531,13 @@ window.OT2C = (function(){
         else if (_des && _des.ok) _desTxt = ' · desinstalación ' + (_des.numero_ot || '') + ' agendada el ' + (_des.fecha_txt || '');
         else if (_des) _desFalla = _des.error || 'no se pudo agendar';
         if (window.ilusToast) ilusToast('✓ '+res.j.numero_ot+' creada · '+res.j.n_tareas+' tareas'+_desTxt, {type:'success'});
+        // 🚚 2026-11-04: lo que pasó con el vehículo. Reservado → un aviso con su número y estado; si ya no estaba libre (alguien lo tomó mientras
+        // se creaba la OT) la OT quedó creada igual y se dice ANTES de entrar a ella, con la salida («pídelo desde Solicitudes de vehículo»).
+        var _veh = res.j.vehiculo || null, _vehFalla = '';
+        if (_veh && _veh.ok && _veh.solicitud){
+          if (window.ilusToast) ilusToast('🚚 Vehículo solicitado: '+(_veh.solicitud.vehiculo || '')+' · '+(_veh.solicitud.rango_texto || '')+
+            ' · '+(_veh.solicitud.numero || '')+' (queda por confirmar)', {type:'success', duration:9000});
+        } else if (_veh){ _vehFalla = _veh.error || 'No se pudo reservar el vehículo.'; }
         if (res.j.avisos) res.j.avisos = res.j.avisos.filter(function(av){ return !/^Desinstalación OT-/.test(av || ''); });
         // 🔧 FIX 2026-09-04 (Daniel, "podemos pulir eso" -- ticket sin
         // vincular a su OT): el backend arma esta lista hace rato (jornada
@@ -12349,7 +12555,7 @@ window.OT2C = (function(){
         // quien crea la OT normalmente NO es el técnico asignado todavía
         // -- ver mant_visita_fotos_subir_inicial (app.py). Si algo falla
         // acá, la OT igual quedó creada: solo se avisa, no se bloquea.
-        var _desFallaMostrada = false;
+        var _desFallaMostrada = false, _vehFallaMostrada = false;
         // 📨 2026-10-21 (REGLA #37, Daniel: «que avise a quién se le está enviando»): lo que dijeron los correos de la creación. Lo que salió se dice
         // en un aviso; lo que NO salió (llave o interruptor apagado, sin correo, el proveedor de correo lo rechazó) se dice ANTES de entrar a la OT,
         // con quién y por qué. La ficha de la OT lo repite durante 15 minutos. Solo informa: no cambia cuándo se envía nada.
@@ -12368,6 +12574,14 @@ window.OT2C = (function(){
                 return '<li><b>' + esc(x.nombre || x.correo || '') + '</b> (' + esc(x.rol_txt || '') + ')' + (x.motivo ? ': ' + esc(x.motivo) : '') + '</li>';
               }).join('') + '</ul><div style="margin-top:8px">Se pueden enviar a mano desde la ficha de la OT cuando esté cerrada. No se perdió nada.</div>',
               subHtml: true})
+              .then(_o2mIrADetalle, _o2mIrADetalle);
+            return;
+          }
+          if (_vehFalla && !_vehFallaMostrada && window.ilusAlert){
+            _vehFallaMostrada = true;
+            ilusAlert({title: 'La OT quedó creada · el vehículo no se reservó', type: 'warning',
+              message: String(_vehFalla),
+              sub: 'No se perdió nada de la OT. Pide el vehículo desde Solicitudes de vehículo.'})
               .then(_o2mIrADetalle, _o2mIrADetalle);
             return;
           }
@@ -13635,7 +13849,7 @@ window.OT2C = (function(){
           setNotaVentaInterna:setNotaVentaInterna, abrirBusquedaDocInterno:abrirBusquedaDocInterno,
           abrirNuevoTipoInterno:abrirNuevoTipoInterno, _o2mNtGuardar:_o2mNtGuardar, _o2mNtIcono:_o2mNtIcono,
           setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
-          tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
+          tecTog:tecTog, vehSel:vehSel, vehChofer:vehChofer, vehHora:vehHora, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
           eqModo:eqModo,
           eqAgregarDoc:_o2mEqAgregarDocumento,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,

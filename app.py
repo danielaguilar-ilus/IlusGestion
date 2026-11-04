@@ -96784,6 +96784,7 @@ def ot2_detalle(vid):
         responsable=responsable,
         com_envio=com_envio,
         hallazgos=hallazgos,
+        vehiculos_flota=_ot_vehiculos_ficha(vid),      # 🚚 2026-11-04: reservas del furgón o el camión ligadas a esta OT
         acta=acta,
         prod_dispensa=prod_dispensa, acc_listas=acc_listas, acc_data=acc_data, resumen_equipos=resumen_equipos,
         puede_revertir_estado=bool((not _es_rol_tecnico()) and puede_configurar and not ot_solo_lectura),
@@ -115636,6 +115637,50 @@ def ot2_api_crear():
     return _ot2_crear_core(request.get_json(silent=True) or {})
 
 
+def _ot_vehiculo_reservar(vid, numero_ot, titulo, fecha, req, tec_ids, autorizacion=None):
+    """🚚 2026-11-04 — reserva el furgón o el camión que el asistente «Nueva OT» dejó elegido (módulo flota_module, mismas reglas y mismo sello
+    que Solicitudes de vehículo). NUNCA lanza: devuelve {ok, solicitud, avisos} o {ok: False, error}. El chofer tiene que ser uno de los
+    técnicos de ESTA OT (se relee de la base: lo que llega del navegador no se cree) y quedar enrolado en la flota. Si la OT nace de una
+    autorización aprobada, «quien pide» es quien la pidió, no quien la aprobó. Sin correo: una reserva que nace de una OT no avisa (Daniel, 03-nov)."""
+    try:
+        import flota_module as _fm
+        _reservar = _fm.OT_API.get("reservar")
+        if not _reservar:
+            return {"ok": False, "error": "El módulo de vehículos no está disponible. La OT quedó creada: pide el vehículo desde Solicitudes de vehículo."}
+        try:
+            _veh_id, _cho_id = int(req.get("vehiculo_id")), int(req.get("chofer_id"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Faltó elegir quién maneja. La OT quedó creada: pide el vehículo desde Solicitudes de vehículo."}
+        _ch = mysql_fetchone("SELECT id, usuario_id FROM flota_choferes WHERE id=%s", (_cho_id,))
+        if not _ch or _ch.get("usuario_id") not in set(tec_ids or []):
+            return {"ok": False, "error": "Quien maneja tiene que ser uno de los técnicos de esta OT. La OT quedó creada: pide el vehículo desde Solicitudes de vehículo."}
+        _quien = None
+        if autorizacion and autorizacion.get("solicitado_por_user_id"):
+            _quien = (int(autorizacion["solicitado_por_user_id"]), autorizacion.get("solicitado_por_nombre") or "")
+        _r = _reservar(vid, numero_ot, titulo, fecha, str(req.get("hora_desde") or "")[:5], str(req.get("hora_hasta") or "")[:5],
+                       _veh_id, _cho_id, _quien)
+        if _r.get("ok"):
+            _s = _r.get("solicitud") or {}
+            _mant_log("visita", vid, "vehiculo_solicitado",
+                      f"{numero_ot} · {_s.get('numero') or ''} · {_s.get('vehiculo') or ''} · {_s.get('rango_texto') or ''} · maneja {_s.get('chofer') or ''}"[:900])
+        else:
+            _r["error"] = f"{_r.get('error') or 'No se pudo reservar el vehículo.'} La OT quedó creada: pide el vehículo desde Solicitudes de vehículo."
+        return _r
+    except Exception as e:
+        print(f"[ot2_crear] vehículo vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return {"ok": False, "error": "No se pudo reservar el vehículo. La OT quedó creada: pídelo desde Solicitudes de vehículo."}
+
+
+def _ot_vehiculos_ficha(vid):
+    """🚚 2026-11-04 — reservas de vehículo ligadas a esta OT, para su ficha. Nunca rompe la ficha: sin el módulo o sin la columna, lista vacía."""
+    try:
+        import flota_module as _fm
+        _fn = _fm.OT_API.get("de_orden")
+        return _fn(vid) if _fn else []
+    except Exception:
+        return []
+
+
 def _ot2_crear_core(d, autorizacion=None, madre=None):
     """Núcleo de creación de OT 2.0 (ver ot2_api_crear). `d` = body del asistente; `autorizacion` = fila de
     mant_ot_autorizaciones aprobada cuando la OT nace desde una solicitud (d['autorizacion_id'] también la trae).
@@ -117032,6 +117077,15 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
             avisos.append(_resp_r["aviso"])
     except Exception as e:
         print(f"[ot2_crear] responsable vid={vid}: {type(e).__name__}: {e}", flush=True)
+    # 🚚 2026-11-04 (Daniel: «cuando se seleccionen los técnicos internos al crear una OT nueva, que pueda dejar agendada la solicitud del
+    # camión y/o el furgón»): lo que el asistente mostró elegido en su paso «Vehículo» (D.vehiculo) se reserva AHORA, con las mismas reglas y el
+    # mismo sello que Solicitudes de vehículo. Si el vehículo ya no está libre, la OT queda creada igual y el aviso lo dice (alertar, no trabar).
+    _veh_res = None
+    _veh_req = d.get("vehiculo") if isinstance(d.get("vehiculo"), dict) else None
+    if _veh_req and not es_hija and _veh_req.get("vehiculo_id"):
+        _veh_res = _ot_vehiculo_reservar(vid, numero_ot, titulo, fecha_prog[:10], _veh_req, tec_ids, autorizacion)
+        if _veh_res.get("ok"):
+            avisos.extend(_veh_res.get("avisos") or [])
     # 🩺 2026-10-21 (REGLA #38) — constancia del seguimiento en las DOS bitácoras (origen y nueva). Son acciones fuera de la lista blanca
     # del técnico (REGLA #26): él no las ve. Nada de montos ni documentos.
     if _seg_ligado and _seg:
@@ -117388,6 +117442,8 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
         "ot_url": url_for("ot2_detalle", vid=vid),
         "n_tareas": n_tareas, "avisos": avisos,
     }
+    if _veh_res is not None:
+        _resp_ok["vehiculo"] = _veh_res      # 🚚 2026-11-04: {ok, solicitud{numero, vehiculo, rango_texto…}} o {ok: False, error}
     if es_hija:
         _resp_ok["madre_id"], _resp_ok["madre_numero"] = int(madre["id"]), _num_madre
     else:

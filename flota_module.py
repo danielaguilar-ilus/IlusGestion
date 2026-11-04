@@ -47,6 +47,11 @@ except Exception:  # pragma: no cover  (sin tzdata)
     _TZ_CL = None
 
 
+# Funciones que usan el asistente «Nueva OT» y la ficha de la OT (disponibilidad, reservar, reservas de una orden). Se llenan al registrar
+# el módulo: app.py las llama como `flota_module.OT_API.get("reservar")` y, si el módulo no cargó, la OT se crea igual sin vehículo.
+OT_API = {}
+
+
 def register_flota_routes(app, ctx):
     mysql_fetchone = ctx["mysql_fetchone"]
     mysql_fetchall = ctx["mysql_fetchall"]
@@ -237,6 +242,9 @@ def register_flota_routes(app, ctx):
             "ALTER TABLE flota_solicitudes ADD COLUMN dev_combustible VARCHAR(20) NULL",
             "ALTER TABLE flota_solicitudes ADD COLUMN dev_obs VARCHAR(500) NULL",
             "ALTER TABLE flota_solicitudes ADD COLUMN dev_novedad TINYINT(1) NOT NULL DEFAULT 0",
+            # Reserva que nace desde «Nueva OT» (Daniel, 04-nov-2026): la solicitud recuerda de qué orden de trabajo viene.
+            "ALTER TABLE flota_solicitudes ADD COLUMN ot_id INT NULL",
+            "ALTER TABLE flota_solicitudes ADD COLUMN ot_numero VARCHAR(40) NULL",
         )
         for sql_col in columnas_nuevas:
             try:
@@ -1210,6 +1218,7 @@ def register_flota_routes(app, ctx):
                             "novedad": bool(r.get("dev_novedad")), "por": r.get("devuelta_por"), "fmt": _hora_chile(r.get("devuelta_at"))}
                            if est == "devuelta" else None),
             "area": r.get("area"), "solicitante": r.get("solicitante_nombre"),
+            "ot": ({"id": r["ot_id"], "numero": r.get("ot_numero") or f"OT #{r['ot_id']}"} if r.get("ot_id") else None),
             "chofer": {"id": r["chofer_id"], "nombre": r.get("chofer_nombre") or "(sin nombre)", "telefono": r.get("chofer_phone")},
             "fecha": _dia_iso(ini), "hora_desde": _hhmm(ini), "fecha_hasta": _dia_iso(fin), "hora_hasta": _hhmm(fin),
             "inicio": ini.strftime("%Y-%m-%dT%H:%M"), "fin": fin.strftime("%Y-%m-%dT%H:%M"), "rango_texto": fr.rango_texto(ini, fin),
@@ -1335,10 +1344,11 @@ def register_flota_routes(app, ctx):
                 "solicitante": f.get("solicitante_nombre"), "patente_fmt": fr.patente_con_guion(f.get("v_patente")),
                 "sello_fmt": _hora_chile(f.get("sello_at"))}
 
-    def _reservar(datos, sid=None, motivo_cambio=None):
+    def _reservar(datos, sid=None, motivo_cambio=None, solicitante=None, ot=None):
         """Crea una reserva (sid=None) o mueve una existente. TODO en una transacción con el vehículo bloqueado (FOR UPDATE): así dos
         personas que piden a la vez el mismo vehículo no pasan las dos; gana el sello (quien llegó primero) y la otra recibe quién lo tiene.
-        Devuelve (cuerpo_json, http)."""
+        `solicitante` = (id, nombre) de quien pide cuando no es la persona conectada (una OT aprobada a distancia); `ot` = (id, número) de la
+        orden de trabajo de la que nace la reserva (04-nov-2026). Devuelve (cuerpo_json, http)."""
         if get_mysql is None:
             return {"ok": False, "error": "El servidor no pudo abrir la base de datos. Intenta de nuevo en un momento."}, 500
         ahora = _ahora_chile()
@@ -1410,14 +1420,23 @@ def register_flota_routes(app, ctx):
             avisos = (fr.avisos_vehiculo(dict(veh), inicio.date()) + ([aviso_lic] if aviso_lic else []) + _avisos_dia_no_laboral(inicio, fin)
                       + fr.avisos_horario(inicio, fin, _feriados(inicio.year, fin.year)))
             if sid is None:
-                cur.execute(
-                    "INSERT INTO flota_solicitudes (vehiculo_id, area, solicitante_id, solicitante_nombre, chofer_id, inicio, fin, motivo) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (datos["vehiculo_id"], datos["area"], _uid(), current_username(), datos["chofer_id"], inicio, fin, datos["motivo"]))
+                quien_id, quien_nombre = solicitante if solicitante else (_uid(), current_username())
+                if ot:
+                    cur.execute(
+                        "INSERT INTO flota_solicitudes (vehiculo_id, area, solicitante_id, solicitante_nombre, chofer_id, inicio, fin, motivo, "
+                        "ot_id, ot_numero) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (datos["vehiculo_id"], datos["area"], quien_id, quien_nombre, datos["chofer_id"], inicio, fin, datos["motivo"],
+                         ot[0], ot[1]))
+                else:
+                    cur.execute(
+                        "INSERT INTO flota_solicitudes (vehiculo_id, area, solicitante_id, solicitante_nombre, chofer_id, inicio, fin, motivo) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (datos["vehiculo_id"], datos["area"], quien_id, quien_nombre, datos["chofer_id"], inicio, fin, datos["motivo"]))
                 sid = int(cur.lastrowid)
                 cur.execute("UPDATE flota_solicitudes SET numero=%s WHERE id=%s", (fr.numero_solicitud(sid, ahora.year), sid))
-                _slog(sid, "creada", {"vehiculo": titulo_veh, "chofer": ch.get("u_nombre"), "rango": fr.rango_texto(inicio, fin),
-                                      "area": datos["area"], "motivo": datos["motivo"], "avisos": avisos}, cur=cur)
+                _slog(sid, "creada", dict({"vehiculo": titulo_veh, "chofer": ch.get("u_nombre"), "rango": fr.rango_texto(inicio, fin),
+                                           "area": datos["area"], "motivo": datos["motivo"], "avisos": avisos},
+                                          **({"ot": ot[1]} if ot else {})), cur=cur)
             else:
                 cur.execute(
                     "UPDATE flota_solicitudes SET vehiculo_id=%s, area=%s, chofer_id=%s, inicio=%s, fin=%s, motivo=%s, "
@@ -1456,6 +1475,136 @@ def register_flota_routes(app, ctx):
         if not fila:
             return _error("La solicitud se guardó pero no se pudo leer de vuelta. Recarga la pantalla.", 500)
         return jsonify({"ok": True, "solicitud": _sol_json(dict(fila)), "avisos": cuerpo.get("avisos") or []})
+
+    # ── Reserva desde «Nueva OT» (Daniel, 04-nov-2026) ──────────────────────────
+    # «Cuando se seleccionen los técnicos internos al crear una OT nueva, que pueda dejar agendada la solicitud del camión y/o el furgón».
+    # El asistente consulta la disponibilidad (solo lee) y, al crear la OT, el servidor reserva con las MISMAS reglas y el MISMO sello que
+    # el formulario de Solicitudes de vehículo (_reservar): choque de vehículo y de chofer, licencia, chofer enrolado. Una reserva que nace
+    # de una OT no manda correo (decisión de Daniel, 03-nov) y queda «Por confirmar» hasta que la gestión de flota la confirme.
+    _EST_OCUPAN_SQL = "('solicitada','confirmada','llave_entregada')"
+
+    def _titulo_vehiculo(v):
+        return " ".join(x for x in (v.get("tipo"), fr.patente_con_guion(v.get("patente"))) if x)
+
+    def _ot_disponibilidad(fecha, desde, hasta, usuario_ids):
+        """Qué vehículos están libres en ese horario y cuáles de los técnicos elegidos pueden manejarlos. Solo lee: no reserva nada."""
+        try:
+            f, hd, hh = fr.fecha_o_none(fecha), fr.parse_hora(desde), fr.parse_hora(hasta)
+        except ValueError:
+            f = hd = hh = None
+        inicio = datetime.combine(f, hd) if f and hd else None
+        fin = datetime.combine(f, hh) if f and hh else None
+        horario_ok = bool(inicio and fin and fin > inicio)
+        hoy = _ahora_chile().date()
+        vehiculos, vehs = [], []
+        for v in mysql_fetchall("SELECT * FROM flota_vehiculos WHERE archivado=%s ORDER BY habilitado DESC, tipo, patente LIMIT 500", (0,)) or []:
+            libre, motivo, choque = bool(v.get("habilitado")), None, None
+            if not libre:
+                motivo = "Inhabilitado" + (f": {v['inhabilitado_motivo']}" if v.get("inhabilitado_motivo") else "")
+            elif horario_ok:
+                ocup = fr.conflictos(inicio, fin, [dict(x) for x in (mysql_fetchall(
+                    _SQL_OCUPA + " WHERE s.vehiculo_id=%s AND s.estado IN " + _EST_OCUPAN_SQL + " AND s.inicio < %s AND s.fin > %s",
+                    (v["id"], fin, inicio)) or [])])
+                if ocup:
+                    c0 = ocup[0]
+                    libre = False
+                    choque = {"numero": c0.get("numero") or "", "rango_texto": fr.rango_texto(c0["inicio"], c0["fin"]), "area": c0.get("area"),
+                              "solicitante": c0.get("solicitante_nombre")}
+                    motivo = f"Ya está reservado: {choque['numero']} · {choque['area']} · {choque['rango_texto']}"
+            vehs.append(v)
+            vehiculos.append({"id": v["id"], "tipo": v.get("tipo"), "titulo": _titulo_vehiculo(v), "patente_fmt": fr.patente_con_guion(v.get("patente")),
+                              "marca_modelo": " ".join(x for x in (v.get("marca"), v.get("modelo")) if x),
+                              "licencia_exigida": fr.normalizar_clases(v.get("licencia_clases")), "libre": libre, "motivo": motivo, "choque": choque})
+        choferes, vistos = [], set()
+        for uid in usuario_ids:
+            if uid in vistos:
+                continue
+            vistos.add(uid)
+            fila = (mysql_fetchall(_SQL_CHOF + " WHERE c.usuario_id=%s", (uid,)) or [None])[0]
+            if not fila or fila.get("archivado"):
+                u = mysql_fetchone("SELECT id, nombre, active FROM `" + _AUTH + "` WHERE id=%s", (uid,)) or {}
+                choferes.append({"usuario_id": uid, "nombre": u.get("nombre") or f"Usuario #{uid}", "chofer_id": None, "enrolado": False,
+                                 "motivo": "No está enrolado como chofer: sin eso no puede retirar el vehículo ni se puede reservar.",
+                                 "por_vehiculo": {}})
+                continue
+            nombre = fila.get("u_nombre") or f"Usuario #{uid}"
+            ocupado = None
+            if horario_ok:
+                cruces = fr.conflictos(inicio, fin, [dict(x) for x in (mysql_fetchall(
+                    _SQL_OCUPA + " WHERE s.chofer_id=%s AND s.estado IN " + _EST_OCUPAN_SQL + " AND s.inicio < %s AND s.fin > %s",
+                    (fila["id"], fin, inicio)) or [])])
+                if cruces:
+                    ocupado = {"numero": cruces[0].get("numero") or "", "rango_texto": fr.rango_texto(cruces[0]["inicio"], cruces[0]["fin"]),
+                               "patente_fmt": fr.patente_con_guion(cruces[0].get("v_patente"))}
+            ch_ev = {"nombre": nombre, "habilitado": bool(fila.get("habilitado")) and bool(fila.get("u_activo")),
+                     "licencia_clases": fila.get("licencia_clases"), "licencia_vence": fila.get("licencia_vence")}
+            por_veh = {}
+            for v in vehs:
+                err, aviso = fr.evaluar_chofer(ch_ev, v.get("licencia_clases"), f or hoy, hoy)
+                if not err and ocupado:
+                    err = (f"{nombre} ya tiene otra reserva en ese horario: {ocupado['numero']} · {ocupado['patente_fmt']} · "
+                           f"{ocupado['rango_texto']}.")
+                por_veh[str(v["id"])] = {"ok": not err, "error": err, "aviso": aviso}
+            choferes.append({"usuario_id": uid, "nombre": nombre, "chofer_id": fila["id"], "enrolado": True, "motivo": None, "por_vehiculo": por_veh})
+        avisos = list(_avisos_dia_no_laboral(inicio, fin)) if horario_ok else []
+        return {"ok": True, "horario_ok": horario_ok, "vehiculos": vehiculos, "choferes": choferes, "avisos": avisos,
+                "horario_llaves": fr.HORARIO_TEXTO, "antelacion_horas": fr.MIN_ANTELACION_H, "sla_respuesta_min": fr.SLA_RESPUESTA_MIN}
+
+    def _ot_reservar(ot_id, numero_ot, titulo_ot, fecha, desde, hasta, vehiculo_id, chofer_id, solicitante=None):
+        """Reserva el vehículo para una OT recién creada. Devuelve {ok, solicitud, avisos} o {ok: False, error}: NUNCA lanza ni deshace la OT."""
+        motivo = re.sub(r"\s+", " ", f"Para la {numero_ot}" + (f": {titulo_ot}" if titulo_ot else "")).strip()[:fr.USO_MOTIVO_MAX]
+        datos, errores = fr.validar_solicitud(
+            {"vehiculo_id": vehiculo_id, "chofer_id": chofer_id, "area": "Servicio Técnico", "motivo": motivo, "fecha": fecha,
+             "hora_desde": desde, "hora_hasta": hasta}, _ahora_chile(), antelacion_horas=None)
+        if errores:
+            return {"ok": False, "error": " ".join(str(x) for x in errores.values()), "errores": errores}
+        cuerpo, _http = _reservar(datos, solicitante=solicitante, ot=(int(ot_id), numero_ot))
+        if not cuerpo.get("ok"):
+            return {"ok": False, "error": cuerpo.get("error") or "No se pudo reservar el vehículo.", "codigo": cuerpo.get("error_codigo")}
+        avisos = list(cuerpo.get("avisos") or [])
+        if datos["inicio"] < _ahora_chile() + timedelta(hours=fr.MIN_ANTELACION_H):
+            avisos.append(f"Faltan menos de {fr.MIN_ANTELACION_H} horas para esta reserva: la gestión de flota la verá como urgente.")
+        fila = _sol_fila(cuerpo["id"])
+        info = _ot_fila_json(dict(fila)) if fila else {"id": cuerpo["id"]}
+        return {"ok": True, "solicitud": info, "avisos": avisos}
+
+    def _ot_fila_json(r):
+        """Lo mínimo de una reserva para mostrarla junto a su OT (sin permisos ni acciones: esas viven en Solicitudes de vehículo)."""
+        titulo = " ".join(x for x in (r.get("v_tipo"), r.get("v_marca"), r.get("v_modelo")) if x)
+        return {"id": r["id"], "numero": r.get("numero") or "", "estado": r.get("estado"), "estado_texto": fr.ESTADOS.get(r.get("estado"), r.get("estado")),
+                "vehiculo": " ".join(x for x in (titulo, fr.patente_con_guion(r.get("v_patente"))) if x),
+                "rango_texto": fr.rango_texto(r["inicio"], r["fin"]), "chofer": r.get("chofer_nombre") or "(sin nombre)",
+                "enlace": f"/flota?sol={int(r['id'])}#solicitudes"}
+
+    def _ot_de_orden(ot_id):
+        """Reservas de vehículo ligadas a una OT (para su ficha). Si la columna aún no existe devuelve [] sin romper la ficha."""
+        try:
+            return [_ot_fila_json(dict(x)) for x in (mysql_fetchall(
+                _SQL_SOL + " WHERE s.ot_id=%s ORDER BY s.inicio, s.id LIMIT 20", (int(ot_id),)) or [])]
+        except Exception as e:
+            print(f"[flota] reservas de la OT {ot_id}: {type(e).__name__}", flush=True)
+            return []
+
+    OT_API.update(disponibilidad=_ot_disponibilidad, reservar=_ot_reservar, de_orden=_ot_de_orden)
+
+    _mant_req = ctx.get("_mant_required") or login_required
+    _no_tec = ctx.get("_no_tecnico") or (lambda f: f)
+
+    @app.route("/ot/api/flota/disponibilidad", methods=["GET"])
+    @_mant_req
+    @_no_tec
+    def flota_ot_api_disponibilidad():
+        """Lo que el asistente «Nueva OT» muestra en su paso Vehículo. Solo lee."""
+        ids = []
+        for x in (request.args.get("tecnicos") or "").split(",")[:10]:
+            x = x.strip()
+            if x.isdigit() and int(x) > 0 and int(x) not in ids:
+                ids.append(int(x))
+        try:
+            return jsonify(_ot_disponibilidad(request.args.get("fecha"), request.args.get("desde"), request.args.get("hasta"), ids))
+        except Exception as e:
+            print(f"[flota] disponibilidad para la OT: {type(e).__name__}: {e}", flush=True)
+            return _error("No se pudo revisar la disponibilidad de los vehículos. Intenta de nuevo en un momento.", 500)
 
     @app.route("/flota/api/solicitudes", methods=["GET"])
     @_flota_required
