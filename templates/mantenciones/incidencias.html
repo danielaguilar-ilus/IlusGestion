@@ -58,13 +58,11 @@
     <div class="sub">Sobrantes/faltantes de máquinas al recibir del ERP — registro manual del taller</div>
   </div>
   <div class="inc-hacc">
-    {% if permissions.superadmin %}
-    <button class="btn inc-hbtn gris" id="incBtnImportar" type="button"
-            title="Migrar el CSV exportado de la planilla Excel/VBA antigua">
-      <span class="ic"><i class="bi bi-upload"></i></span><span class="tx">Importar CSV<small>planilla antigua</small></span></button>
-    {% endif %}
-    {% if permissions.admin or permissions.superadmin %}
-    {#- 2026-10-08 (Daniel): Excel de la bodega de Incidencias para análisis, solo admin (también se exige en el servidor). -#}
+    {#- 2026-11-04 (Daniel): se quitó el botón «Importar CSV» (planilla antigua). Solo el botón: el modal de abajo y la ruta
+        /mantenciones/api/incidencias/importar siguen en su lugar, sin uso; para volver a tenerlo basta devolver el botón con id="incBtnImportar". -#}
+    {% if puede_excel_inc %}
+    {#- 2026-10-08 (Daniel): Excel de la bodega de Incidencias para análisis. 2026-11-04 (Víctor): ya no es solo de admin: lo ve también quien
+        tenga el permiso «Descargar Excel de Incidencias». Lo decide _inc_puede_excel(), que la ruta vuelve a exigir en el servidor. -#}
     <div class="dropdown">
       <button class="btn inc-hbtn verde dropdown-toggle" id="incBtnExcel" type="button" data-bs-toggle="dropdown" aria-expanded="false"
               title="Bajar el detalle de la bodega en Excel para análisis">
@@ -4600,7 +4598,9 @@
   });
 
   {% if permissions.superadmin %}
-  document.getElementById('incBtnImportar').addEventListener('click', function(){
+  // 2026-11-04: el botón «Importar CSV» se quitó de la cabecera; si no está, no hay nada que enganchar (y el resto del script sigue).
+  var incBtnImportar = document.getElementById('incBtnImportar');
+  if(incBtnImportar) incBtnImportar.addEventListener('click', function(){
     document.getElementById('incImportFile').value = '';
     document.getElementById('incImportResultado').innerHTML = '';
     incImportModal().show();

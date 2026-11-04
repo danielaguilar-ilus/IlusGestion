@@ -5040,6 +5040,11 @@ PERMS_KEYS = (
     # en True y Daniel no es responsable de nada por serlo; la lista de candidatos sale de ot_responsable.es_candidato (permiso
     # EXPLÍCITO, activo y fuera de la familia técnico). Dormido por completo mientras nadie lo tenga encendido.
     "mant_ot_responsable",
+    # mant_inc_excel — «Descargar Excel de Incidencias» (aditivo 2026-11-04). Daniel: «Víctor me pide ver el botón de Excel» de la bodega
+    # de Incidencias, que desde el 08-oct era solo de admin. Nace APAGADO para todos los roles y personas (no es de tipo bloqueo); se
+    # enciende por persona en «Permisos individuales» o por rol en Roles → Servicio Técnico. Admin y superadmin lo conservan sin
+    # necesitarlo. La familia técnico nunca lo recibe, aunque se encienda (_inc_puede_excel).
+    "mant_inc_excel",
     # flota_* — «Solicitudes de vehículo» (aditivo 2026-11-02). Daniel: «déjalo habilitado por el front para poder dejarle las
     # asignaciones a cada uno… nadie puede agregar vehículos y nadie puede agregar choferes, solamente puede gestionar solicitudes».
     # Nacen APAGADAS para todos los roles y personas (el módulo solo lo ve el superadministrador hasta que él las encienda, por rol en
@@ -5214,6 +5219,8 @@ def _build_perms_from_matrix(role):
     # 🙋 2026-10-21 (REGLA #36): «Responsable de OT». Nace APAGADO (no es de tipo bloqueo): se enciende a propósito para quien
     # corresponda. Ver "mant_ot_responsable" en PERMS_KEYS.
     base["mant_ot_responsable"] = bool(man.get("ot_responsable"))
+    # 📊 2026-11-04: «Descargar Excel de Incidencias». Nace APAGADO (no es de tipo bloqueo). Ver "mant_inc_excel" en PERMS_KEYS.
+    base["mant_inc_excel"] = bool(man.get("inc_excel"))
     # 🔔 2026-10-23: «Recibe avisos de autorizaciones de OT». Tipo BLOQUEO (ausencia de fila = concedido), como mant_taller.
     base["mant_ot_autoriza_aviso"] = (man.get("ot_autoriza_aviso") is None
                                       or bool(man.get("ot_autoriza_aviso")))
@@ -14455,6 +14462,8 @@ PERMISSIONS_MATRIX = {
                                    "ot2_tecnico", "taller",
                                    # 🙋 2026-10-21 (REGLA #36): quién puede ser el responsable de una OT. Nace apagado.
                                    "ot_responsable",
+                                   # 📊 2026-11-04: quién puede descargar el Excel de Incidencias (nace apagado).
+                                   "inc_excel",
                                    # 🔔 2026-10-23: quién recibe los avisos de «Autorización pendiente» (bloqueo: nace concedido).
                                    "ot_autoriza_aviso"]},
     "retiros":        {"label":"Retiros",       "icon":"bi-box-arrow-up-right",
@@ -14570,6 +14579,11 @@ PERMISSIONS_META = {
         # se enciende solo para Víctor, Aarón y Juan Pablo (por persona en «Permisos individuales», o por rol aquí).
         "ot_responsable": {"label": "Responsable de OT (lleva las órdenes de trabajo y recibe sus avisos)",
                          "tipo": "submodulo", "icon": "bi-person-check"},
+        # 📊 2026-11-04 (Daniel: «Víctor me pide ver el botón de Excel» de Incidencias). Quien lo tiene ve «Descargar Excel» en la bodega de
+        # Incidencias. Nace apagado para todos; se enciende por persona en «Permisos individuales» o por rol aquí. Admin y superadmin lo
+        # tienen siempre; un técnico nunca, aunque se encienda.
+        "inc_excel": {"label": "Descargar Excel de Incidencias (bodega, para análisis)",
+                         "tipo": "submodulo", "icon": "bi-file-earmark-excel"},
         # 🔔 2026-10-23 (Daniel: «a Felipe, al ser superadmin, le llegan esos mensajes… sácale eso por el front»). Quien lo tiene recibe
         # la campana y el correo de «Autorización pendiente» (OT sin documento, $0, etc.). Nace concedido; se apaga por persona en
         # «Permisos individuales». No cambia quién puede aprobar.
@@ -71057,6 +71071,18 @@ def mant_api_incidencias_motivos_frecuentes():
     return jsonify({"ok": True, "motivos": [_sentence_case(f["motivo"]) for f in filas if f.get("motivo")]})
 
 
+def _inc_puede_excel():
+    """¿Puede este usuario descargar el Excel de la bodega de Incidencias?
+
+    ÚNICA fuente de verdad: la usan el botón de la pantalla y la ruta de descarga, así que lo que se ve es lo que se puede hacer.
+    Admin y superadmin siempre (así quedó el 08-oct-2026); además quien tenga el permiso «Descargar Excel de Incidencias»
+    (mant_inc_excel, que se enciende por rol o por persona). La familia técnico nunca, aunque el permiso esté encendido."""
+    perms = g.get("permissions") or {}
+    if perms.get("admin") or perms.get("superadmin"):
+        return True
+    return bool(perms.get("mant_inc_excel")) and not _es_rol_tecnico()
+
+
 @app.route("/mantenciones/incidencias")
 @app.route("/servicio-tecnico/incidencias")
 @_mant_required
@@ -71068,7 +71094,8 @@ def mant_incidencias_page():
     (REGLA #4.3, patrón Etiquetas)."""
     # 🗄️ 2026-09-30: los motivos de baja salen de UNA sola fuente (INC_BAJA_MOTIVOS).
     return render_template("mantenciones/incidencias.html",
-                           motivos_baja=[{"codigo": k, "texto": v} for k, v in INC_BAJA_MOTIVOS.items()])
+                           motivos_baja=[{"codigo": k, "texto": v} for k, v in INC_BAJA_MOTIVOS.items()],
+                           puede_excel_inc=_inc_puede_excel())
 
 
 def _inc_diagnostico_ua_duplicadas():
@@ -71771,14 +71798,14 @@ def _inc_excel_bytes(filas, ahora_chile, motivos_baja=None):
 @_mant_required
 @_no_tecnico_salvo_taller
 def mant_api_incidencias_excel():
-    """Descarga en Excel el detalle de la bodega de Incidencias (solo admin y
-    superadmin; el técnico nunca). Respeta los filtros de la pantalla por
+    """Descarga en Excel el detalle de la bodega de Incidencias (admin, superadmin
+    y quien tenga el permiso «Descargar Excel de Incidencias»; el técnico nunca:
+    ver _inc_puede_excel). Respeta los filtros de la pantalla por
     querystring: q, estado, f_chk, ver_todo=1 (incluye las que no cuadran) y
     bajas=1 (incluye las dadas de baja). `todo=1` ignora todos los filtros e
     incluye las dadas de baja. Solo lectura. Las eliminadas nunca salen."""
-    perms = g.get("permissions") or {}
-    if not (perms.get("admin") or perms.get("superadmin")):
-        return jsonify({"ok": False, "error": "Solo un administrador puede descargar este Excel."}), 403
+    if not _inc_puede_excel():
+        return jsonify({"ok": False, "error": "No tienes permiso para descargar este Excel."}), 403
     try:
         import openpyxl  # noqa: F401
     except ImportError:
@@ -85315,24 +85342,39 @@ def _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas=None):
     return razones
 
 
-def _ot_hallazgos_sin_foto_razones(vid, excluir_maquinas=None):
-    """Razones (lista de textos) por los hallazgos de la OT que no tienen NINGUNA foto en su tarea. Usa la MISMA definición de hallazgo que la
-    tarjeta «Hallazgos de esta OT» (ot_hallazgos.evaluar_tarea: Falla/Alerta de verificación y opción de resultado distinta de «Apto»;
-    «No aplica» no cuenta). Las tareas de equipos excluidos del cierre (fuera de servicio, de baja, saltados) no se exigen."""
+def _ot_hallazgos_sin_foto_tareas(vid, excluir_maquinas=None):
+    """Los hallazgos de la OT que no tienen NINGUNA foto en su tarea, con el equipo al que pertenecen:
+    [{id, titulo, maquina_id, maquina_nombre, ...}]. Usa la MISMA definición de hallazgo que la tarjeta «Hallazgos de esta OT»
+    (ot_hallazgos.evaluar_tarea: Falla/Alerta de verificación y opción de resultado distinta de «Apto»; «No aplica» no cuenta). Las tareas
+    de equipos excluidos del cierre (fuera de servicio, de baja, saltados) no se exigen.
+    Fuente única de lo que exige la firma (_ot_hallazgos_sin_foto_razones) y de lo que el aviso previo le muestra al técnico
+    (/puede-firmar: en qué equipo y en qué tarea falta, para llevarlo allí)."""
     filas = mysql_fetchall(
-        "SELECT t.id, t.titulo, t.maquina_id, t.tipo_respuesta, t.valor_json, t.opciones_lista_json "
+        "SELECT t.id, t.titulo, t.maquina_id, MAX(m.nombre) AS maquina_nombre, t.tipo_respuesta, t.valor_json, t.opciones_lista_json "
         "  FROM mant_visita_tareas t LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
+        "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
         " WHERE t.visita_id=%s AND t.tipo_respuesta IN ('verificacion','lista') AND t.valor_json IS NOT NULL "
         + _ot_tarea_no_trabajable_sql("t.") +
         " GROUP BY t.id HAVING COUNT(f.id) = 0", (vid,)) or []
     excl = {int(x) for x in (excluir_maquinas or []) if x}
-    sin = [t for t in filas
-           if not (t.get("maquina_id") and int(t["maquina_id"]) in excl) and _oh.evaluar_tarea(t)]
+    return [t for t in filas
+            if not (t.get("maquina_id") and int(t["maquina_id"]) in excl) and _oh.evaluar_tarea(t)]
+
+
+def _ot_hallazgos_sin_foto_razones(vid, excluir_maquinas=None):
+    """Razones (lista de textos) por los hallazgos de la OT que no tienen NINGUNA foto en su tarea (ver _ot_hallazgos_sin_foto_tareas).
+    📸 2026-11-04 (OT-2026-00359: «dice que está completo pero también incompleto»): el texto dice EN QUÉ EQUIPO está cada tarea; antes solo
+    traía los títulos y con 15 equipos de plantillas parecidas nadie sabía dónde buscar."""
+    sin = _ot_hallazgos_sin_foto_tareas(vid, excluir_maquinas)
     if not sin:
         return []
-    nombres = [str(t.get("titulo") or f"#{t['id']}")[:80] for t in sin[:5]]
+    nombres = []
+    for t in sin[:5]:
+        tit = str(t.get("titulo") or f"#{t['id']}")[:80]
+        eq = str(t.get("maquina_nombre") or "").strip()[:80]
+        nombres.append(f"{eq} — {tit}" if eq else tit)
     suf = "" if len(sin) <= 5 else f" y {len(sin)-5} más"
-    return [f"Falta la foto de evidencia en {len(sin)} hallazgo(s) (falla o alerta del checklist): {', '.join(nombres)}{suf}. "
+    return [f"Falta la foto de evidencia en {len(sin)} hallazgo(s) (falla o alerta del checklist): {'; '.join(nombres)}{suf}. "
             "Sube al menos una foto en cada tarea marcada."]
 
 
@@ -139393,6 +139435,15 @@ def mant_ot_puede_firmar(vid):
         if _razones:
             _diag_efec, _origen = _ot_diagnostico_efectivo(vid)
             _falta_diag = len(_diag_efec) < _OT_DIAG_MIN_CHARS
+            # 📸 2026-11-04 (OT-2026-00359): dónde está cada hallazgo sin foto (equipo y tarea), para que la pantalla lleve al técnico
+            # hasta allí en vez de dejarlo con una lista de títulos sueltos. Fail-open: si no se puede armar, queda el texto de siempre.
+            _pend_foto = []
+            try:
+                _pend_foto = [{"tarea_id": t.get("id"), "maquina_id": t.get("maquina_id"),
+                               "equipo": str(t.get("maquina_nombre") or "").strip(), "titulo": str(t.get("titulo") or "")}
+                              for t in _ot_hallazgos_sin_foto_tareas(vid, excluir_maquinas)]
+            except Exception as _e_pf:
+                print(f"[puede_firmar] hallazgos sin foto vid={vid}: {_e_pf}", flush=True)
             return jsonify({
                 "ok": True, "puede_firmar": False,
                 "error_codigo": "DIAGNOSTICO_O_FOTOS_FALTANTES",
@@ -139402,6 +139453,8 @@ def mant_ot_puede_firmar(vid):
                             if _falta_diag else
                             "Hay tareas que piden foto y todavía no la tienen."),
                 "faltantes": _razones,
+                "pendientes": _pend_foto,
+                "primer_equipo_id": (_pend_foto[0]["maquina_id"] if _pend_foto else None),
                 "falta_diagnostico": _falta_diag,
                 "diagnostico_largo": len(_diag_efec),
                 "diagnostico_min": _OT_DIAG_MIN_CHARS,

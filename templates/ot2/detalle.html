@@ -10887,6 +10887,31 @@ function _otdWkAbrir(el){
   cab.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
+/* 📸 2026-11-04 (OT-2026-00359): lleva al técnico a lo que le falta. Abre la tarjeta del equipo, deja a la vista la tarea (si se conoce) y la
+   resalta un momento. Lo usa el aviso previo a firmar (otdPreflightFirma): antes el servidor decía «falta una foto en 3 tareas» sin decir en
+   qué equipo, y con 15 equipos de plantillas parecidas no había por dónde empezar. Devuelve false si no encontró la tarjeta. */
+function otdIrATarea(tid, mid){
+  try {
+    const buscar = document.getElementById('otdWkBuscar');
+    if (buscar && buscar.value){ buscar.value = ''; if (window.otdWkFiltrar) window.otdWkFiltrar(''); }   // un filtro activo puede esconder el equipo
+    const el = document.querySelector('#otdWkCard .otd-wk-item[data-mid="' + String(mid) + '"]');
+    if (!el) return false;
+    _otdWkAbrir(el);
+    if (tid){
+      setTimeout(function(){
+        const fila = document.getElementById('otdChkItem-' + tid);
+        if (!fila) return;
+        fila.scrollIntoView({behavior: 'smooth', block: 'center'});
+        fila.style.transition = 'box-shadow .3s';
+        fila.style.boxShadow = '0 0 0 3px #f59e0b';
+        setTimeout(function(){ fila.style.boxShadow = ''; }, 2600);
+      }, 400);
+    }
+    return true;
+  } catch(e){ return false; }
+}
+window.otdIrATarea = otdIrATarea;
+
 window.otdWkIrSiguiente = function(){
   const pend = _otdWkPendientes();
   if (!pend.length){
@@ -13126,6 +13151,11 @@ const OTD_IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
 const OTD_SOLO_LECTURA = {{ 'true' if ot_solo_lectura else 'false' }};
 let OTD_CORRIGIENDO = false;   // superadmin activó la corrección con traza
 function otdBloqueadaPorCierre(){ return OTD_SOLO_LECTURA && !OTD_CORRIGIENDO; }
+// 📸 2026-11-04 (OT-2026-00359: «dice que está completo pero también incompleto»): mientras la OT sigue sin firmar, TODO hallazgo (una tarea en
+// Falla o Alerta, o un Resultado distinto de «Apto») cuenta como pendiente hasta tener su foto, tenga o no la marca «foto si hay hallazgo» en su
+// plantilla: es lo mismo que exige el servidor al firmar (_ot_hallazgos_sin_foto_razones, desde el 30-oct). Una OT ya firmada o cerrada no se
+// vuelve a evaluar: es evidencia, y ahí ya no hay nada que el técnico pueda subsanar.
+const OTD_FOTO_HALLAZGO_ESTRICTA = {{ 'true' if (not ot_solo_lectura and ((v.estado or '')|lower) not in ('firmada_tecnico', 'pendiente_aprobacion', 'completada', 'cerrada', 'cancelada', 'anulada')) else 'false' }};
 
 /* Desbloqueo consciente, solo superadmin. No es un "editar" cualquiera:
    la OT ya está firmada y cerrada, así que se pide confirmación explícita
@@ -13238,10 +13268,37 @@ function otdChkGrupoClave(t){
   if (t.item_manual_id) return 'i' + t.item_manual_id;
   return 'x0';
 }
-function otdChkEvaluar(tareas, estados){
+/* 📸 2026-11-04 — ¿esta tarea es un HALLAZGO para la firma? Es la MISMA definición que el candado del servidor (ot_hallazgos.evaluar_tarea):
+   una verificación en Alerta o Falla, o el «Resultado del control» con una opción que no sea «Apto», «No llegó» ni «Sin resultado».
+   «No aplica» no cuenta. (tests/test_ot_4nov_firma_foto_hallazgo.py corre las dos con los mismos casos.) */
+function otdChkOpcionEsHallazgo(op){   // `op` ya normalizada (otdChkNorm); espejo de ot_hallazgos.severidad_resultado
+  if (!op || op === 'apto' || op === 'no llego' || op === 'sin resultado') return false;
+  if (op === 'apto con observaciones') return true;
+  if (/\brepar/.test(op) || /\bbaja\b/.test(op)) return true;
+  if (op.indexOf('fuera de servicio') >= 0 || /\bno apto\b/.test(op)) return true;
+  if (op.indexOf('pendiente') >= 0 || op.indexOf('diagnostic') >= 0) return true;
+  if (op.indexOf('no lleg') === 0) return false;
+  return true;
+}
+function otdChkEsHallazgoFirma(t){
+  if (otdChkVj(t).na) return false;
+  const tr = String((t && t.tipo_respuesta) || '').trim().toLowerCase();
+  if (tr === 'verificacion') return ['alerta', 'falla'].includes(otdChkValorVerif(t));
+  if (tr === 'lista') return otdChkEsResultado(t) && otdChkOpcionEsHallazgo(otdChkOpcion(t));
+  return false;
+}
+function otdChkEquipoExento(mid){   // el equipo saltado / fuera de servicio / de baja no exige checklist ni la foto de sus hallazgos (como el servidor)
+  try {
+    const it = (typeof document !== 'undefined') ? document.querySelector('#otdWkCard .otd-wk-item[data-mid="' + String(mid) + '"]') : null;
+    return !!(it && it.dataset && it.dataset.excluido === '1');
+  } catch(e){ return false; }
+}
+function otdChkEvaluar(tareas, estados, estricto){
   // 🧰 2026-10-20: `estados` = {item_manual_id: estado} de los productos cuyo checklist se dispensa por una ACCIÓN del
   // técnico («No llegó», «No tiene arreglo», «No se puede usar»): espejo de _chk_revision_evaluar(tareas, estados).
   estados = estados || ((typeof OTD_PROD_DISPENSA !== 'undefined') ? OTD_PROD_DISPENSA : {});
+  // 📸 2026-11-04: `estricto` = con la OT aún sin firmar, todo hallazgo sin foto queda pendiente (lo que exige el servidor al firmar).
+  if (estricto === undefined) estricto = (typeof OTD_FOTO_HALLAZGO_ESTRICTA !== 'undefined') ? !!OTD_FOTO_HALLAZGO_ESTRICTA : false;
   const grupos = {};
   (tareas || []).forEach(t => { const k = otdChkGrupoClave(t); (grupos[k] = grupos[k] || []).push(t); });
   const noLlego = [], porTarea = {}, dispensados = [];
@@ -13259,6 +13316,8 @@ function otdChkEvaluar(tareas, estados){
     const esNoLlego = k[0] === 'i' && Object.keys(opciones).some(id => opciones[id] === 'no llego');
     if (esNoLlego) noLlego.push(Number(k.slice(1)));
     const hayFalla = ts.some(t => otdChkValorVerif(t) === 'falla');
+    // 📸 2026-11-04: un equipo exento (saltado, fuera de servicio, de baja) no pide la foto de sus hallazgos: el servidor tampoco se la exige.
+    const _exentoGrupo = !!estricto && k[0] === 'm' && otdChkEquipoExento(k.slice(1));
     const textos = ts.filter(t => String(t.tipo_respuesta || '').trim().toLowerCase() === 'texto');
     let argumento = textos.filter(t => !!Number(t.obligatoria)).map(t => t.id);
     if (!argumento.length){
@@ -13276,9 +13335,12 @@ function otdChkEvaluar(tareas, estados){
         const vj = otdChkVj(t);
         const nFotos = (t.n_fotos != null) ? Number(t.n_fotos) : (t.fotos || []).length;
         const fsh = (t.foto_si_hallazgo === true || Number(t.foto_si_hallazgo) > 0);
-        if (fsh && !vj.na && !nFotos){
+        // 📸 2026-11-04: sin la marca de la plantilla, un hallazgo igual pide su foto (la firma la exige): `_firma`.
+        const _firma = !!estricto && !_exentoGrupo && otdChkEsHallazgoFirma(t);
+        if ((fsh || _firma) && !vj.na && !nFotos){
           const op = opciones[t.id];
-          const hallazgo = (tr === 'verificacion' && ['alerta', 'falla'].includes(otdChkValorVerif(t))) ||
+          const hallazgo = _firma ||
+                           (tr === 'verificacion' && ['alerta', 'falla'].includes(otdChkValorVerif(t))) ||
                            (tr === 'lista' && !['', 'apto', 'no llego'].includes(op));
           if (hallazgo){ exig = true; hecha = false; motivo = 'foto_hallazgo'; }
         }
@@ -14724,7 +14786,9 @@ function otdChkFotoBtnHtml(t){
   // 📸 2026-10-18 «foto solo si hay hallazgo»: el botón aparece cuando la tarea quedó en Alerta/Falla (o el Resultado
   // no es Apto ni No llegó) y, si ya tiene fotos, para agregar otra. Sin hallazgo no se pide ni se muestra.
   const _pideHallazgo = !!(t._ev && t._ev.motivo === 'foto_hallazgo');
-  const _fshConFotos = !!((t.foto_si_hallazgo === true || Number(t.foto_si_hallazgo) > 0) && t.fotos && t.fotos.length);
+  // 📸 2026-11-04: un hallazgo de la OT sin firmar (aunque su plantilla no lleve la marca) también deja «Agregar otra» una vez que tiene foto.
+  const _esHallazgoFirma = (typeof OTD_FOTO_HALLAZGO_ESTRICTA !== 'undefined') && OTD_FOTO_HALLAZGO_ESTRICTA && otdChkEsHallazgoFirma(t);
+  const _fshConFotos = !!((t.foto_si_hallazgo === true || Number(t.foto_si_hallazgo) > 0 || _esHallazgoFirma) && t.fotos && t.fotos.length);
   if (otdBloqueadaPorCierre()){
     if ((exigeFoto || _pideHallazgo) && !(t._ev && t._ev.dispensada) && !(t.fotos && t.fotos.length)){
       return `<span class="otd-chk-sinfoto" title="La tarea exigía evidencia fotográfica y la OT se cerró sin ella">
@@ -16253,8 +16317,38 @@ const OT2F = (function(){
     }
 
     var faltantes = Array.isArray(d.faltantes) ? d.faltantes : [];
+    // 📸 2026-11-04 (OT-2026-00359): los hallazgos sin foto llegan uno por uno (equipo — tarea). Se muestran así y el botón lleva a la
+    // primera, en vez de una lista de títulos sueltos que no dice en qué equipo buscar.
+    var pend = Array.isArray(d.pendientes) ? d.pendientes.filter(function(p){ return p && p.tarea_id; }) : [];
+    if (pend.length){
+      var resto = faltantes.filter(function(f){ return String(f).indexOf('Falta la foto de evidencia') !== 0; });
+      var lineas = pend.slice(0, 8).map(function(p){
+        return '· <b>' + otdEsc(p.equipo || 'Equipo') + '</b> — ' + otdEsc(p.titulo || '');
+      });
+      if (pend.length > 8) lineas.push('· y ' + (pend.length - 8) + ' más');
+      resto.slice(0, 4).forEach(function(f){ lineas.push('· ' + otdEsc(f)); });
+      var irFoto = await ilusConfirm({
+        title: d.titulo || 'Faltan fotos obligatorias',
+        message: 'Cada hallazgo (tarea en Falla o Alerta) necesita al menos una foto de evidencia. Te llevo a la primera.',
+        sub: lineas.join('<br>'), subHtml: true,
+        okLabel: 'Ir a la primera', cancelLabel: 'Cerrar', type: 'warning',
+      });
+      if (irFoto && !(window.otdIrATarea && window.otdIrATarea(pend[0].tarea_id, pend[0].maquina_id)) && window.otdWkIrSiguiente) window.otdWkIrSiguiente();
+      return false;
+    }
     var lista = faltantes.slice(0, 6).map(function(f){ return '· ' + otdEsc(f); }).join('<br>');
     if (faltantes.length > 6) lista += '<br>· y ' + (faltantes.length - 6) + ' más';
+    // El servidor ya decía el primer equipo con tareas pendientes (primer_equipo_id) y la pantalla no lo usaba: ahora lleva hasta allí.
+    if (d.primer_equipo_id){
+      var irEq = await ilusConfirm({
+        title: d.titulo || 'Falta algo antes de firmar',
+        message: d.detalle || 'Resuelve esto y vuelve a intentarlo.',
+        sub: lista || '', subHtml: true,
+        okLabel: 'Ir al equipo', cancelLabel: 'Cerrar', type: 'warning',
+      });
+      if (irEq && !(window.otdIrATarea && window.otdIrATarea(null, d.primer_equipo_id)) && window.otdWkIrSiguiente) window.otdWkIrSiguiente();
+      return false;
+    }
     await ilusAlert({
       title: d.titulo || 'Falta algo antes de firmar',
       message: d.detalle || 'Resuelve esto y vuelve a intentarlo.',
