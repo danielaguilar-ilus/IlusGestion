@@ -85,6 +85,9 @@ class TestListaResponsiva(unittest.TestCase):
         # 184 px: 8 íconos caben en 2 filas parejas (4+4); con 176 px el octavo caía solo en una 3.ª fila, y con 186 px la tabla ya no cabía
         # a 1240 de ventana (medido en Chromium, 5-nov)
         self.assertIn('.cot-lista td[data-label="Acciones"]{width:184px;min-width:184px', CSS)
+        # el relleno lateral de las celdas: 5 px. Con 6 px y Acciones de 184 px la tabla con datos reales medía 965 px y entre 1240 y 1244 px de
+        # ventana asomaban 1-4 px de scroll interno (medido en producción, 4-nov)
+        self.assertIn(".cot-lista th,.cot-lista td{padding:10px 5px;vertical-align:middle}", CSS)
         self.assertIn(".cot-lista .cot-docs-chips{display:flex;flex-direction:column", CSS)
 
     def test_todo_va_bajo_cot_lista_para_no_tocar_las_otras_tablas(self):
