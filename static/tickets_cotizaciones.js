@@ -2469,7 +2469,11 @@ function cotPorPagina(v){
 const _COT_PRIM = { draft: ['enviar'], sent: ['aprobar', 'pdf'], approved: ['pdf'], rejected: ['pdf'] };
 function _cotAcciones(row){
   const td = row.querySelector('td[data-label="Acciones"]');
-  return td ? Array.prototype.slice.call(td.querySelectorAll(':scope > [data-acc]')) : [];
+  const acc = td ? Array.prototype.slice.call(td.querySelectorAll(':scope > [data-acc]')) : [];
+  // 2026-11-05: en la tarjeta compacta los botones de ticket (Generar / Asociar / Quitar) también viven en «Más»; son los MISMOS botones
+  // de la celda «Ticket» (quedan ocultos en tarjeta y el menú los «toca»), igual que el resto.
+  const tk = row.querySelector('td[data-label="Ticket"]');
+  return acc.concat(tk ? Array.prototype.slice.call(tk.querySelectorAll('[data-acc]')) : []);
 }
 function _cotPrincipal(row, accs){
   const pref = (_COT_PRIM[row.dataset.estado] || ['pdf']).concat(['pdf', 'enviar']);

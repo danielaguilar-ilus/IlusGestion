@@ -147,7 +147,7 @@
   .visor-head .vh-doc { text-align: right; color: #fff; }
   .visor-head .vh-cot { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
   .visor-head .vh-num { font-size: 19px; font-weight: 900; color: var(--ilus-red); line-height: 1.15; }
-  .visor-head .vh-fecha { font-size: 7.5px; color: #9ca3af; margin-top: 1px; }
+  .visor-head .vh-fecha { font-size: 12px; color: #9ca3af; margin-top: 2px; }   /* 2026-11-05: era 7,5 px (ilegible en pantalla); va sobre el banner negro (8:1) */
   .visor-head-bar {
     width: 210mm; max-width: 100%; margin: 0 auto; height: 2mm;
     background: linear-gradient(90deg, var(--ilus-red) 0 25%, var(--ilus-black) 25% 100%);
@@ -158,7 +158,7 @@
      texto/estilo que tickets_module.py::_tk_cotizacion_pdf_bytes). */
   .visor-foot {
     width: 210mm; max-width: 100%; margin: 4mm auto 14px; box-sizing: border-box;
-    font-size: 10px; color: #6b7280; padding: 3mm 12mm 0;
+    font-size: 12px; color: #6b7280; padding: 3mm 12mm 0;
     display: flex; justify-content: space-between; align-items: center;
     border-top: 1.5px solid var(--ilus-red);
   }
@@ -430,6 +430,17 @@
   @media (max-width: 768px) {
     .sheet { width: auto; }
     .datos-grid, .rico-grid, .cierre-grid, .firmas-grid { grid-template-columns: 1fr; }
+    /* 2026-11-05 (Daniel: «las cotizaciones y muchas partes responsivas se ven pésimas»): a 390 px el banner del visor se pasaba 59 px a la
+       derecha y cortaba el N° de cotización (la página tenía scroll de lado). Solo pantalla: el PDF no usa este banner ni estas reglas. */
+    .visor-head { flex-wrap: wrap; gap: 8px 12px; padding: 4mm; margin-top: 0; }
+    .visor-head .vh-logos { flex: 1 1 100%; flex-wrap: wrap; gap: 3mm; min-width: 0; }
+    .visor-head .vh-ilus { height: 11mm; max-width: 100%; }
+    .visor-head .vh-doc { flex: 1 1 100%; min-width: 0; text-align: left; }
+    .visor-head .vh-doc > div { overflow-wrap: anywhere; }
+    .visor-foot { padding: 3mm 4mm 0; flex-wrap: wrap; gap: 4px 12px; }
+    .sheet-pad { padding-left: 4mm; padding-right: 4mm; }
+    .toolbar { padding: 10px 12px; }
+    .toolbar .tb-title { font-size: 11pt; overflow-wrap: anywhere; }
   }
 </style>
 </head>

@@ -25,7 +25,7 @@
               title="Clic para actualizar la UF ahora desde mindicador.cl. Se congela en cada cotización al emitirla; editable en Clasificación.">
         <i class="bi bi-arrow-repeat" id="cotUfChipIco" style="color:#4ade80;"></i>
         <span id="cotUfChipVal">{% if uf_info and uf_info.valor %}UF ${{ uf_info.valor | fkg(2) }}{% else %}UF —{% endif %}</span>
-        <span id="cotUfChipMeta" style="font-weight:600;color:#9ca3af;font-size:.62rem;">{% if uf_info and uf_info.fecha %}{{ uf_info.fecha }} · mindicador.cl{% endif %}</span>
+        <span id="cotUfChipMeta" style="font-weight:600;color:#9ca3af;font-size:.75rem;">{% if uf_info and uf_info.fecha %}{{ uf_info.fecha }} · mindicador.cl{% endif %}</span>
       </button>
     </div>
   </div>
@@ -109,10 +109,14 @@
 <div class="ilus-card">
   <div class="ilus-card-header">
     <span><i class="bi bi-file-earmark-text me-2"></i>Gestión de cotizaciones</span>
-    <span class="small fw-normal" style="color:#9ca3af;">{{ cotizaciones|length }} cotización(es) listada(s)</span>
+    {#- el texto va sobre la banda negra del encabezado (8:1): se declara el fondo aquí para que se vea el contraste real. -#}
+    <span class="small fw-normal" style="color:#9ca3af;background:#0a0a0a;">{{ cotizaciones|length }} cotización(es) listada(s)</span>
   </div>
   <div class="table-responsive">
-    <table class="table ilus-table mb-0 table-mobile-cards">
+    {#- 2026-11-05 (Daniel: «la tabla no cabe… las tarjetas del celular son muy grandes y feas… letras muy chicas»): `cot-lista` = tabla que CABE en
+        1280/1366/1440 (las celdas se parten en vez de empujar la tabla) y, bajo 1200 px, tarjetas compactas. Ver «LISTA RESPONSIVA» en
+        tickets_cotizaciones.css. No se quitó ninguna columna ni botón (REGLA #4.2): se reacomodan. -#}
+    <table class="table ilus-table mb-0 table-mobile-cards cot-lista">
       <thead>
         <tr>
           <th>Número</th>
@@ -137,12 +141,12 @@
             data-estado="{{ c.estado }}" title="Clic para ver / editar esta cotización">
           <td data-label="Número"><span class="tk-num">{{ c.numero_cotizacion or ('#' ~ c.id) }}</span></td>
           <td data-label="Cliente"><strong>{{ c.empresa or c.rut or 'Sin cliente' }}</strong></td>
-          <td data-label="Estado" style="white-space:nowrap;">
+          <td data-label="Estado">
             <span class="tk-badge cb-{{ c.estado }}">{{ c.estado | cotiz_estado }}</span>
             {% if c.vencida %}<span class="tk-badge cb-vencida" title="La validez ya pasó">Vencida</span>{% endif %}
             {% if c.editada_post_aprobacion %}<i class="bi bi-pencil-fill" style="color:#f59e0b;font-size:.8rem;" title="Editada después de aprobarse — revisa el historial"></i>{% endif %}
           </td>
-          <td data-label="Fecha" style="font-size:.8rem;color:#6b7280;white-space:nowrap;">{{ c.created_at | chile_fmt }}</td>
+          <td data-label="Fecha">{{ c.created_at | chile_fmt }}</td>
           <td data-label="Total" class="text-end">
             {% if c.total %}
             <span class="tk-row-total">
@@ -181,7 +185,7 @@
             </span>
             {% endif %}
           </td>
-          <td data-label="Ticket" style="white-space:nowrap;">
+          <td data-label="Ticket">
             {% if c.ticket_id %}
             <a class="tk-row-ticket-link" href="/tickets/{{ c.ticket_id }}" target="_blank" rel="noopener">
               <i class="bi bi-ticket-perforated-fill me-1"></i>{{ c.numero_ticket or ('Ticket #' ~ c.ticket_id) }}
@@ -191,12 +195,14 @@
                qué ticket se imputa una cotización es financiero. #}
             {% if not es_tecnico %}
             <button type="button" class="tk-row-btn-unlink" title="Quitar esta cotización del ticket (no la elimina)"
+                    data-acc="ticket_quitar" data-lbl="Quitar del ticket" data-ico="bi-x-circle"
                     onclick="cotDesasociarTicket({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}', '{{ (c.numero_ticket or ('Ticket #' ~ c.ticket_id))|e }}')">
               <i class="bi bi-x-lg"></i>
             </button>
             {% endif %}
             {% else %}
-            <button type="button" class="tk-row-btn-ticket" onclick="cotGenerarTicket({{ c.id }}, this)">
+            <button type="button" class="tk-row-btn-ticket" data-acc="ticket_nuevo" data-lbl="Generar ticket" data-ico="bi-ticket-perforated"
+                    onclick="cotGenerarTicket({{ c.id }}, this)">
               <i class="bi bi-ticket-perforated me-1"></i>Generar ticket
             </button>
             {# 2026-09-05 (Daniel: "puedo llamar una cotización de un ticket y
@@ -205,13 +211,14 @@
                esto los enlaza sin duplicar nada. #}
             {% if not es_tecnico %}
             <button type="button" class="tk-row-btn-linkticket" title="Asociar esta cotización a un ticket que ya existe"
+                    data-acc="ticket_asociar" data-lbl="Asociar a un ticket que ya existe" data-ico="bi-link-45deg"
                     onclick="cotAsociarTicket({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}')">
               <i class="bi bi-link-45deg me-1"></i>Asociar
             </button>
             {% endif %}
             {% endif %}
           </td>
-          <td data-label="Acciones" class="text-center" style="white-space:nowrap;">
+          <td data-label="Acciones" class="text-center">
             {# 2026-08-08 (Daniel): el PDF se ve en un modal, no en pestaña nueva.
                El href se conserva (clic derecho / clic central siguen abriendo en
                pestaña nueva -- REGLA #4.2, no se quita esa opción) y el modal
@@ -443,7 +450,7 @@
                 <div class="cot-wiz-ts-pill" data-v="venta_repuesto" style="--tc:#1d4ed8;--tbg:#eff6ff;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
                      title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
                   <i class="bi bi-boxes"></i><span>Venta de repuesto</span></div>
-                <div class="cot-wiz-ts-pill" data-v="visita_tecnica" style="--tc:#16a34a;--tbg:#f0fdf4;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
+                <div class="cot-wiz-ts-pill" data-v="visita_tecnica" style="--tc:#15803d;--tbg:#f0fdf4;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
                      title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
                   <i class="bi bi-clipboard-check"></i><span>Visita técnica</span></div>
                 <div class="cot-wiz-ts-pill" data-v="otro" style="--tc:#6b7280;--tbg:#f9fafb;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
@@ -569,7 +576,7 @@
         {# Solo visible cuando origen='ficha' Y la ficha tiene equipos
            activos (_WIZ.fichaMaquinas, cargados por _cotWizCargarFichaResumen). #}
         <button type="button" id="btnCotWizTraerEquipos" class="btn btn-sm fw-bold" style="display:none;
-                background:#f0fdf4;color:#16a34a;border:1.5px solid #16a34a;border-radius:9px;padding:9px 16px;"
+                background:#f0fdf4;color:#15803d;border:1.5px solid #16a34a;border-radius:9px;padding:9px 16px;"
                 onclick="cotWizAbrirEquiposFicha()">
           <i class="bi bi-hdd-stack me-1"></i>Traer equipos de la ficha</button>
         {# 2026-08-20 (Daniel, voz a texto): "dejar manual el ingreso de
@@ -591,7 +598,7 @@
            vive el «marcar/desmarcar todos» del Plan) se oculta: este botón hace lo mismo. #}
         <button type="button" id="btnCotWizTogPlanTodosM" class="btn btn-sm fw-bold cot-wiz-plan-todos-m" hidden
                 onclick="cotWizTogPlanTodos()"><i class="bi bi-check-all me-1"></i>Plan: marcar/desmarcar todos</button>
-        <span class="text-muted" id="cotWizPaso2Hint" style="font-size:.74rem;">Trae los productos de un documento del ERP y clasifícalos aquí mismo</span>
+        <span class="text-muted" id="cotWizPaso2Hint" style="font-size:.78rem;">Trae los productos de un documento del ERP y clasifícalos aquí mismo</span>
       </div>
       <div id="cotWizEquiposFichaPanel" style="display:none;margin:0 0 4px;"></div>
       <div id="cotWizManualPanel" style="display:none;margin:0 0 4px;"></div>
@@ -699,7 +706,7 @@
                  onkeydown="if(event.key==='Enter'){event.preventDefault();cotEnvAgregar();}" oninput="cotEnvValidarInput()">
           <button type="button" class="btn" id="cotEnvAddBtn" style="background:#0a0a0a;color:#fff;font-weight:700;" onclick="cotEnvAgregar()">Agregar</button>
         </div>
-        <div id="cotEnvInputHint" style="font-size:.7rem;color:#9ca3af;">Se precargan el cliente, el ejecutivo y tu correo. Puedes agregar o quitar.</div>
+        <div id="cotEnvInputHint" style="font-size:.78rem;color:#6b7280;">Se precargan el cliente, el ejecutivo y tu correo. Puedes agregar o quitar.</div>
         <label class="form-label fw-bold mt-3" style="font-size:.78rem;">Mensaje (opcional)</label>
         <textarea id="cotEnvMensaje" class="form-control" rows="2" placeholder="Ej: Estimado, adjuntamos la cotización solicitada."></textarea>
       </div>
@@ -754,7 +761,7 @@
             <input type="text" id="cotAsocTkQ" class="form-control"
                    placeholder="Número (TK-2026-00123), título, empresa o RUT" autocomplete="off">
           </div>
-          <div style="font-size:.72rem;color:#6b7280;margin-top:6px;">
+          <div style="font-size:.78rem;color:#6b7280;margin-top:6px;">
             Se precarga el cliente de esta cotización. Escribe para buscar en todos los tickets.
           </div>
         </div>
