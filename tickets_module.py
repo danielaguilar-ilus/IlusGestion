@@ -4080,7 +4080,8 @@ def register_tickets_routes(app, ctx):
                           "precio_uf": _precio_uf_str(pu),
                           "clase_producto": it.get("clase_producto") or None,
                           # 30-oct (Daniel, COT-000195: «que diga metros en el cable»): «5 m» en la columna Unidades (None = como siempre).
-                          "unidad": _cotcomp.unidad_de(it.get("descripcion"), it.get("erp_kopr")) or None,
+                          # 4-nov (COT-000203): la clase del categorizador manda; un equipo con «cable» en el nombre no lleva metros.
+                          "unidad": _cotcomp.unidad_de(it.get("descripcion"), it.get("erp_kopr"), it.get("clase_producto")) or None,
                           "es_cobrable": es_cobrable,
                           "documento": _nudo or "—",
                           # Tipo de documento ERP (FCV/NVV/GDV/...) — Daniel:

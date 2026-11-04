@@ -127,6 +127,81 @@ class TestMetros(unittest.TestCase):
         celdas = re.findall(r'<td class="cant">([^<]*)</td>', html)
         self.assertEqual([c.strip() for c in celdas], ["5 m", "1"])
 
+# Las líneas REALES (nombre y clase del categorizador) de las cotizaciones de producción, leídas el 4-nov-2026.
+COT_203_FREEMOTION = _it("G624-03", "Freemotion Dual Cable Cross Negra", 1, "dual_cable_cross")
+COT_195_REAL = [_it("RE05SDP176", "Cable de Fuerza 5mm Black", 5, "repuesto"), _it("INS", "Instalación cable de fuerza", 1, "selectorizador_pesos")]
+
+
+class TestClaseDelCategorizador(unittest.TestCase):
+    """Daniel (4-nov, COT-000203): Aarón vio «metros de cable» en un EQUIPO. El nombre de un equipo puede llevar «cable» o «cinta» sin ser un
+    material; el categorizador del Catálogo (clase_producto) ya sabe qué es: si dice equipo, es un equipo."""
+
+    def test_el_equipo_de_la_cot_203_no_lleva_metros_ni_es_material(self):
+        self.assertEqual(C.unidad_de(COT_203_FREEMOTION["descripcion"], COT_203_FREEMOTION["sku"], COT_203_FREEMOTION["clase_producto"]), "")
+        self.assertEqual(C.clasificar_linea("G624-03", "Freemotion Dual Cable Cross Negra", "dual_cable_cross"), C.EQUIPO)
+
+    def test_sigue_igual_la_cot_195_que_a_daniel_le_encantaba(self):
+        """Con la clase real (repuesto) el cable sigue en metros y el servicio sigue siendo servicio, aunque la instalación tenga clase de equipo."""
+        c = C.componer(COT_195_REAL)
+        self.assertEqual({k["lbl"]: k["num"] for k in c["cards"]}, {"Servicio considerado": 1, "de material": "5 m"})
+        self.assertEqual(c["detalle_sub"], "1 servicio · 5 m de material · precios unitarios en UF")
+        self.assertEqual(C.unidad_de("Cable de Fuerza 5mm Black", "RE05SDP176", "repuesto"), "m")
+        self.assertEqual(C.unidad_de("Instalación cable de fuerza", "INS", "selectorizador_pesos"), "", "un servicio nunca lleva metros")
+        self.assertEqual(C.clasificar_linea("INS", "Instalación cable de fuerza", "selectorizador_pesos"), C.SERVICIO)
+
+    def test_una_cotizacion_de_equipos_con_un_dual_cable_cuenta_sus_equipos(self):
+        c = C.componer([_it("FL1826", "ILUS Leg Press Unilateral 35 Grados Black", 1, "selectorizador_pesos"), COT_203_FREEMOTION,
+                        _it("005503BBC", "M3i Lite Indoor Bike Keiser C/ Bluethooth incorpo", 6, "bicicleta")])
+        self.assertEqual((c["equipos"], c["materiales"], c["servicios"]), (8, 0, 0))
+        self.assertEqual({k["lbl"]: k["num"] for k in c["cards"]}["Categorías de equipos"], 3)
+
+    def test_un_equipo_con_cinta_en_el_nombre_no_es_material(self):
+        """«Cinta» está en la lista de materiales por nombre: una trotadora llamada «Cinta de correr» se contaba como material."""
+        self.assertEqual(C.clasificar_linea("T1", "Cinta de correr ILUS", "trotadora"), C.EQUIPO)
+        self.assertEqual(C.clasificar_linea("T1", "Cinta de correr ILUS", None), C.MATERIAL, "sin clase decide el nombre, como siempre")
+
+    def test_repuesto_o_accesorio_se_vende_por_metro_aunque_la_palabra_no_vaya_primera(self):
+        self.assertEqual(C.unidad_de("Repuesto cable de acero 6mm", "", "repuesto"), "m")
+        self.assertEqual(C.unidad_de("Piola de acero 6mm", "", "accesorio"), "m")
+        self.assertEqual(C.unidad_de("Cable USB para consola", "", "repuesto"), "", "un cable USB se cuenta en unidades aunque sea repuesto")
+
+    def test_sin_clase_util_solo_si_el_nombre_empieza_con_la_palabra(self):
+        for clase in (None, "", "otro", "sin_clasificar"):
+            self.assertEqual(C.unidad_de("Cable de Fuerza 5mm Black", "", clase), "m", clase)
+            self.assertEqual(C.unidad_de("Dual Cable Cross Negra", "", clase), "", f"{clase!r}: la palabra va en el medio")
+            self.assertEqual(C.unidad_de("Torre de cable ajustable", "", clase), "", f"{clase!r}")
+
+    def test_cualquier_clase_nueva_del_catalogo_cuenta_como_equipo(self):
+        """Si Daniel agrega una clase en /catalogo/clases, no hay que tocar el código."""
+        self.assertTrue(C.es_clase_de_equipo("remo_nuevo_2027"))
+        for no in (None, "", "accesorio", "repuesto", "otro", "sin_clasificar", "  Repuesto "):
+            self.assertFalse(C.es_clase_de_equipo(no), repr(no))
+
+    def test_la_clase_llega_desde_la_cotizacion_a_los_dos_lugares_donde_se_decide(self):
+        with open(os.path.join(RAIZ, "tickets_module.py"), encoding="utf-8") as fh:
+            t = fh.read()
+        self.assertIn('_cotcomp.unidad_de(it.get("descripcion"), it.get("erp_kopr"), it.get("clase_producto"))', t)
+        with open(os.path.join(RAIZ, "cot_composicion.py"), encoding="utf-8") as fh:
+            m = fh.read()
+        self.assertIn('unidad_de(it.get("descripcion"), it.get("sku"), it.get("clase_producto"))', m)
+
+    def test_el_pdf_de_la_cot_203_no_muestra_metros(self):
+        import re
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(RAIZ, "templates", "tickets")), autoescape=True)
+        env.globals["clp"] = lambda v: str(v)
+        env.filters["rut_fmt"] = lambda v: v
+        items = [{"sku": "G624-03", "descripcion": "Freemotion Dual Cable Cross Negra", "cantidad": 1,
+                  "unidad": C.unidad_de("Freemotion Dual Cable Cross Negra", "G624-03", "dual_cable_cross") or None, "precio_uf": "1,0",
+                  "total": 1, "documento": "—", "documento_tido": "", "clase_producto": "dual_cable_cross", "es_cobrable": True, "precio_unitario": 1}]
+        cot = {"id": 1, "numero": "COT-203", "fecha_emision": "", "empresa": "", "rut": "", "direccion": "", "comuna": "", "region": "", "email": "",
+               "telefono": "", "ejecutivo": "", "contacto_nombre": "", "tipo_servicio_label": "Instalación", "subtotal": 0, "descuento_pct": 0,
+               "descuento_monto": 0, "costo_ruta": 0, "iva_pct": 19, "iva_monto": 0, "total": 0}
+        html = env.get_template("cotizacion_pdf.html").render(cot=cot, items=items, modo_rico=False, mostrar_col_documento=False,
+                                                              terminos_pares=[], uf_info=None, kpis=None, rico_textos=None)
+        self.assertEqual([c.strip() for c in re.findall(r'<td class="cant">([^<]*)</td>', html)], ["1"])
+
+
 class TestCableado(unittest.TestCase):
     def test_tickets_module_usa_la_composicion(self):
         with open(os.path.join(RAIZ, "tickets_module.py"), encoding="utf-8") as fh:

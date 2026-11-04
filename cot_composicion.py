@@ -17,6 +17,12 @@ import unicodedata
 SERVICIO, MATERIAL, EQUIPO = "servicio", "material", "equipo"
 
 _CLASES_MATERIAL = ("accesorio", "repuesto")
+# 🏷️ 4-nov (Daniel, COT-000203: Aarón vio «metros de cable» en un EQUIPO, el «Freemotion Dual Cable Cross Negra»): el nombre de un equipo puede
+# llevar la palabra «cable» o «cinta» sin ser un material. El categorizador del Catálogo (cat_clases_producto) ya sabe qué es cada producto:
+# accesorio y repuesto son material; «otro» y «sin clasificar» son «no supe»; CUALQUIER otra clase (selectorizador, bicicleta, trotadora, racks,
+# dual cable cross… y las que se agreguen en /catalogo/clases) es un EQUIPO. Con una clase de equipo, ni el nombre ni una palabra suelta lo
+# vuelven material ni le ponen metros.
+_CLASES_NO_EQUIPO = ("", "accesorio", "repuesto", "otro", "sin_clasificar")
 _RE_SERVICIO = re.compile(
     r"^\s*(instalacion|desinstalacion|mantencion|mantenimiento|visita|despacho|flete|traslado|transporte|armado|puesta en marcha|"
     r"servicio|capacitacion|descuento|mano de obra|revision|diagnostico|reparacion|retiro)\b")
@@ -29,28 +35,50 @@ def _sin_acentos(txt):
     return "".join(c for c in unicodedata.normalize("NFD", str(txt or "")) if unicodedata.category(c) != "Mn").lower()
 
 
+def _clase(clase):
+    return str(clase or "").strip().lower()
+
+
+def es_clase_de_equipo(clase):
+    """¿El categorizador del Catálogo reconoce esta clase como un EQUIPO? (cualquier clase que no sea accesorio, repuesto, «otro» o vacía)."""
+    return _clase(clase) not in _CLASES_NO_EQUIPO
+
+
 def clasificar_linea(sku, descripcion, clase=None):
-    """'servicio' | 'material' | 'equipo' para UNA línea de la cotización."""
+    """'servicio' | 'material' | 'equipo' para UNA línea de la cotización. Un servicio manda siempre; después manda la CLASE del categorizador
+    (un equipo con «cinta» o «cable» en el nombre sigue siendo un equipo); solo sin clase útil decide el nombre."""
     s = str(sku or "").strip().upper()
     d = _sin_acentos(descripcion)
     if s.startswith("ZZ") or s == "DE" or _RE_SERVICIO.match(d):
         return SERVICIO
-    if str(clase or "").strip().lower() in _CLASES_MATERIAL or _RE_MATERIAL.match(d):
+    if es_clase_de_equipo(clase):
+        return EQUIPO
+    if _clase(clase) in _CLASES_MATERIAL or _RE_MATERIAL.match(d):
         return MATERIAL
     return EQUIPO
 
 
 _RE_METROS = re.compile(r"\b(cable|piola|cuerda|cordel|manguera)s?\b")
+_RE_METROS_AL_INICIO = re.compile(r"^\s*(cable|piola|cuerda|cordel|manguera)s?\b")
 _RE_NO_METROS = re.compile(r"\b(usb|hdmi|ethernet|cargador|adaptador|conector|poder|alimentacion|bluetooth|sensor|pulsometro)\b")
 
 
-def unidad_de(descripcion, sku=""):
+def unidad_de(descripcion, sku="", clase=None):
     """'m' si la línea se vende por metro (cable, piola, cuerda…), si no ''. Daniel (30-oct, COT-000195): «que diga metros en el cable».
-    El sistema no guarda la unidad de medida de cada línea; se deduce de la descripción (y nunca de un servicio ZZ…)."""
+    El sistema no guarda la unidad de medida de cada línea; se deduce de la clase y del nombre (y nunca de un servicio ZZ…):
+      · clase de EQUIPO del categorizador → nunca («Freemotion Dual Cable Cross», COT-000203, no se vende por metro);
+      · clase repuesto/accesorio → sí, aunque la palabra no vaya primera;
+      · sin clase útil (vacía u «otro») → solo si el nombre EMPIEZA con la palabra («Cable de Fuerza 5mm Black»), no si va en el medio."""
     d = _sin_acentos(descripcion)
     if str(sku or "").strip().upper().startswith("ZZ") or _RE_SERVICIO.match(d):
         return ""
-    return "m" if _RE_METROS.search(d) and not _RE_NO_METROS.search(d) else ""
+    if es_clase_de_equipo(clase):
+        return ""
+    if not _RE_METROS.search(d) or _RE_NO_METROS.search(d):
+        return ""
+    if _clase(clase) in _CLASES_MATERIAL:
+        return "m"
+    return "m" if _RE_METROS_AL_INICIO.match(d) else ""
 
 
 def _cant_txt(n, unidad):
@@ -86,7 +114,7 @@ def componer(items, dias_habiles=None):
         tipo = clasificar_linea(it.get("sku"), it.get("descripcion"), it.get("clase_producto"))
         fila = {"nombre": str(it.get("descripcion") or it.get("sku") or "").strip(), "cant": cant,
                 "clase": (str(it.get("clase_producto") or "").strip() or None),
-                "unidad": unidad_de(it.get("descripcion"), it.get("sku"))}
+                "unidad": unidad_de(it.get("descripcion"), it.get("sku"), it.get("clase_producto"))}
         {SERVICIO: srv, MATERIAL: mat, EQUIPO: eq}[tipo].append(fila)
     n_eq = sum(f["cant"] for f in eq)
     n_mat = sum(f["cant"] for f in mat)
