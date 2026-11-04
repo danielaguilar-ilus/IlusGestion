@@ -340,6 +340,13 @@
     if (iso === s.fecha_hasta) return 'hasta ' + s.hora_hasta;
     return 'todo el día';
   }
+  /* La hora dentro del bloque de la semana: «08:00», «–» y «13:00» por separado, para que en una pista angosta quede
+     «08:00» arriba y «13:00» abajo, enteras (nunca «08:» / «13:0» cortadas). */
+  function horaBloque(s, iso) {
+    var t = horaEnDia(s, iso), i = t.indexOf('–');
+    if (i < 0) return '<span class="fla-b-h">' + esc(t) + '</span>';
+    return '<span class="fla-b-h">' + esc(t.slice(0, i)) + '</span><span class="fla-b-sep">–</span><span class="fla-b-h">' + esc(t.slice(i + 1)) + '</span>';
+  }
   function tramo(s, iso) {        // minutos [a, b) que la reserva ocupa ese día
     return [s.fecha === iso ? minutos(s.hora_desde) : 0, s.fecha_hasta === iso ? minutos(s.hora_hasta) : 1440];
   }
@@ -533,8 +540,8 @@
           html += '<button type="button" class="fla-b fla-a--' + k + ' fla-e--' + esc(s.estado) + slaCls + (atenuada ? ' tenue' : '') + (h < 34 ? ' corta' : '') + '" data-id="' + s.id + '" ' +
             'style="top:' + ((a - R[0]) / 60 * PX_HORA) + 'px;height:' + Math.max(h, 16) + 'px" ' +
             'title="' + esc(s.numero + ' · ' + s.vehiculo.patente_fmt + ' · ' + horaEnDia(s, iso) + ' · ' + s.area + ' · chofer ' + s.chofer.nombre + ' · ' + s.estado_texto + (s.sla ? ' · ' + s.sla.texto : '')) + '" ' +
-            'aria-label="' + esc(s.numero + ', ' + s.vehiculo.patente_fmt + ', ' + horaEnDia(s, iso) + ', ' + s.area) + '">' +
-            '<span class="fla-b-t">' + (s.estado === 'llave_entregada' ? '<i class="bi bi-key-fill"></i>' : (s.estado === 'solicitada' ? '<i class="bi bi-hourglass-split"></i>' : '')) + esc(horaEnDia(s, iso)) + '</span>' +
+            'aria-label="' + esc(s.numero + ', ' + s.vehiculo.patente_fmt + ', ' + horaEnDia(s, iso) + ', ' + s.area + ', chofer ' + s.chofer.nombre + ', ' + s.estado_texto) + '">' +
+            '<span class="fla-b-t">' + (s.estado === 'llave_entregada' ? '<i class="bi bi-key-fill"></i>' : (s.estado === 'solicitada' ? '<i class="bi bi-hourglass-split"></i>' : '')) + horaBloque(s, iso) + '</span>' +
             '<span class="fla-b-a">' + esc(s.area) + '</span><span class="fla-b-c">' + esc(s.chofer.nombre) + '</span></button>';
         });
         html += '<span class="fla-fantasma" aria-hidden="true"></span></div>';
