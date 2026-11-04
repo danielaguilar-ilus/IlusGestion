@@ -91306,6 +91306,7 @@ def mant_visita_update(vid):
     _tec_avisar = any(k in d for k in ("fecha_programada", "fecha_fin", "hora_inicio", "hora_fin",
                                        "tecnico_user_id", "tecnico", "estado"))
     _tec_antes = _ot_tec_antes(vid) if _tec_avisar else None
+    _veh_antes = _ot_vehiculo_antes(vid) if _tec_avisar else None      # 🚚 2026-11-04: una sola agenda con la reserva del vehículo
     _estado_nuevo_dm = (str(d.get("estado") or "")).strip().lower()
     _cascada_hija = None
     _tec_antes_hija = None
@@ -91470,6 +91471,12 @@ def mant_visita_update(vid):
         if _ax_react:
             resp["anexo_reactivada"] = _ax_react
             resp["warning"] = ((resp.get("warning") + " ") if resp.get("warning") else "") + _ax_react
+        # 🚚 2026-11-04: si la OT tenía reserva de vehículo y se movió o se canceló, la reserva la sigue (una sola agenda); se le dice a la persona.
+        _veh_sync = _ot_vehiculo_sincronizar(vid, _veh_antes) if _tec_avisar else None
+        if _veh_sync:
+            resp["vehiculo"] = _veh_sync
+            _txt_veh = " ".join([a.get("texto") or "" for a in _veh_sync.get("acciones") or []] + list(_veh_sync.get("avisos") or []))
+            resp["warning"] = ((resp.get("warning") + " ") if resp.get("warning") else "") + "🚚 " + _txt_veh
         return jsonify(resp)
     except Exception as _e_upd:
         # REGLA #4: nunca propagar un 500 crudo al cliente. Logueamos el
@@ -92136,6 +92143,7 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
                       f"{numero_ot} eliminada por {current_username() or '?'}")
         _mant_log("visita", vid, "eliminada", _detalle)
         _mant_log("cliente", v_info.get("cliente_id"), "visita_eliminada", f"{numero_ot}")
+        _veh_sync_del = _ot_vehiculo_sincronizar(vid, eliminada=True)    # 🚚 2026-11-04: la reserva de vehículo de esta OT se cancela con ella
         # 📜 REGLA #52: constancia + correo a las dos partes del anexo firmado (proveedor e ILUS). Best-effort: nunca lanza ni deshace el borrado.
         _ax_aviso = None
         if _ax_plan.get("anexos") or _ax_hechos.get("anuladas"):
@@ -92151,6 +92159,7 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
             "factura_quitada": ({"id": _fac["id"], "estado_pago": _fac.get("estado_pago")}
                                 if (_fac and quitar_de_factura) else None),
             "anexo_anulado": _ax_aviso,
+            "vehiculo": _veh_sync_del,
         }
     finally:
         if _conn_propia:
@@ -92249,7 +92258,8 @@ def mant_visita_del(vid):
         # salvo numero_ot, que acá no viajaba).
         _http = 404 if res.get("error_codigo") == "OT_NO_ENCONTRADA" else 409
         return jsonify({k: v for k, v in res.items() if k != "numero_ot"}), _http
-    return jsonify({"ok": True, "factura_quitada": res.get("factura_quitada"), "anexo_anulado": res.get("anexo_anulado")})
+    return jsonify({"ok": True, "factura_quitada": res.get("factura_quitada"), "anexo_anulado": res.get("anexo_anulado"),
+                    "vehiculo": res.get("vehiculo")})
 
 
 @app.route("/ot/api/<int:vid>/anexo-anulacion", methods=["GET"])
@@ -102516,6 +102526,8 @@ def ot_aut_api_aprobar(aid):
                         # 2026-10-20 (revisión): lo que pasó con la desinstalación que venía en la solicitud (agendada, quedó
                         # por definir o no se pudo agendar). Antes se descartaba y Daniel no veía nada.
                         "desinstalacion": cuerpo.get("desinstalacion"),
+                        # 2026-11-04: lo que pasó con el vehículo que venía en la solicitud (reservado o no se pudo). Antes se descartaba.
+                        "vehiculo": cuerpo.get("vehiculo"),
                         "autorizacion": _ot_aut_json(_ot_aut_fila(aid))})
 
     vid = a.get("visita_id")
@@ -115671,6 +115683,84 @@ def _ot_vehiculo_reservar(vid, numero_ot, titulo, fecha, req, tec_ids, autorizac
         return {"ok": False, "error": "No se pudo reservar el vehículo. La OT quedó creada: pídelo desde Solicitudes de vehículo."}
 
 
+def _ot_vehiculo_tras_crear(vid, numero_ot, titulo, fecha_prog, d, es_hija, tec_ids, autorizacion, avisos):
+    """🚚 2026-11-04 — lo que `_ot2_crear_core` hace con el vehículo DESPUÉS de crear la OT (ya con el commit): reserva lo que el asistente
+    dejó elegido en `d["vehiculo"]`. Aparte del núcleo para poder probarlo ejecutándolo. Nunca para la hija de una desinstalación. Devuelve el
+    resultado de `_ot_vehiculo_reservar` (o None si no se pidió vehículo). Si no se pudo: queda constancia en la bitácora de la OT (quien la abra
+    después ve que el vehículo NO se reservó) y, en una OT aprobada a distancia, el fallo viaja también en `avisos` para que quien aprueba lo
+    vea (el creador normal ya recibe la alerta del asistente). Si se pudo, los avisos de la reserva se suman a `avisos`."""
+    req = d.get("vehiculo") if isinstance(d.get("vehiculo"), dict) else None
+    if not req or es_hija or not req.get("vehiculo_id"):
+        return None
+    res = _ot_vehiculo_reservar(vid, numero_ot, titulo, (fecha_prog or "")[:10], req, tec_ids, autorizacion)
+    if res.get("ok"):
+        avisos.extend(res.get("avisos") or [])
+    else:
+        try:
+            _mant_log("visita", vid, "vehiculo_no_reservado", f"{numero_ot} · {res.get('error') or ''}"[:900])
+        except Exception:
+            pass
+        if autorizacion:
+            avisos.append(res.get("error") or "No se pudo reservar el vehículo.")
+    return res
+
+
+_OT_VEH_FOTO_SQL = "SELECT estado, fecha_programada, fecha_fin, hora_inicio, hora_fin FROM mant_visitas WHERE id=%s"
+
+
+def _ot_vehiculo_antes(vid):
+    """🚚 2026-11-04 — foto de la agenda de la OT ANTES de guardarla (estado, día y horas), para mover o cancelar DESPUÉS la reserva de vehículo
+    que nació con ella. None si no se pudo tomar (entonces no se toca nada). La conexión del request es REPEATABLE READ: se cierra la lectura
+    anterior para ver lo último comprometido (mismo gotcha de `_ot_tec_foto`)."""
+    try:
+        try:
+            get_db().commit()
+        except Exception:
+            pass
+        r = mysql_fetchone(_OT_VEH_FOTO_SQL, (int(vid),))
+        return dict(r) if r else None
+    except Exception:
+        return None
+
+
+def _ot_vehiculo_sincronizar(vid, antes=None, eliminada=False):
+    """🚚 2026-11-04 (Daniel: «al cancelar la OT o mover la agenda, mueve la agenda del camión; deben comportarse como una sola agenda»).
+    Con la OT YA guardada (o borrada) mueve o cancela su reserva de vehículo por `flota_module.OT_API["sincronizar"]`. Devuelve
+    {ok, acciones, avisos} solo si pasó algo que la persona deba saber; None si la OT no tenía reserva viva, no cambió su día ni su hora, o el
+    módulo no cargó. NUNCA lanza ni frena el guardado de la OT. Sin correos."""
+    try:
+        import flota_module as _fm
+        _sinc = _fm.OT_API.get("sincronizar")
+        if not _sinc:
+            return None
+        if eliminada:
+            r = _sinc(vid, cancelar="La OT se eliminó.")
+        else:
+            try:
+                get_db().commit()
+            except Exception:
+                pass
+            _desp = mysql_fetchone(_OT_VEH_FOTO_SQL, (int(vid),))
+            if not _desp:
+                return None
+            _desp = dict(_desp)
+            _est = (_desp.get("estado") or "").strip().lower()
+            if _est in ("cancelada", "anulada"):
+                r = _sinc(vid, cancelar="La OT se canceló." if _est == "cancelada" else "La OT se anuló.")
+            elif antes:
+                r = _sinc(vid, antes=antes, despues=_desp)
+            else:
+                return None
+        if r and (r.get("acciones") or r.get("avisos")):
+            _mant_log("visita", vid, "vehiculo_sincronizado",
+                      " · ".join([a.get("texto") or "" for a in r.get("acciones") or []] + list(r.get("avisos") or []))[:900])
+            return r
+        return None
+    except Exception as e:
+        print(f"[ot] sincronizar vehículo vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
 def _ot_vehiculos_ficha(vid):
     """🚚 2026-11-04 — reservas de vehículo ligadas a esta OT, para su ficha. Nunca rompe la ficha: sin el módulo o sin la columna, lista vacía."""
     try:
@@ -117080,12 +117170,7 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
     # 🚚 2026-11-04 (Daniel: «cuando se seleccionen los técnicos internos al crear una OT nueva, que pueda dejar agendada la solicitud del
     # camión y/o el furgón»): lo que el asistente mostró elegido en su paso «Vehículo» (D.vehiculo) se reserva AHORA, con las mismas reglas y el
     # mismo sello que Solicitudes de vehículo. Si el vehículo ya no está libre, la OT queda creada igual y el aviso lo dice (alertar, no trabar).
-    _veh_res = None
-    _veh_req = d.get("vehiculo") if isinstance(d.get("vehiculo"), dict) else None
-    if _veh_req and not es_hija and _veh_req.get("vehiculo_id"):
-        _veh_res = _ot_vehiculo_reservar(vid, numero_ot, titulo, fecha_prog[:10], _veh_req, tec_ids, autorizacion)
-        if _veh_res.get("ok"):
-            avisos.extend(_veh_res.get("avisos") or [])
+    _veh_res = _ot_vehiculo_tras_crear(vid, numero_ot, titulo, fecha_prog, d, es_hija, tec_ids, autorizacion, avisos)
     # 🩺 2026-10-21 (REGLA #38) — constancia del seguimiento en las DOS bitácoras (origen y nueva). Son acciones fuera de la lista blanca
     # del técnico (REGLA #26): él no las ve. Nada de montos ni documentos.
     if _seg_ligado and _seg:

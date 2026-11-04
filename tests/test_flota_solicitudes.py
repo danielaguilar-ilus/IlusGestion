@@ -290,7 +290,8 @@ class Falsa(BaseFalsa):
         c = self.cho.get(s["chofer_id"])
         u = self.usr.get(c["usuario_id"], {}) if c else {}
         return dict(s, v_patente=v["patente"], v_tipo=v["tipo"], v_marca=v["marca"], v_modelo=v["modelo"], v_km=v.get("km_actual"),
-                    chofer_nombre=u.get("nombre") or (c or {}).get("nombre_completo"), chofer_phone=u.get("phone") or (c or {}).get("telefono"))
+                    chofer_nombre=u.get("nombre") or (c or {}).get("nombre_completo"), chofer_phone=u.get("phone") or (c or {}).get("telefono"),
+                    chofer_usuario_id=(c or {}).get("usuario_id"))
 
     def _ocupa_row(self, s):
         return {k: s[k] for k in ("id", "numero", "estado", "inicio", "fin", "area", "solicitante_nombre", "sello_at", "vehiculo_id", "chofer_id")} | \
@@ -337,6 +338,9 @@ class Falsa(BaseFalsa):
                 return [self._sol_row(self.sol[p[0]])] if p[0] in self.sol else []
             if s.endswith("WHERE s.ot_id=%s ORDER BY s.inicio, s.id LIMIT 20"):
                 return [self._sol_row(x) for x in sorted(filas, key=lambda x: (x["inicio"], x["id"])) if x.get("ot_id") == p[0]]
+            if s.endswith("WHERE s.ot_id=%s AND s.estado IN ('solicitada','confirmada','llave_entregada') ORDER BY s.inicio, s.id LIMIT 20"):
+                return [self._sol_row(x) for x in sorted(filas, key=lambda x: (x["inicio"], x["id"]))
+                        if x.get("ot_id") == p[0] and x["estado"] in ("solicitada", "confirmada", "llave_entregada")]
             if s.endswith("WHERE s.vehiculo_id=%s AND s.estado IN ('llave_entregada','devuelta') ORDER BY s.inicio DESC LIMIT 200"):
                 return [self._sol_row(x) for x in sorted(filas, key=lambda x: x["inicio"], reverse=True)
                         if x["vehiculo_id"] == p[0] and x["estado"] in ("llave_entregada", "devuelta")]
@@ -349,8 +353,13 @@ class Falsa(BaseFalsa):
                         if x["inicio"] < p[0] and x["fin"] > p[1] and x["estado"] != "cancelada"]
         if s.startswith("SELECT s.id, s.numero, s.estado, s.inicio, s.fin"):
             campo = "vehiculo_id" if "WHERE s.vehiculo_id=%s" in s else "chofer_id"
+            # Los estados y el cruce de horas salen del TEXTO del SQL: un `IN ('confirmada')` o un `inicio < … AND fin > …` mal escrito se nota.
+            m = re.search(r"s\.estado IN \(([^)]*)\)", s)
+            estados = set(re.findall(r"'(\w+)'", m.group(1))) if m else set(R.ESTADOS_OCUPAN)
+            assert estados == set(R.ESTADOS_OCUPAN), f"la ocupación debe mirar solicitada, confirmada y llave_entregada: {estados}"
+            assert "s.inicio < %s AND s.fin > %s" in s, s[:140]
             return [self._ocupa_row(x) for x in self.sol.values()
-                    if x[campo] == p[0] and x["estado"] in R.ESTADOS_OCUPAN and x["inicio"] < p[1] and x["fin"] > p[2]]
+                    if x[campo] == p[0] and x["estado"] in estados and x["inicio"] < p[1] and x["fin"] > p[2]]
         if s.startswith("SELECT estado, COUNT(*) AS n FROM flota_solicitudes WHERE fin >= %s GROUP BY estado"):
             out = {}
             for x in self.sol.values():
@@ -455,7 +464,10 @@ class Falsa(BaseFalsa):
             c.update(habilitado=1, inhabilitado_motivo=None, inhabilitado_por=None, inhabilitado_at=None)
             return 1, None
         if s.startswith("INSERT INTO flota_solicitudes ("):
-            cols = ("vehiculo_id", "area", "solicitante_id", "solicitante_nombre", "chofer_id", "inicio", "fin", "motivo", "ot_id", "ot_numero")
+            # Las columnas salen del TEXTO del INSERT (como en MySQL real): si el SQL las pone en otro orden que los valores, la reserva queda mal
+            # (revisión escéptica 04-nov: antes el arnés usaba su propio orden y un intercambio ot_id/ot_numero pasaba en verde).
+            cols = [c.strip() for c in s[s.index("(") + 1:s.index(")")].split(",")]
+            assert len(cols) == len(p), f"{len(cols)} columnas y {len(p)} valores: {s[:120]}"
             x = dict(zip(cols, p))
             x.setdefault("ot_id", None)
             x.setdefault("ot_numero", None)       # la reserva que nace de una OT (04-nov-2026) trae estas dos columnas de más
@@ -479,6 +491,8 @@ class Falsa(BaseFalsa):
                 return 0, None
             x.update(vehiculo_id=vid, area=area, chofer_id=cid, inicio=ini, fin=fin, motivo=motivo, modificada_por=por,
                      modificada_at=dt.datetime.utcnow())
+            if "estado='solicitada'" in s:        # la OT se movió (04-nov-2026): la reserva vuelve a «Por confirmar» con sello nuevo
+                x.update(estado="solicitada", confirmada_por=None, confirmada_at=None, sello_at=dt.datetime.utcnow(), sla_aviso=None)
             return 1, None
         if s.startswith("UPDATE flota_solicitudes SET estado='confirmada'"):
             por, sid = p
@@ -1049,7 +1063,7 @@ class TestCableado(unittest.TestCase):
 
     def test_la_reserva_decide_dentro_de_una_transaccion_con_el_vehiculo_bloqueado(self):
         i = self.MODULO.index("def _reservar")
-        cuerpo = self.MODULO[i:i + 9000]
+        cuerpo = self.MODULO[i:i + 12000]       # ventana sobre el texto de `_reservar` (creció con ot=, solicitante= y reabrir=)
         self.assertIn("conn.autocommit(False)", cuerpo)
         self.assertIn("FROM flota_vehiculos WHERE id=%s FOR UPDATE", cuerpo)
         self.assertLess(cuerpo.index("FOR UPDATE"), cuerpo.index("INSERT INTO flota_solicitudes"))
