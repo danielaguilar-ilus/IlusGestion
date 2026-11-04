@@ -723,8 +723,9 @@ def niveles(permisos):
     admin = agregar, editar, archivar y borrar vehículos y choferes y subir sus archivos (el superadministrador, o quien tenga la llave
     flota_administrar: Daniel la enciende por rol o por persona en el front);
     gestionar = confirmar, entregar la llave, mover y cancelar solicitudes de cualquiera (flota_gestionar);
-    documentos = ver los PDF y el RUT y la dirección de los choferes (flota_documentos; quien administra también los ve: no se puede
-    mantener lo que no se ve);
+    documentos = ver los PDF de los documentos y de la licencia, y el RUT y la dirección de los choferes. DESDE EL 05-NOV-2026 SOLO LO VE QUIEN
+    ADMINISTRA (Daniel: «es información delicada que me gustaría que solamente los que administramos podamos verla»): la llave
+    flota_documentos ya no abre nada y queda sin efecto;
     solicitar = entrar, ver la flota y pedir un vehículo (flota_solicitar; quien gestiona o administra también entra).
     Administrar NO da gestionar: no confirma ni entrega la llave, y sigue pidiendo con las 24 horas de aviso."""
     p = permisos or {}
@@ -732,7 +733,7 @@ def niveles(permisos):
     admin = superadmin or bool(p.get("flota_administrar"))
     gestionar = superadmin or bool(p.get("flota_gestionar"))
     return {"admin": admin, "gestionar": gestionar,
-            "documentos": admin or bool(p.get("flota_documentos")),
+            "documentos": admin,
             "solicitar": gestionar or admin or bool(p.get("flota_solicitar"))}
 
 

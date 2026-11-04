@@ -14645,7 +14645,7 @@ PERMISSIONS_META = {
                        "tipo": "submodulo", "icon": "bi-calendar-plus"},
         "gestionar":  {"label": "Gestionar solicitudes (confirmar, entregar la llave, mover y cancelar las de cualquiera)",
                        "tipo": "submodulo", "icon": "bi-key"},
-        "documentos": {"label": "Ver los PDF de los documentos y el RUT y la dirección de los choferes",
+        "documentos": {"label": "Sin efecto desde el 05-nov: los PDF, el RUT y la dirección de los choferes los ve solo quien tiene «Administrar»",
                        "tipo": "bloqueo", "icon": "bi-file-earmark-lock"},
         "administrar": {"label": "Agregar, editar, archivar y borrar vehículos y choferes (incluye ver sus documentos, RUT y dirección)",
                         "tipo": "bloqueo", "icon": "bi-plus-square"},

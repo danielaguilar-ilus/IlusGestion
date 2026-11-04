@@ -35,7 +35,8 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUPER = TS.SUPER
 SOLO_PEDIR = {"X-Rol": "ejecutivo", "X-Flota": "flota_solicitar"}
 GESTOR = {"X-Rol": "ejecutivo", "X-Flota": "flota_gestionar"}
-CON_DOCS = {"X-Rol": "ejecutivo", "X-Flota": "flota_solicitar,flota_documentos"}
+CON_DOCS = {"X-Rol": "ejecutivo", "X-Flota": "flota_solicitar,flota_documentos"}       # la llave vieja: desde el 05-nov-2026 ya no abre nada
+ADMIN_DOCS = {"X-Rol": "ejecutivo", "X-Flota": "flota_solicitar,flota_administrar"}   # quien administra es el único que ve los documentos
 SIN_LLAVES = {"X-Rol": "ejecutivo"}
 PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"
 JPG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
@@ -58,7 +59,16 @@ class TestNiveles(unittest.TestCase):
     def test_cada_llave_abre_solo_lo_suyo(self):
         self.assertEqual(R.niveles({"flota_solicitar": True}), {"admin": False, "gestionar": False, "documentos": False, "solicitar": True})
         self.assertEqual(R.niveles({"flota_gestionar": True}), {"admin": False, "gestionar": True, "documentos": False, "solicitar": True})
-        self.assertEqual(R.niveles({"flota_documentos": True}), {"admin": False, "gestionar": False, "documentos": True, "solicitar": False})
+        # Daniel, 05-nov-2026: «es información delicada que me gustaría que solamente los que administramos podamos verla»: la llave vieja
+        # de documentos ya no abre nada.
+        self.assertEqual(R.niveles({"flota_documentos": True}), {"admin": False, "gestionar": False, "documentos": False, "solicitar": False})
+
+    def test_los_documentos_son_solo_de_quien_administra(self):
+        self.assertTrue(R.niveles({"flota_administrar": True})["documentos"])
+        self.assertTrue(R.niveles({"superadmin": True})["documentos"])
+        for llaves in ({"flota_solicitar": True}, {"flota_gestionar": True}, {"flota_documentos": True},
+                       {"flota_solicitar": True, "flota_gestionar": True, "flota_documentos": True}):
+            self.assertFalse(R.niveles(llaves)["documentos"], llaves)
 
     def test_solo_el_superadmin_o_la_llave_administrar_es_admin(self):
         self.assertTrue(R.niveles({"superadmin": True}) == {"admin": True, "gestionar": True, "documentos": True, "solicitar": True})
@@ -253,15 +263,27 @@ class TestPermisosPorNivel(Base2):
         self.assertEqual(c["rut_fmt"], "")
         self.assertEqual(c["nombre"], "Ana Pérez")                            # el nombre del usuario sí: lo necesita para pedir
 
-    def test_con_documentos_si_ve_todo_eso(self):
+    def test_la_llave_vieja_de_documentos_ya_no_abre_nada(self):
         self.subir("vehiculo", self.furgon, "soap", PDF)
         v = self.veh_json(CON_DOCS)
+        self.assertIsNone(v["vin"])
+        self.assertIsNone(v["propietario_rut"])
+        self.assertTrue(all(d["archivo"] is None and d["detalle"] == "" for d in v["documentos"]))
+        c = self.c.get("/flota/api/choferes", headers=CON_DOCS).get_json()["choferes"][0]
+        for campo in ("rut", "nombre_completo", "direccion", "licencia_archivo"):
+            self.assertIsNone(c[campo], campo)
+        d = self.c.get("/flota/api/vehiculos", headers=CON_DOCS).get_json()
+        self.assertFalse(d["permisos"]["documentos"])
+
+    def test_quien_administra_si_ve_todo_eso(self):
+        self.subir("vehiculo", self.furgon, "soap", PDF)
+        v = self.veh_json(ADMIN_DOCS)
         self.assertEqual(v["vin"], "LS4AAB3R1SG808537")
         self.assertEqual(v["propietario_rut_fmt"], "76.996.964-0")
         soap = next(d for d in v["documentos"] if d["clave"] == "soap")
         self.assertEqual(soap["detalle"], "BCI Seguros, póliza 126705219-7")
         self.assertIsNotNone(soap["archivo"])
-        c = self.c.get("/flota/api/choferes", headers=CON_DOCS).get_json()["choferes"][0]
+        c = self.c.get("/flota/api/choferes", headers=ADMIN_DOCS).get_json()["choferes"][0]
         self.assertEqual(c["nombre_completo"], "Ana María Pérez Soto")
         self.assertRegex(c["rut_fmt"], r"^\d{2}\.\d{3}\.\d{3}-[\dK]$")
         self.assertEqual(c["direccion"], "Av. Siempre Viva 742, Providencia")
@@ -314,10 +336,9 @@ class TestPermisosPorNivel(Base2):
         html = self.c.get("/flota", headers=SOLO_PEDIR).get_data(as_text=True)
         self.assertIn("window.FLOTA_PERMISOS", html)
         self.assertRegex(html, r'FLOTA_PERMISOS = \{[^}]*"admin": false')
-        self.assertNotIn("Tú administras la flota", html)                     # el aviso de quien administra no se le muestra a los demás
         html = self.c.get("/flota", headers=SUPER).get_data(as_text=True)
         self.assertRegex(html, r'FLOTA_PERMISOS = \{[^}]*"admin": true')
-        self.assertIn("Tú administras la flota", html)
+        self.assertNotIn("Tú administras la flota", html)                     # Daniel, 05-nov-2026: «sácale ese mensaje»
 
 
 TS_VEH = {"patente": "ZZZZ99", "tipo": "Furgón", "licencia_clases": ["B"]}
@@ -340,9 +361,9 @@ class TestArchivosPrivados(Base2):
         r = self.subir("vehiculo", self.furgon, "soap", PDF, nombre="SOAP 2026.pdf")
         self.assertEqual(r.status_code, 200)
         aid = next(a["id"] for a in self.base.arch.values() if a["tipo"] == "soap")
-        for h in (SOLO_PEDIR, GESTOR):
+        for h in (SOLO_PEDIR, GESTOR, CON_DOCS):
             self.assertEqual(self.c.get(f"/flota/api/archivos/{aid}", headers=h).status_code, 403)
-        g = self.c.get(f"/flota/api/archivos/{aid}", headers=CON_DOCS)
+        g = self.c.get(f"/flota/api/archivos/{aid}", headers=ADMIN_DOCS)
         self.assertEqual((g.status_code, g.data, g.mimetype), (200, PDF, "application/pdf"))
         self.assertIn("inline", g.headers["Content-Disposition"])
         self.assertIn("no-store", g.headers["Cache-Control"])
@@ -400,13 +421,14 @@ class TestArchivosPrivados(Base2):
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         aid = next(a["id"] for a in self.base.arch.values() if a["tipo"] == "licencia" and a["entidad_id"] == self.ana and a["activo"])
         self.assertTrue(self.base.arch[aid]["gcs_key"].startswith("flota_privado/chofer/"))
-        c = next(x for x in self.c.get("/flota/api/choferes", headers=CON_DOCS).get_json()["choferes"] if x["id"] == self.ana)
+        c = next(x for x in self.c.get("/flota/api/choferes", headers=ADMIN_DOCS).get_json()["choferes"] if x["id"] == self.ana)
         self.assertEqual(c["licencia_archivo"]["id"], aid)
         c2 = next(x for x in self.c.get("/flota/api/choferes", headers=SOLO_PEDIR).get_json()["choferes"] if x["id"] == self.ana)
         self.assertIsNone(c2["licencia_archivo"])
         self.assertTrue(c2["tiene_licencia_pdf"])
         self.assertEqual(self.c.get(f"/flota/api/archivos/{aid}", headers=SOLO_PEDIR).status_code, 403)
-        self.assertEqual(self.c.get(f"/flota/api/archivos/{aid}", headers=CON_DOCS).status_code, 200)
+        self.assertEqual(self.c.get(f"/flota/api/archivos/{aid}", headers=CON_DOCS).status_code, 403)        # la llave vieja de documentos ya no sirve
+        self.assertEqual(self.c.get(f"/flota/api/archivos/{aid}", headers=ADMIN_DOCS).status_code, 200)
 
     def test_la_ruta_publica_no_sirve_lo_privado(self):
         app = _leer("app.py")
