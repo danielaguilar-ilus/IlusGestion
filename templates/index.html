@@ -46,7 +46,7 @@
     <form method="post" action="{{ url_for('refresh_listing_cache') }}" class="d-inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-sm btn-outline-secondary px-2 py-0"
-              style="font-size:.72rem;border-radius:5px" title="Actualizar datos ahora">
+              style="font-size:.75rem;border-radius:5px" title="Actualizar datos ahora">
         <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
       </button>
     </form>
@@ -60,21 +60,21 @@
            style="display:flex;align-items:center;gap:11px;padding:10px 13px;cursor:pointer"
            title="Haz clic para filtrar productos con foto">
         <div style="
-            width:54px;height:54px;border-radius:50%;flex-shrink:0;
+            width:58px;height:58px;border-radius:50%;flex-shrink:0;
             background:conic-gradient(#198754 0% {{ cob_pct }}%, #2d2d2d {{ cob_pct }}% 100%);
             display:flex;align-items:center;justify-content:center">
           <div style="
-              width:36px;height:36px;border-radius:50%;
+              width:44px;height:44px;border-radius:50%;
               background:var(--ilus-black,#1a1a1a);
               display:flex;align-items:center;justify-content:center;
-              font-size:.56rem;font-weight:700;color:#fff;line-height:1.15;text-align:center">
+              font-size:.75rem;font-weight:700;color:#fff;line-height:1.15;text-align:center">
             {{ cob_pct }}%
           </div>
         </div>
         <div>
           <div class="stat-num" style="font-size:1.45rem;line-height:1;color:#198754">{{ foto1 + foto2 }}</div>
-          <div class="stat-label" style="font-size:.66rem;margin-top:1px">Con foto</div>
-          <div style="font-size:.62rem;color:#666;margin-top:1px">de {{ tot_g }} total</div>
+          <div class="stat-label" style="font-size:.75rem;margin-top:1px">Con foto</div>
+          <div style="font-size:.75rem;color:#666;margin-top:1px">de {{ tot_g }} total</div>
         </div>
       </div>
     </div>
@@ -86,10 +86,10 @@
            title="Haz clic para filtrar productos sin foto">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <i class="bi bi-camera-slash" style="color:#cc2200;font-size:.85rem"></i>
-          <span class="stat-label" style="font-size:.66rem">Sin foto</span>
+          <span class="stat-label" style="font-size:.75rem">Sin foto</span>
         </div>
         <div class="stat-num" style="color:#cc2200;font-size:1.5rem;line-height:1">{{ foto0 }}</div>
-        <div style="font-size:.67rem;color:#777;margin-top:2px">{{ p0 }}% del catálogo</div>
+        <div style="font-size:.75rem;color:#6b7280;margin-top:2px">{{ p0 }}% del catálogo</div>
         <div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:#2b2b2b">
           <div style="height:3px;width:{{ p0 }}%;background:#cc2200"></div>
         </div>
@@ -102,11 +102,11 @@
            style="padding:10px 13px;position:relative;overflow:hidden;cursor:pointer"
            title="Haz clic para filtrar productos con 1 foto">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
-          <i class="bi bi-camera" style="color:#e0a800;font-size:.85rem"></i>
-          <span class="stat-label" style="font-size:.66rem">1 foto</span>
+          <i class="bi bi-camera" style="color:#a16207;font-size:.85rem"></i>
+          <span class="stat-label" style="font-size:.75rem">1 foto</span>
         </div>
-        <div class="stat-num" style="color:#e0a800;font-size:1.5rem;line-height:1">{{ foto1 }}</div>
-        <div style="font-size:.67rem;color:#777;margin-top:2px">{{ p1 }}% del catálogo</div>
+        <div class="stat-num" style="color:#a16207;font-size:1.5rem;line-height:1">{{ foto1 }}</div>
+        <div style="font-size:.75rem;color:#6b7280;margin-top:2px">{{ p1 }}% del catálogo</div>
         <div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:#2b2b2b">
           <div style="height:3px;width:{{ p1 }}%;background:#e0a800"></div>
         </div>
@@ -120,10 +120,10 @@
            title="Haz clic para filtrar productos con 2 fotos">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <i class="bi bi-camera-fill" style="color:#198754;font-size:.85rem"></i>
-          <span class="stat-label" style="font-size:.66rem">2 fotos</span>
+          <span class="stat-label" style="font-size:.75rem">2 fotos</span>
         </div>
         <div class="stat-num" style="color:#198754;font-size:1.5rem;line-height:1">{{ foto2 }}</div>
-        <div style="font-size:.67rem;color:#777;margin-top:2px">{{ p2 }}% del catálogo</div>
+        <div style="font-size:.75rem;color:#6b7280;margin-top:2px">{{ p2 }}% del catálogo</div>
         <div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:#2b2b2b">
           <div style="height:3px;width:{{ p2 }}%;background:#198754"></div>
         </div>
@@ -214,7 +214,7 @@
           </div>
 
           {# Separador o-ingresa-manual #}
-          <div class="d-flex align-items-center gap-2 px-3" style="color:#bbb;font-size:.78rem">
+          <div class="d-flex align-items-center gap-2 px-3" style="color:#767676;font-size:.78rem">
             <hr style="flex:1;margin:0">
             <span>o ingresa manualmente</span>
             <hr style="flex:1;margin:0">
@@ -250,7 +250,7 @@
   <div class="ilus-card d-none d-md-flex ilus-table-fullview eti-table-flex">
     <div class="ilus-card-header eti-flex-shrink">
       <span><i class="bi bi-table me-2"></i>Productos</span>
-      <span class="text-muted ms-2" style="font-size:.72rem;font-weight:500">
+      <span class="text-muted ms-2" style="font-size:.75rem;font-weight:500">
         Mostrando {{ products|length }} de {{ total }}
       </span>
     </div>
@@ -263,7 +263,7 @@
       {% macro th_sort(key, label, cls='') -%}
         {%- set act = (orden is defined and orden == key) -%}
         {%- set dsc = (orden_dir is defined and orden_dir == 'desc') -%}
-        <th class="{{ cls }}" style="white-space:nowrap">
+        <th class="{{ cls }}" style="white-space:nowrap"{% if act %} aria-sort="{{ 'descending' if dsc else 'ascending' }}"{% endif %}>
           <a href="?orden={{ key }}&dir={{ 'desc' if (act and not dsc) else 'asc' }}&size={{ page_size }}{% if q %}&q={{ q|urlencode }}{% endif %}{% if foto_filter %}&fotos={{ foto_filter }}{% endif %}{% if request.args.get('ver') %}&ver={{ request.args.get('ver')|urlencode }}{% endif %}"
              title="Ordenar por {{ label }}"
              style="color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:5px">
@@ -295,8 +295,8 @@
           <tr data-fotos="{{ p.total_fotos|int }}">
             <td>
               <div class="fw-bold font-monospace">{{ p.sku }}</div>
-              {% if p.codigo %}<div style="font-size:.7rem;color:#888">Cod: {{ p.codigo }}</div>{% endif %}
-              {% if p.total_fotos > 0 %}<div style="font-size:.7rem;color:#888"><i class="bi bi-images me-1"></i>{{ p.total_fotos }} foto(s)</div>{% endif %}
+              {% if p.codigo %}<div style="font-size:.75rem;color:#6b7280">Cod: {{ p.codigo }}</div>{% endif %}
+              {% if p.total_fotos > 0 %}<div style="font-size:.75rem;color:#6b7280"><i class="bi bi-images me-1"></i>{{ p.total_fotos }} foto(s)</div>{% endif %}
             </td>
             <td>
               <div class="fw-semibold">{{ p.nombre }}</div>
@@ -318,13 +318,13 @@
               {% else %}<span class="ilus-badge badge-pendiente">Pendiente</span>{% endif %}
             </td>
             {# Auditoría: quién y cuándo (hora de Chile — REGLA #6) #}
-            <td style="font-size:.74rem;line-height:1.4;white-space:nowrap">
+            <td style="font-size:.75rem;line-height:1.4;white-space:nowrap">
               {% if p.created_at %}
                 <div class="fw-semibold">{{ p.created_by or '—' }}</div>
                 <div class="text-muted">{{ p.created_at|chile_fmt("%d-%m-%Y %H:%M") }}</div>
               {% else %}<span class="text-muted">—</span>{% endif %}
             </td>
-            <td style="font-size:.74rem;line-height:1.4;white-space:nowrap">
+            <td style="font-size:.75rem;line-height:1.4;white-space:nowrap">
               {% if p.updated_at %}
                 <div class="fw-semibold">{{ p.updated_by or p.created_by or '—' }}</div>
                 <div class="text-muted">{{ p.updated_at|chile_fmt("%d-%m-%Y %H:%M") }}</div>
@@ -347,8 +347,9 @@
                   {% endif %}
                   {% if permissions.print and p.total_bultos > 0 %}
                   <a href="{{ url_for('product_detail', pid=p.app_product_id) }}"
-                     class="btn btn-sm btn-ilus no-mobile-print" title="Ver producto e imprimir etiquetas">
-                    <i class="bi bi-printer me-1"></i>Imprimir
+                     class="btn btn-sm btn-ilus no-mobile-print" title="Ver producto e imprimir etiquetas"
+                     aria-label="Ver producto e imprimir etiquetas">
+                    <i class="bi bi-printer"></i><span class="btn-lbl ms-1">Imprimir</span>
                   </a>
                   {% endif %}
                   {% if permissions.delete %}
@@ -382,14 +383,14 @@
   </div>
 
   {# ── Cards mobile ── #}
-  <div class="d-md-none">
+  <div class="d-md-none eti-mobile-list">
     {% for p in products %}
     <div class="ilus-card mb-2 mobile-product-card" data-fotos="{{ p.total_fotos|int }}">
       <div class="p-3">
         <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
           <div class="flex-grow-1 min-w-0">
             <div class="fw-black font-monospace" style="font-size:1rem">{{ p.sku }}</div>
-            <div class="text-truncate fw-semibold text-muted" style="font-size:.85rem">{{ p.nombre }}</div>
+            <div class="fw-semibold text-muted text-break" style="font-size:.85rem">{{ p.nombre }}</div>
           </div>
           {% if p.estado == 'Confirmado' %}<span class="ilus-badge badge-confirmado flex-shrink-0">Confirmado</span>
           {% elif p.estado == 'Impreso'   %}<span class="ilus-badge badge-impreso flex-shrink-0">Impreso</span>
@@ -402,31 +403,33 @@
           {% if p.pv_total > 0  %}<span style="color:#1a7a1a"><i class="bi bi-box me-1"></i>PV {{ "%.2f"|format(p.pv_total) }}</span>{% endif %}
         </div>
         {% if p.created_at %}
-        <div class="text-muted mb-2" style="font-size:.72rem;line-height:1.5">
+        <div class="text-muted mb-2" style="font-size:.75rem;line-height:1.5">
           <i class="bi bi-person-plus me-1"></i>{{ p.created_by or '—' }} · {{ p.created_at|chile_fmt("%d-%m-%Y %H:%M") }}
           {% if p.updated_at %}<br><i class="bi bi-pencil me-1"></i>{{ p.updated_by or p.created_by or '—' }} · {{ p.updated_at|chile_fmt("%d-%m-%Y %H:%M") }}{% endif %}
         </div>
         {% endif %}
-        <div class="d-flex gap-2">
+        <div class="eti-card-actions">
           {% if p.app_product_id %}
-            <button type="button" class="btn btn-sm btn-dark-ilus flex-grow-1"
+            <button type="button" class="btn btn-sm btn-dark-ilus eti-act-ver"
                     onclick="quickView({{ p.app_product_id }})">
               <i class="bi bi-eye me-1"></i>Ver
             </button>
             {% if permissions.print and p.total_bultos > 0 %}
             <a href="{{ url_for('product_detail', pid=p.app_product_id) }}"
-               class="btn btn-sm btn-ilus fw-bold flex-grow-1">
+               class="btn btn-sm btn-ilus fw-bold eti-act-print">
               <i class="bi bi-printer me-1"></i>Imprimir
             </a>
             {% endif %}
             {% if permissions.edit %}
             <a href="{{ url_for('edit_product', pid=p.app_product_id) }}"
-               class="btn btn-sm btn-outline-secondary">
+               class="btn btn-sm btn-outline-secondary eti-act-icon"
+               title="Editar" aria-label="Editar producto">
               <i class="bi bi-pencil"></i>
             </a>
             {% endif %}
             {% if permissions.delete %}
-            <button type="button" class="btn btn-sm btn-outline-danger"
+            <button type="button" class="btn btn-sm btn-outline-danger eti-act-icon"
+                    title="Eliminar producto" aria-label="Eliminar producto"
                     data-pid="{{ p.app_product_id }}"
                     data-sku="{{ p.sku }}"
                     data-nombre="{{ p.nombre }}"
@@ -450,16 +453,35 @@
   </div>
 
   {% else %}
-  <div class="ilus-card">
-    <div class="empty-state">
-      <div class="empty-icon">📦</div>
-      <p>No se encontraron productos en el ERP.</p>
+  {# Estado vacío con el componente del sistema (.e-icon/.e-title/.e-sub). Antes
+     decía "no se encontraron productos en el ERP" y ofrecía "Crear primer
+     producto" incluso cuando solo era una búsqueda o un filtro sin resultados. #}
+  <div class="empty-state">
+    {% if q or ff %}
+      <div class="e-icon"><i class="bi bi-search"></i></div>
+      <div class="e-title">Sin resultados</div>
+      <div class="e-sub">
+        {% if q %}No hay productos que coincidan con «{{ q }}».{% endif %}
+        {% if ff %}El filtro de fotos activo no tiene productos.{% endif %}
+      </div>
+      <div class="e-actions">
+        <a href="{{ url_for('index', ver=_ver_etq) if _ver_etq else url_for('index') }}"
+           class="btn btn-ilus px-4">
+          <i class="bi bi-x-lg me-1"></i>Quitar búsqueda y filtros
+        </a>
+      </div>
+    {% else %}
+      <div class="e-icon"><i class="bi bi-box-seam"></i></div>
+      <div class="e-title">Aún no hay productos</div>
+      <div class="e-sub">No se encontraron productos en el ERP.</div>
       {% if permissions.create %}
-      <a href="{{ url_for('new_product') }}" class="btn btn-ilus px-4">
-        <i class="bi bi-plus-lg me-1"></i>Crear primer producto
-      </a>
+      <div class="e-actions">
+        <a href="{{ url_for('new_product') }}" class="btn btn-ilus px-4">
+          <i class="bi bi-plus-lg me-1"></i>Crear primer producto
+        </a>
+      </div>
       {% endif %}
-    </div>
+    {% endif %}
   </div>
   {% endif %}
 </div>
@@ -632,6 +654,13 @@ document.querySelectorAll('.kpi-card').forEach(function(card) {
   var f = card.dataset.filter === 'con_foto' ? 'con' : card.dataset.filter;
   card.addEventListener('click', function() {
     window.location.href = _kpiUrl(KPI_FILTER === f ? null : f);
+  });
+  /* Accesibilidad: la tarjeta se comporta como botón (teclado + lector de pantalla) */
+  card.setAttribute('role', 'button');
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('aria-pressed', KPI_FILTER === f ? 'true' : 'false');
+  card.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); }
   });
   /* Highlight de la tarjeta activa (server-rendered) */
   if (KPI_FILTER && KPI_FILTER === f) {
@@ -1197,7 +1226,7 @@ function quickView(pid) {
           photos += '<div style="display:block;flex:1;max-width:50%;position:relative;cursor:zoom-in" class="qm-photo" data-idx="' + idx + '">'
             + '<img src="' + ph.url + '" loading="lazy" decoding="async" style="width:100%;height:200px;object-fit:contain;border-radius:6px">'
             + '<span style="position:absolute;right:8px;bottom:8px;background:rgba(10,10,10,.72);color:#fff;'
-            + 'border-radius:8px;padding:4px 9px;font-size:.72rem;display:inline-flex;align-items:center;gap:5px">'
+            + 'border-radius:8px;padding:4px 9px;font-size:.75rem;display:inline-flex;align-items:center;gap:5px">'
             + '<i class="bi bi-arrows-fullscreen"></i>' + (CAN_EDIT ? 'Ver / Editar' : 'Ver') + '</span>'
             + '</div>';
         });
@@ -1218,7 +1247,7 @@ function quickView(pid) {
       var table = '';
       if (d.bultos && d.bultos.length > 0) {
         table = '<div class="table-responsive"><table class="table ilus-table mb-0" style="font-size:.82rem">'
-          + '<thead><tr><th class="text-center">Bulto</th><th class="text-end">Largo</th><th class="text-end">Ancho</th><th class="text-end">Alto</th><th class="text-end">Peso kg</th><th class="text-end" style="color:#1a7a1a">Peso Vol</th></tr></thead><tbody>';
+          + '<thead><tr><th class="text-center">Bulto</th><th class="text-end">Largo</th><th class="text-end">Ancho</th><th class="text-end">Alto</th><th class="text-end">Peso kg</th><th class="text-end" style="color:#4ade80">Peso Vol</th></tr></thead><tbody>';
         d.bultos.forEach(function(b) {
           table += '<tr>'
             + '<td class="fw-bold text-center">' + b.num + '</td>'
