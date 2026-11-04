@@ -335,6 +335,8 @@ class Falsa(BaseFalsa):
             filas = list(self.sol.values())
             if s.endswith("WHERE s.id=%s"):
                 return [self._sol_row(self.sol[p[0]])] if p[0] in self.sol else []
+            if s.endswith("WHERE s.ot_id=%s ORDER BY s.inicio, s.id LIMIT 20"):
+                return [self._sol_row(x) for x in sorted(filas, key=lambda x: (x["inicio"], x["id"])) if x.get("ot_id") == p[0]]
             if s.endswith("WHERE s.vehiculo_id=%s AND s.estado IN ('llave_entregada','devuelta') ORDER BY s.inicio DESC LIMIT 200"):
                 return [self._sol_row(x) for x in sorted(filas, key=lambda x: x["inicio"], reverse=True)
                         if x["vehiculo_id"] == p[0] and x["estado"] in ("llave_entregada", "devuelta")]
@@ -453,8 +455,10 @@ class Falsa(BaseFalsa):
             c.update(habilitado=1, inhabilitado_motivo=None, inhabilitado_por=None, inhabilitado_at=None)
             return 1, None
         if s.startswith("INSERT INTO flota_solicitudes ("):
-            cols = ("vehiculo_id", "area", "solicitante_id", "solicitante_nombre", "chofer_id", "inicio", "fin", "motivo")
+            cols = ("vehiculo_id", "area", "solicitante_id", "solicitante_nombre", "chofer_id", "inicio", "fin", "motivo", "ot_id", "ot_numero")
             x = dict(zip(cols, p))
+            x.setdefault("ot_id", None)
+            x.setdefault("ot_numero", None)       # la reserva que nace de una OT (04-nov-2026) trae estas dos columnas de más
             x.update(id=self.sig_s, numero=None, estado="solicitada", sello_at=dt.datetime.utcnow(), confirmada_por=None, confirmada_at=None,
                      llave_por=None, llave_at=None, llave_nota=None, cancelada_por=None, cancelada_at=None, cancelada_motivo=None,
                      modificada_por=None, modificada_at=None)

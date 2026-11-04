@@ -230,6 +230,7 @@
       '<td data-label="Vehículo"><span class="fl-pat">' + esc(s.vehiculo.patente_fmt) + '</span><span class="fl-tit">' + esc(s.vehiculo.titulo) + '</span></td>' +
       '<td data-label="Cuándo"><b class="fl-cuando">' + esc(s.rango_texto) + '</b></td>' +
       '<td data-label="Área y quién pidió"><b>' + esc(s.area) + '</b><span class="fl-sub">Pidió ' + esc(s.solicitante || '—') + '</span>' +
+      (s.ot ? '<span class="fl-sub"><i class="bi bi-clipboard2-check" aria-hidden="true"></i> Para la ' + esc(s.ot.numero) + '</span>' : '') +
       '<span class="fl-sub">' + esc(s.motivo) + '</span></td>' +
       '<td data-label="Chofer">' + esc(s.chofer.nombre) + (s.chofer.telefono ? '<span class="fl-sub">' + esc(s.chofer.telefono) + '</span>' : '') + '</td>' +
       '<td data-label="Estado">' + pill(s) + estadoExtra(s) + chipSla(s) + chipResp(s) + chipPlanReal(s) + '</td>' +
@@ -777,7 +778,9 @@
       bloqueDet('Cuándo', '<b class="fl-cuando">' + esc(s.rango_texto) + '</b><span class="fl-sub">' + esc(duracionTexto(s.inicio, s.fin)) + '</span>') +
       bloqueDet('Chofer que retira la llave', esc(s.chofer.nombre) + (s.chofer.telefono ? '<span class="fl-sub">' + esc(s.chofer.telefono) + '</span>' : '')) +
       bloqueDet('Área que lo pidió', esc(s.area) + '<span class="fl-sub">Pidió ' + esc(s.solicitante || '—') + '</span><span class="fl-sub">Sellada el ' + esc(s.sello_fmt) + '</span>') +
-      bloqueDet('Motivo', esc(s.motivo)) + ex + '</div>' +
+      bloqueDet('Motivo', esc(s.motivo)) +
+      (s.ot ? bloqueDet('Orden de trabajo', '<a href="/ot/' + encodeURIComponent(s.ot.id) + '">' + esc(s.ot.numero) + '</a><span class="fl-sub">Se pidió al crear esa OT</span>') : '') +
+      ex + '</div>' +
       bloqueDevolucion(s, fotos) +
       '<h6 class="fl-det-h">Bitácora</h6><div class="fl-hist">' + (eventos || []).map(function (e) {
         return '<div class="fl-ev fl-ev--' + esc(e.accion) + '"><div class="fl-ev-t">' + esc(e.titulo) + '</div><div class="fl-ev-m">' + esc(e.fecha) +

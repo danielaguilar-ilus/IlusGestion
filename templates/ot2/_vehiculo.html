@@ -1,0 +1,49 @@
+{#- ════════════════════════════════════════════════════════════════════════
+    🚚 ILUS Fitness · OT — «VEHÍCULO DE ESTA OT» (Daniel, 04-nov-2026: «cuando se seleccionen los técnicos internos al crear una OT nueva,
+    que pueda dejar agendada la solicitud del camión y/o el furgón»). Tarjeta de la ficha con la reserva que se dejó al crear la orden:
+    qué vehículo, cuándo, quién maneja y en qué estado está (Por confirmar → Confirmada → Llave entregada → Devuelta). Contexto
+    `vehiculos_flota` (lo arma _ot_vehiculos_ficha → flota_module.OT_API["de_orden"]): [{id, numero, estado, estado_texto, vehiculo,
+    rango_texto, chofer, enlace}]. Sin plata ni proveedores: lo puede ver cualquiera que vea la OT, también el técnico que maneja.
+    Nombres completos, sin truncar (REGLA #15). El enlace lleva a ESA solicitud en Solicitudes de vehículo.
+    ════════════════════════════════════════════════════════════════════════ -#}
+{% if vehiculos_flota %}
+<style>
+  .otd-veh{margin:0 0 .9rem;border:1px solid #e5e7eb;border-radius:12px;background:#fff;padding:.75rem .9rem}
+  .otd-veh h3{font-size:.8rem;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#6b7280;margin:0 0 .5rem}
+  .otd-veh ul{list-style:none;margin:0;padding:0;display:grid;gap:.5rem}
+  .otd-veh li{display:flex;flex-wrap:wrap;gap:.35rem .9rem;align-items:center;justify-content:space-between;border-left:4px solid #f59e0b;background:#fff8e1;border-radius:8px;padding:.55rem .7rem}
+  .otd-veh li.e-confirmada{border-left-color:#16a34a;background:#f0fdf4}
+  .otd-veh li.e-llave_entregada{border-left-color:#3b82f6;background:#eff6ff}
+  .otd-veh li.e-devuelta{border-left-color:#6b7280;background:#f3f4f6}
+  .otd-veh li.e-cancelada{border-left-color:#dc2626;background:#fef2f2}
+  .otd-veh .ov-quien{display:grid;gap:.1rem;min-width:0}
+  .otd-veh .ov-veh{font-weight:700;color:#0a0a0a}
+  .otd-veh .ov-det{font-size:.85rem;color:#374151}
+  .otd-veh .ov-der{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+  .otd-veh .ov-chip{font-size:.75rem;font-weight:700;border-radius:999px;padding:.15rem .6rem;background:#fff;border:1px solid currentColor;color:#92400e}
+  .otd-veh li.e-confirmada .ov-chip{color:#166534}
+  .otd-veh li.e-llave_entregada .ov-chip{color:#1d4ed8}
+  .otd-veh li.e-devuelta .ov-chip{color:#4b5563}
+  .otd-veh li.e-cancelada .ov-chip{color:#b91c1c}
+  .otd-veh a.ov-ver{min-height:44px;display:inline-flex;align-items:center;gap:.35rem;font-weight:600;color:#dc2626;text-decoration:none}
+  .otd-veh a.ov-ver:focus-visible{outline:2px solid #dc2626;outline-offset:2px;border-radius:6px}
+</style>
+<section class="otd-veh" id="otdVehiculo" aria-label="Vehículo de esta orden de trabajo">
+  <h3><i class="bi bi-truck" aria-hidden="true"></i> Vehículo de esta OT</h3>
+  <ul>
+    {% for s in vehiculos_flota %}
+    <li class="e-{{ s.estado }}">
+      <div class="ov-quien">
+        <span class="ov-veh">{{ s.vehiculo }}</span>
+        <span class="ov-det">{{ s.rango_texto }} · Maneja {{ s.chofer }}</span>
+        <span class="ov-det">Solicitud {{ s.numero }}</span>
+      </div>
+      <div class="ov-der">
+        <span class="ov-chip">{{ s.estado_texto }}</span>
+        <a class="ov-ver" href="{{ s.enlace }}"><i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>Ver en Solicitudes de vehículo</a>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
