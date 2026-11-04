@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -121,6 +122,14 @@ def _sol(**k):
          "hora_desde": "08:00", "hora_hasta": "12:30"}
     d.update(k)
     return d
+
+
+def _llave_cualquier_dia(caso):
+    """Estas pruebas reservan días adelante y entregan la llave para probar OTROS pasos: la regla «la llave solo el día de la
+    reserva» (Daniel, 03-nov-2026) se prueba aparte en TestLlaveDelDia, así que aquí se deja pasar."""
+    p = mock.patch.object(R, "llave_dia", return_value={"ok": True, "texto": "Hoy se entrega la llave."})
+    p.start()
+    caso.addCleanup(p.stop)
 
 
 class TestValidarSolicitud(unittest.TestCase):
@@ -872,6 +881,7 @@ class TestSolicitudes(Base):
 
 class TestFlujo(Base):
     def setUp(self):
+        _llave_cualquier_dia(self)
         super().setUp()
         _r, d = self.pedir()
         self.sid = d["solicitud"]["id"]
@@ -1258,6 +1268,7 @@ class TestDevolucion(unittest.TestCase):
     JPG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 
     def setUp(self):
+        _llave_cualquier_dia(self)
         from test_flota_vehiculos import BucketFalso
         self.enviados = []
         self.base = Falsa()
@@ -1446,3 +1457,45 @@ class TestAgenda24hEnElFrente(unittest.TestCase):
         css = _leer("static", "flota.css")
         self.assertIn(".fla-c24{", css)
         self.assertIn(".fla-ld-24{", css)
+
+
+class TestLlaveDelDiaYSlaRespuesta(unittest.TestCase):
+    """03-nov-2026 (Daniel): «hoy es que puedo entregar llaves, no puedo entregar las llaves otro día» y «también los tiempos de
+    respuesta… meterle todo SLA»."""
+
+    def test_llave_solo_desde_el_dia_de_la_reserva_hasta_que_termina(self):
+        D = dt.datetime
+        ini, fin = D(2026, 11, 5, 9), D(2026, 11, 5, 12)
+        self.assertFalse(R.llave_dia(ini, fin, dt.date(2026, 11, 4))["ok"])               # antes: no
+        self.assertIn("jue 05/11/2026", R.llave_dia(ini, fin, dt.date(2026, 11, 4))["texto"])
+        self.assertTrue(R.llave_dia(ini, fin, dt.date(2026, 11, 5))["ok"])                # el día: sí
+        self.assertFalse(R.llave_dia(ini, fin, dt.date(2026, 11, 6))["ok"])               # después: no
+        self.assertTrue(R.llave_dia(D(2026, 11, 5, 9), D(2026, 11, 7, 12), dt.date(2026, 11, 6))["ok"])   # varios días: mientras dure
+
+    def test_la_ruta_no_entrega_la_llave_otro_dia(self):
+        base = Falsa()
+        c = _app(base).test_client()
+        vid = c.post("/flota/api/vehiculos", json={"patente": "PHVD21-7", "tipo": "Camión", "licencia_clases": ["B"]}, headers=SUPER).get_json()["vehiculo"]["id"]
+        cid = c.post("/flota/api/choferes", json=dict(_datos_chofer(1), usuario_id=1), headers=SUPER).get_json()["chofer"]["id"]
+        dia = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+        sid = c.post("/flota/api/solicitudes", json={"vehiculo_id": vid, "chofer_id": cid, "area": "Logística", "motivo": "Reparto zona sur",
+                     "fecha": dia, "hora_desde": "09:00", "hora_hasta": "11:00"}, headers=SUPER).get_json()["solicitud"]["id"]
+        c.post(f"/flota/api/solicitudes/{sid}/confirmar", json={}, headers=SUPER)
+        s = c.get(f"/flota/api/solicitudes/{sid}", headers=SUPER).get_json()["solicitud"]
+        self.assertFalse(s["puede"]["llave"])                                              # el botón no aparece
+        self.assertFalse(s["llave_dia"]["ok"])
+        r = c.post(f"/flota/api/solicitudes/{sid}/llave", json={"nota": ""}, headers=SUPER)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.get_json()["error_codigo"], "LLAVE_OTRO_DIA")
+        self.assertEqual(base.sol[sid]["estado"], "confirmada")
+
+    def test_sla_de_respuesta_cuenta_solo_el_horario_de_llaves(self):
+        D = dt.datetime
+        sello = D(2026, 11, 3, 9, 0)                                                       # martes 09:00
+        self.assertEqual(R.sla_respuesta(sello, None, D(2026, 11, 3, 9, 40))["estado"], "sin_responder")
+        r = R.sla_respuesta(sello, None, D(2026, 11, 3, 15, 0))                            # 4 h de reloj, 5 h - colación = 5 h hábiles
+        self.assertEqual((r["estado"], r["minutos"]), ("atrasada", 300))
+        self.assertEqual(R.sla_respuesta(sello, D(2026, 11, 3, 9, 25), None)["texto"], "Respondida en 25 min")
+        r = R.sla_respuesta(D(2026, 11, 3, 16, 30), D(2026, 11, 4, 8, 30), None)        # pedida al cierre, respondida a primera hora
+        self.assertEqual((r["estado"], r["minutos"]), ("a_tiempo", 60))
+        self.assertIsNone(R.sla_respuesta(None, None, D(2026, 11, 3, 9)))

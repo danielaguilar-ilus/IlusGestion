@@ -1111,3 +1111,42 @@
 .fl-dsv--uso{background:#0a0a0a;color:#fff}
 .fl-dsv--nada{background:#f3f4f6;color:#4b5563}
 .fl-pie--usos{border:1px solid #f3f4f6;border-top:0;border-radius:0 0 12px 12px}
+/* ═══ Proceso guiado, SLA de respuesta y tabla al estilo del Monitor de Retiros (Daniel, 03-nov-2026) ═══ */
+/* Tabla de solicitudes: cabecera negra con letra legible y franja de semáforo a la izquierda de cada fila */
+.fl-tabla--sol thead th{background:#0a0a0a;color:#fff;font-size:.8rem;font-weight:700;letter-spacing:.02em;text-transform:none;border-bottom:0}
+.fl-tabla--sol tbody tr:hover td{background:#f9fafb}
+.fl-tabla--sol tbody tr > td:first-child{box-shadow:inset 5px 0 0 var(--fl-sem,transparent)}
+.fl-sem--solicitada{--fl-sem:#f59e0b}.fl-sem--confirmada{--fl-sem:#16a34a}.fl-sem--llave_entregada{--fl-sem:#2563eb}
+.fl-sem--devuelta{--fl-sem:#6b7280}.fl-sem--cancelada{--fl-sem:#d1d5db}.fl-sem--alerta{--fl-sem:#dc2626}
+@media (max-width: 1180px){
+  .fl-tabla--sol tbody tr > td:first-child{box-shadow:none}
+  .fl-tabla--sol tbody tr{box-shadow:inset 5px 0 0 var(--fl-sem,transparent)}
+}
+/* «Llaves de hoy» con su contador */
+.fl-fchip-n{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#dc2626;color:#fff;font-size:.72rem}
+.fl-fchip-n:empty{display:none}
+.fl-fchip.on .fl-fchip-n{background:#fff;color:#0a0a0a}
+/* SLA de respuesta */
+.fl-resp{display:inline-flex;align-items:center;gap:5px;margin-top:5px;border-radius:999px;padding:3px 10px;font-size:.74rem;font-weight:800;width:max-content;max-width:100%}
+.fl-resp--sin_responder{background:#dbeafe;color:#1e40af}
+.fl-resp--atrasada{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
+.fl-resp--a_tiempo{background:#dcfce7;color:#166534}
+.fl-resp--tarde{background:#fff8e1;color:#92400e;border:1px solid #fde68a}
+td > .fl-resp,td > .fl-dsv{display:flex}
+/* Guía de la solicitud: pasos con semáforo (verde hecho, rojo el que toca, gris lo que viene) */
+.fl-guia{list-style:none;margin:0 0 14px;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.fl-guia-p{display:flex;gap:10px;border:1.5px solid #e5e7eb;border-radius:14px;padding:10px;background:#fff;min-width:0}
+.fl-guia-n{flex:0 0 30px;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:#e5e7eb;color:#4b5563}
+.fl-guia-c{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:.84rem}
+.fl-guia-c > b{font-size:.9rem;overflow-wrap:anywhere}
+.fl-guia-c .fl-sub{overflow-wrap:anywhere}
+.fl-guia-acc{margin-top:8px}
+.fl-guia-p.ok{border-color:#bbf7d0;background:#f0fdf4}.fl-guia-p.ok .fl-guia-n{background:#16a34a;color:#fff}
+.fl-guia-p.actual{border-color:#dc2626;box-shadow:0 0 0 3px #fee2e2}.fl-guia-p.actual .fl-guia-n{background:#dc2626;color:#fff;animation:flGuiaPulso 1.8s infinite}
+.fl-guia-p.off{opacity:.55}
+@keyframes flGuiaPulso{0%{box-shadow:0 0 0 0 rgba(220,38,38,.45)}70%{box-shadow:0 0 0 8px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
+@media (prefers-reduced-motion: reduce){.fl-guia-p.actual .fl-guia-n{animation:none}}
+.fl-guia-cancel{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin:-6px 0 14px;padding:10px 12px;border-radius:12px;background:#fee2e2;color:#991b1b;font-weight:700;font-size:.86rem}
+.fl-guia-cancel span{font-weight:500;color:#7f1d1d;flex:1 1 100%}
+@media (max-width: 1100px){ .fl-guia{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media (max-width: 560px){ .fl-guia{grid-template-columns:1fr} .fl-guia-acc .fl-btn{width:100%;justify-content:center} }

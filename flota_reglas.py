@@ -943,6 +943,43 @@ def sla_llave(estado, inicio, fin, ahora, feriados=()):
     return {"estado": "critica", "minutos": m, "texto": f"Atraso crítico · {_duracion(m)} hábiles" + extra}
 
 
+# ── La llave se entrega el día de la reserva y la gestión responde a tiempo (Daniel, 03-nov-2026) ──────────────────────────────
+# «Hoy es que puedo entregar llaves, no puedo entregar las llaves otro día» y «también los tiempos de respuesta… meterle todo SLA».
+SLA_RESPUESTA_MIN = 120      # la gestión confirma o cancela una solicitud dentro de 2 h hábiles (horario de llaves)
+
+
+def llave_dia(inicio, fin, hoy):
+    """¿Se puede entregar HOY la llave de esta reserva? Solo desde el día en que empieza hasta el día en que termina.
+    {"ok", "texto"}: el texto se muestra tal cual en la guía de la solicitud."""
+    if inicio is None or fin is None or hoy is None:
+        return {"ok": False, "texto": ""}
+    if hoy < inicio.date():
+        return {"ok": False, "texto": f"La llave se entrega el día de la reserva: {fecha_dia_texto(inicio.date())}, desde las {hora_texto(inicio)}."}
+    if hoy > fin.date():
+        return {"ok": False, "texto": "La reserva ya terminó: la llave no se entrega otro día. Cancélala o pide una nueva."}
+    return {"ok": True, "texto": "Hoy se entrega la llave" + (f", desde las {hora_texto(inicio)}." if hoy == inicio.date() else ".")}
+
+
+def sla_respuesta(sello, respondida, ahora, feriados=(), objetivo=SLA_RESPUESTA_MIN):
+    """Cuánto tardó (o lleva) la gestión en responder una solicitud: de que se pidió a que se confirmó o canceló, contando solo el
+    horario de llaves de los días hábiles (como el «Sin responder» de Retiros). Todo en hora Chile sin zona. None si falta el sello.
+    Estados: sin_responder (en plazo) · atrasada (pasó el objetivo sin respuesta) · a_tiempo · tarde (se respondió fuera de plazo)."""
+    if sello is None:
+        return None
+    if respondida is not None:
+        m = minutos_habiles(sello, respondida, feriados)
+        ok = m <= objetivo
+        return {"estado": "a_tiempo" if ok else "tarde", "minutos": m, "objetivo": objetivo,
+                "texto": ("Respondida en " + (_duracion(m) if m else "menos de 1 min")) + ("" if ok else " · fuera de plazo")}
+    if ahora is None:
+        return None
+    m = minutos_habiles(sello, ahora, feriados)
+    if m <= objetivo:
+        return {"estado": "sin_responder", "minutos": m, "objetivo": objetivo,
+                "texto": "Sin responder · " + (_duracion(m) + " hábiles" if m else "recién pedida") + f" (plazo {_duracion(objetivo)})"}
+    return {"estado": "atrasada", "minutos": m, "objetivo": objetivo, "texto": f"Respuesta atrasada · {_duracion(m)} hábiles sin responder"}
+
+
 # ── Devolución de la llave (FASE 2, 03-nov-2026) ───────────────────────────
 COMBUSTIBLE_NIVELES = (("lleno", "Lleno"), ("3_4", "3/4"), ("1_2", "1/2"), ("1_4", "1/4"), ("reserva", "Reserva"))
 KM_MAX = 2_000_000

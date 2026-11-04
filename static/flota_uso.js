@@ -186,10 +186,13 @@
   function pill(s) {
     return '<span class="fl-est fl-est--' + esc(s.estado) + '"><i class="bi ' + (ICONOS[s.estado] || 'bi-circle') + '"></i>' + esc(s.estado_texto) + '</span>';
   }
+  /* «Llaves de hoy»: confirmadas cuya llave se entrega hoy (la llave solo se entrega el día de la reserva, 03-nov-2026). */
+  function esLlaveHoy(s) { return s.estado === 'confirmada' && !!(s.llave_dia && s.llave_dia.ok); }
   function solFiltradas() {
     var q = norm(S.solQ);
     return S.sol.filter(function (s) {
-      if (S.solEstado !== 'todas' && s.estado !== S.solEstado) return false;
+      if (S.solEstado === 'llave_hoy') { if (!esLlaveHoy(s)) return false; }
+      else if (S.solEstado !== 'todas' && s.estado !== S.solEstado) return false;
       if (S.solVeh && String(s.vehiculo.id) !== S.solVeh) return false;
       if (!q) return true;
       return norm([s.numero, s.vehiculo.patente_fmt, s.vehiculo.titulo, s.area, s.solicitante, s.chofer.nombre, s.motivo].join(' ')).indexOf(q) >= 0;
@@ -210,15 +213,26 @@
     if (p.cancelar) b.push('<button type="button" class="fl-btn fl-btn--peligro" data-acc="cancelar"><i class="bi bi-x-circle"></i>Cancelar</button>');
     return b.join('');
   }
+  /* SLA de respuesta (03-nov-2026): cuánto tarda la gestión en confirmar o cancelar, contando solo el horario de llaves. */
+  function chipResp(s) {
+    var r = s.sla_respuesta;
+    if (!r || (s.estado !== 'solicitada' && r.estado === 'a_tiempo')) return '';
+    return '<span class="fl-resp fl-resp--' + esc(r.estado) + '"><i class="bi bi-stopwatch"></i>' + esc(r.texto) + '</span>';
+  }
+  function semaforoFila(s) {      // franja de color a la izquierda, como el Monitor de Retiros
+    if (s.sla && (s.sla.estado === 'critica' || s.sla.estado === 'atrasada')) return 'fl-sem--alerta';
+    if (s.sla_respuesta && s.sla_respuesta.estado === 'atrasada') return 'fl-sem--alerta';
+    return 'fl-sem--' + s.estado;
+  }
   function filaSol(s) {
-    return '<tr class="' + (s.estado === 'cancelada' ? 'inhab' : '') + '" data-id="' + s.id + '">' +
+    return '<tr class="' + semaforoFila(s) + (s.estado === 'cancelada' ? ' inhab' : '') + '" data-id="' + s.id + '">' +
       '<td class="fl-td-veh"><span class="fl-num">' + esc(s.numero) + '</span><span class="fl-sub">Sellada el ' + esc(s.sello_fmt) + '</span></td>' +
       '<td data-label="Vehículo"><span class="fl-pat">' + esc(s.vehiculo.patente_fmt) + '</span><span class="fl-tit">' + esc(s.vehiculo.titulo) + '</span></td>' +
       '<td data-label="Cuándo"><b class="fl-cuando">' + esc(s.rango_texto) + '</b></td>' +
       '<td data-label="Área y quién pidió"><b>' + esc(s.area) + '</b><span class="fl-sub">Pidió ' + esc(s.solicitante || '—') + '</span>' +
       '<span class="fl-sub">' + esc(s.motivo) + '</span></td>' +
       '<td data-label="Chofer">' + esc(s.chofer.nombre) + (s.chofer.telefono ? '<span class="fl-sub">' + esc(s.chofer.telefono) + '</span>' : '') + '</td>' +
-      '<td data-label="Estado">' + pill(s) + estadoExtra(s) + chipSla(s) + '</td>' +
+      '<td data-label="Estado">' + pill(s) + estadoExtra(s) + chipSla(s) + chipResp(s) + chipPlanReal(s) + '</td>' +
       '<td data-label="Acciones"><div class="fl-acc">' + botonesFila(s) + '</div></td></tr>';
   }
   /* SLA de la llave (Daniel, 02-nov-2026): lo calcula el servidor contando solo el horario de entrega. */
@@ -236,6 +250,8 @@
   }
   function pintarSolLista() {
     var lista = solFiltradas();
+    var nHoy = S.sol.filter(esLlaveHoy).length;
+    escribir($('flChipLlaveHoyN'), nHoy ? String(nHoy) : '');
     if (!S.sol.length) {
       pintarSolVacio(S.solVista === 'pasadas' ? 'No hay solicitudes pasadas' : 'Aún no hay solicitudes por delante',
         S.veh.length ? 'Crea la primera con «Nueva solicitud».' : 'Primero agrega un vehículo y un chofer; después podrás reservar.');
@@ -698,6 +714,52 @@
 
   /* ═══ SOLICITUDES · DETALLE Y ACCIONES DE LA GESTIÓN ═══ */
   function bloqueDet(titulo, cuerpo) { return '<div class="fl-det-b"><span class="fl-det-t">' + esc(titulo) + '</span><div>' + cuerpo + '</div></div>'; }
+  /* Lo planeado contra lo real al retirar y al devolver (Daniel, 03-nov-2026: «qué tan fuera del plan maneja los tiempos cada quien»). */
+  function chipPlanReal(s) {
+    var pr = s.plan_real || {}, out = '';
+    if (pr.retiro) out += '<span class="fl-dsv fl-dsv--' + esc(pr.retiro.estado) + '">Retiró: ' + esc(pr.retiro.texto.toLowerCase()) + '</span>';
+    if (pr.devolucion) out += '<span class="fl-dsv fl-dsv--' + esc(pr.devolucion.estado) + '">Devolvió: ' + esc(pr.devolucion.texto.toLowerCase()) + '</span>';
+    return out;
+  }
+  /* Guía de la solicitud (Daniel, 03-nov-2026: «quiero como un proceso completo, acompáñame a gestionarlo»): los cuatro pasos con su
+     semáforo (verde hecho, rojo el que toca, gris lo que viene), quién y cuándo, y el botón del paso que toca. Mismo lenguaje que la
+     guía de Retiros (REGLA #15). Confirmar no es obligatorio en el acto: la reserva queda pedida y ocupa su horario hasta que alguien
+     la confirme o la cancele. */
+  function guiaSolicitud(s) {
+    var p = s.puede || {}, est = s.estado, cancel = est === 'cancelada';
+    var hecho = { pedida: true, confirmada: !!s.confirmada_por, llave: !!s.llave_por || est === 'devuelta', devuelta: est === 'devuelta' };
+    var actual = cancel ? '' : (!hecho.confirmada ? 'confirmada' : (!hecho.llave ? 'llave' : (!hecho.devuelta ? 'devuelta' : '')));
+    function paso(n, clave, titulo, cuerpo, boton) {
+      var cls = hecho[clave] ? 'ok' : (clave === actual ? 'actual' : (cancel ? 'off' : 'pend'));
+      return '<li class="fl-guia-p ' + cls + '"><span class="fl-guia-n" aria-hidden="true">' + (hecho[clave] ? '<i class="bi bi-check-lg"></i>' : n) + '</span>' +
+        '<div class="fl-guia-c"><b>' + esc(titulo) + '</b>' + cuerpo + (boton && clave === actual ? '<div class="fl-guia-acc">' + boton + '</div>' : '') + '</div></li>';
+    }
+    var sub = function (t) { return t ? '<span class="fl-sub">' + esc(t) + '</span>' : ''; };
+    var r = s.sla_respuesta, dia = s.llave_dia || {};
+    var h = '<ol class="fl-guia" aria-label="Pasos de la solicitud">';
+    h += paso(1, 'pedida', 'Pedida', sub('Pidió ' + (s.solicitante || '—') + ' · ' + s.sello_fmt) +
+      (r ? '<span class="fl-resp fl-resp--' + esc(r.estado) + '"><i class="bi bi-stopwatch"></i>' + esc(r.texto) + '</span>' : ''));
+    h += paso(2, 'confirmada', 'Confirmar la reserva',
+      hecho.confirmada ? sub(s.confirmada_por + ' · ' + s.confirmada_fmt)
+        : sub('El vehículo y el chofer quedaron libres en ese horario: no hay choques. Puedes confirmarla ahora o dejarla pendiente; ' +
+              'mientras esté pedida, nadie más toma ese horario.'),
+      p.confirmar ? '<button type="button" class="fl-btn fl-btn--ok" data-dacc="confirmar"><i class="bi bi-check-circle"></i>Confirmar</button>' : '');
+    var cuerpoLlave = hecho.llave ? sub((s.llave_por || '') + ' · ' + (s.llave_fmt || '')) + (s.plan_real && s.plan_real.retiro
+        ? '<span class="fl-dsv fl-dsv--' + esc(s.plan_real.retiro.estado) + '">Retiró: ' + esc(s.plan_real.retiro.texto.toLowerCase()) + '</span>' : '')
+      : sub(dia.texto || '') + sub('Horario de llaves: lunes a viernes de 08:00 a 13:00 y de 14:00 a 17:00.') + chipSla(s);
+    h += paso(3, 'llave', 'Entregar la llave a ' + s.chofer.nombre, cuerpoLlave,
+      p.llave ? '<button type="button" class="fl-btn fl-btn--llave" data-dacc="llave"><i class="bi bi-key"></i>Llave entregada</button>' : '');
+    var dv = s.devolucion;
+    h += paso(4, 'devuelta', 'Devolución con evidencia',
+      dv ? sub(miles(dv.km) + ' km · combustible ' + (dv.combustible_texto || '—') + (dv.novedad ? ' · con novedad' : ' · sin novedad')) + sub((dv.por || '') + ' · ' + (dv.fmt || '')) +
+          (s.plan_real && s.plan_real.devolucion ? '<span class="fl-dsv fl-dsv--' + esc(s.plan_real.devolucion.estado) + '">Devolvió: ' + esc(s.plan_real.devolucion.texto.toLowerCase()) + '</span>' : '')
+        : sub('Kilometraje (no puede ser menor al último), combustible y cuatro fotos. Se puede hacer desde el celular.'),
+      p.devolver ? '<button type="button" class="fl-btn fl-btn--dev" data-dacc="devolver"><i class="bi bi-box-arrow-in-down"></i>Registrar devolución</button>' : '');
+    h += '</ol>';
+    if (cancel) h += '<div class="fl-guia-cancel"><i class="bi bi-x-octagon"></i>Cancelada por ' + esc(s.cancelada_por || '—') + ' · ' + esc(s.cancelada_fmt || '') +
+      (s.cancelada_motivo ? '<span>' + esc(s.cancelada_motivo) + '</span>' : '') + '</div>';
+    return h;
+  }
   function pintarDetalle(s, eventos, fotos) {
     $('flModalSolDetTitulo').textContent = 'Solicitud ' + s.numero;
     var ex = '';
@@ -709,6 +771,7 @@
     if (s.modificada_por) ex += bloqueDet('Última modificación', esc(s.modificada_por) + '<span class="fl-sub">' + esc(s.modificada_fmt) + '</span>');
     $('flSolDetCuerpo').innerHTML =
       '<div class="fl-det-cab"><span class="fl-num">' + esc(s.numero) + '</span>' + pill(s) + '</div>' +
+      guiaSolicitud(s) +
       '<div class="fl-det-grid">' +
       bloqueDet('Vehículo', '<span class="fl-pat">' + esc(s.vehiculo.patente_fmt) + '</span><span class="fl-tit">' + esc(s.vehiculo.titulo) + '</span>') +
       bloqueDet('Cuándo', '<b class="fl-cuando">' + esc(s.rango_texto) + '</b><span class="fl-sub">' + esc(duracionTexto(s.inicio, s.fin)) + '</span>') +
@@ -2117,6 +2180,10 @@
     $('flDevKm').addEventListener('input', function (e) { var d = e.target.value.replace(/\D/g, ''); e.target.value = d ? Number(d).toLocaleString('es-CL') : ''; });
     $('flDevGuardar').addEventListener('click', guardarDev);
     $('flSolDetAcc').addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-dacc]');
+      if (b && S.det) accion(b.getAttribute('data-dacc'), S.det);
+    });
+    $('flSolDetCuerpo').addEventListener('click', function (ev) {       // los botones de la guía de la solicitud
       var b = ev.target.closest('[data-dacc]');
       if (b && S.det) accion(b.getAttribute('data-dacc'), S.det);
     });
