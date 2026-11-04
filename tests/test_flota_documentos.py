@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -65,6 +66,14 @@ class TestNiveles(unittest.TestCase):
         self.assertFalse(R.niveles({"flota_solicitar": True, "flota_gestionar": True, "flota_documentos": True})["admin"])
         # la llave nueva administra y entra, pero NO gestiona (no confirma ni entrega la llave)
         self.assertEqual(R.niveles({"flota_administrar": True}), {"admin": True, "gestionar": False, "documentos": True, "solicitar": True})
+
+
+def _llave_cualquier_dia(caso):
+    """Estas pruebas reservan días adelante y entregan la llave para probar OTROS pasos: la regla «la llave solo el día de la
+    reserva» (Daniel, 03-nov-2026) se prueba aparte en TestLlaveDelDia, así que aquí se deja pasar."""
+    p = mock.patch.object(TS.R, "llave_dia", return_value={"ok": True, "texto": "Hoy se entrega la llave."})
+    p.start()
+    caso.addCleanup(p.stop)
 
 
 class TestPatenteYRut(unittest.TestCase):
@@ -205,6 +214,10 @@ class Base2(TS.Base):
 
 
 class TestPermisosPorNivel(Base2):
+    def setUp(self):
+        super().setUp()
+        _llave_cualquier_dia(self)
+
     def test_sin_llaves_no_entra_a_nada(self):
         self.assertEqual(self.c.get("/flota", headers=SIN_LLAVES).status_code, 302)
         for url in ("/flota/api/vehiculos", "/flota/api/choferes", "/flota/api/solicitudes", "/flota/api/calendario"):
@@ -673,6 +686,7 @@ class TestChoferExternoYRepositorio(unittest.TestCase):
     de antes se puede editar o archivar, pero no se elige en una reserva ni recibe la llave."""
 
     def setUp(self):
+        _llave_cualquier_dia(self)
         self.bucket = BucketFalso()
         self.base = TS.Falsa()
         self.app = TS._app(self.base, self.bucket)

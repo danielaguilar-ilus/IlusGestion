@@ -60,6 +60,8 @@
     <div class="fl-toolbar" id="flSolFiltros">
       <div class="fl-chips" role="group" aria-label="Filtrar por estado">
         <button type="button" class="fl-fchip on" data-sest="todas">Todas</button>
+        {# Daniel, 03-nov-2026: «filtrar por la fecha de hoy, las que están gestionadas para entrega de llave hoy» #}
+        <button type="button" class="fl-fchip fl-fchip--hoy" data-sest="llave_hoy"><i class="bi bi-key"></i>Llaves de hoy <span class="fl-fchip-n" id="flChipLlaveHoyN"></span></button>
         <button type="button" class="fl-fchip" data-sest="solicitada">Por confirmar</button>
         <button type="button" class="fl-fchip" data-sest="confirmada">Confirmadas</button>
         <button type="button" class="fl-fchip" data-sest="llave_entregada">Llave entregada</button>

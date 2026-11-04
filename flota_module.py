@@ -1193,6 +1193,13 @@ def register_flota_routes(app, ctx):
         est = r.get("estado")
         mia = bool(uid and r.get("solicitante_id") == uid)
         titulo = " ".join(x for x in (r.get("v_tipo"), r.get("v_marca"), r.get("v_modelo")) if x)
+        ahora = _ahora_chile()
+        fer = _feriados(ini.year, fin.year, ahora.year)
+        # 03-nov-2026: la llave solo se entrega el día de la reserva; la gestión responde dentro del SLA; plan contra real.
+        dia = fr.llave_dia(ini, fin, ahora.date())
+        resp_at = r.get("confirmada_at") or (r.get("cancelada_at") if est == "cancelada" else None)
+        sla_resp = (fr.sla_respuesta(_utc_a_chile(r.get("sello_at")), _utc_a_chile(resp_at), ahora, fer)
+                    if est in ("solicitada", "cancelada") or resp_at else None)
         return {
             "id": r["id"], "numero": r.get("numero") or "", "estado": est, "estado_texto": fr.ESTADOS.get(est, est),
             "vehiculo": {"id": r["vehiculo_id"], "patente_fmt": fr.patente_con_guion(r.get("v_patente")), "titulo": titulo,
@@ -1207,7 +1214,11 @@ def register_flota_routes(app, ctx):
             "inicio": ini.strftime("%Y-%m-%dT%H:%M"), "fin": fin.strftime("%Y-%m-%dT%H:%M"), "rango_texto": fr.rango_texto(ini, fin),
             "motivo": r.get("motivo"), "sello_fmt": _hora_chile(r.get("sello_at")),
             # SLA de la llave (02-nov-2026): solo corre en el horario de entrega; None si ya se entregó o aún no es la hora.
-            "sla": fr.sla_llave(est, ini, fin, _ahora_chile(), _feriados(ini.year, fin.year, _ahora_chile().year)),
+            "sla": fr.sla_llave(est, ini, fin, ahora, fer),
+            "sla_respuesta": sla_resp,
+            "llave_dia": dia,
+            "plan_real": {"retiro": fr.desvio(ini, _utc_a_chile(r.get("llave_at"))),
+                          "devolucion": fr.desvio(fin, _utc_a_chile(r.get("devuelta_at")))},
             "confirmada_por": r.get("confirmada_por"), "confirmada_fmt": _hora_chile(r.get("confirmada_at")),
             "llave_por": r.get("llave_por"), "llave_fmt": _hora_chile(r.get("llave_at")), "llave_nota": r.get("llave_nota"),
             "cancelada_por": r.get("cancelada_por"), "cancelada_fmt": _hora_chile(r.get("cancelada_at")),
@@ -1215,7 +1226,7 @@ def register_flota_routes(app, ctx):
             "modificada_por": r.get("modificada_por"), "modificada_fmt": _hora_chile(r.get("modificada_at")),
             "puede": {
                 "confirmar": gest and est == "solicitada",
-                "llave": gest and est == "confirmada",
+                "llave": gest and est == "confirmada" and dia["ok"],
                 "editar": gest and est in fr.ESTADOS_EDITABLES,
                 "cancelar": (gest and est in fr.ESTADOS_OCUPAN) or (mia and est in fr.ESTADOS_EDITABLES),
                 # Devolver la llave (FASE 2): la gestión, que la recibe, o quien pidió el vehículo, que la trae.
@@ -1539,6 +1550,7 @@ def register_flota_routes(app, ctx):
         eventos = []
         titulos = {"creada": "Solicitud creada", "confirmada": "Confirmada por la gestión", "llave_entregada": "Llave entregada",
                    "editada": "Reserva modificada", "cancelada": "Cancelada", "sla_aviso": "Aviso de llave atrasada a la gestión",
+                   "aviso_solicitante": "Aviso de llave sin retirar a quien la pidió",
                    "devuelta": "Vehículo devuelto"}
         for f in mysql_fetchall(
                 "SELECT id, accion, detalle, usuario, created_at FROM flota_solicitud_log WHERE solicitud_id=%s ORDER BY id DESC LIMIT 200",
@@ -1628,6 +1640,10 @@ def register_flota_routes(app, ctx):
             return _error("La nota puede tener hasta 300 caracteres.", 400, errores={"nota": "Máximo 300 caracteres."})
         # Sin usuario de ILUS no se retira el vehículo (03-nov-2026): una reserva antigua con un chofer externo se cambia de chofer primero.
         fila = _sol_fila(sid)
+        # «Hoy es que puedo entregar llaves, no puedo entregar las llaves otro día» (Daniel, 03-nov-2026)
+        dia = fr.llave_dia(fila["inicio"], fila["fin"], _ahora_chile().date()) if fila else {"ok": True}
+        if fila and fila["estado"] == "confirmada" and not dia["ok"]:
+            return _error(dia["texto"], 409, error_codigo="LLAVE_OTRO_DIA", solicitud=_sol_json(dict(fila)))
         ch = mysql_fetchone("SELECT id, usuario_id FROM flota_choferes WHERE id=%s", (fila["chofer_id"],)) if fila else None
         if ch and "usuario_id" in ch and ch["usuario_id"] is None:
             return _error(f"{fila.get('chofer_nombre') or 'El chofer'} no tiene usuario de ILUS: no puede retirar el vehículo. "
@@ -1704,8 +1720,55 @@ def register_flota_routes(app, ctx):
                           f"{'Atraso crítico' if sla['estado'] == 'critica' else 'Llave atrasada'}: {r.get('numero') or ''} · "
                           f"{fr.patente_con_guion(r.get('v_patente'))}",
                           _cuerpo_correo(r, sla["texto"] + ". Entrega la llave o actualiza la solicitud en Solicitudes de vehículo."), sid=r.get("id"))
+            if sla["estado"] == "critica":
+                n_sol = _correo_llave_solicitante(r, sla)
+                if n_sol:
+                    _slog(r["id"], "aviso_solicitante", {"texto": sla["texto"], "correos": n_sol})
             avisos += 1
         return {"revisadas": len(filas), "avisos": avisos}
+
+    def _correo_llave_solicitante(r, sla):
+        """Daniel, 03-nov-2026: «si no he entregado las llaves, me gustaría gestionar el envío de un correo a la persona que solicitó,
+        ya que estaría fuera de tiempo». Al atraso CRÍTICO, una vez por reserva (lo asegura `sla_aviso`): a quien la pidió y al chofer
+        que la retira, técnicos incluidos (es su propia reserva y no lleva montos: REGLAS #19/#26). El botón abre la solicitud.
+        Por la puerta única con su clave del registro (REGLA #33). Nunca levanta → cuántos correos encolados."""
+        _send_ilus_email, master = ctx.get("_send_ilus_email"), ctx.get("_ilus_email_master")
+        base, asunto = ctx.get("_public_base_url") or (lambda: ""), ctx.get("_brand_subject") or (lambda t: t)
+        if not (_send_ilus_email and master):
+            return 0
+        try:
+            ids = {r.get("solicitante_id")}
+            ch = mysql_fetchone("SELECT id, usuario_id FROM flota_choferes WHERE id=%s", (r["chofer_id"],))
+            if ch and ch.get("usuario_id"):
+                ids.add(ch["usuario_id"])
+            ids = sorted(int(i) for i in ids if i)
+            if not ids:
+                return 0
+            filas = mysql_fetchall("SELECT id, username FROM `" + _AUTH + "` WHERE active=1 AND id IN (" + ",".join(["%s"] * len(ids)) + ")",
+                                   tuple(ids)) or []
+            titulo = f"Tu reserva {r.get('numero') or ''} sigue sin retirar la llave"
+            primera = (f"La reserva del {fr.patente_con_guion(r.get('v_patente'))} empezó a las {fr.hora_texto(r['inicio'])} y la llave sigue "
+                       f"sin retirarse ({sla['texto']}). Pasa a buscarla o, si ya no la necesitas, cancélala para liberar el vehículo.")
+            cuerpo = _cuerpo_correo(r, primera)
+            html = master({"subject": titulo, "preheader": primera[:140], "status_label": "Solicitudes de vehículo", "title": titulo,
+                           "message": "<p>" + __import__("html").escape(cuerpo).replace("\n", "<br>") + "</p>",
+                           "primary_cta_url": f"{base()}/flota?sol={int(r['id'])}#solicitudes", "primary_cta_label": "Ver mi reserva",
+                           "closing_message": "Correo interno de ILUS Fitness. Se apaga en Comunicaciones → Control de correos."})
+        except Exception as e:
+            print(f"[flota] correo al solicitante: {type(e).__name__}", flush=True)
+            return 0
+        n = 0
+        for u in filas:
+            correo = (u.get("username") or "").strip()
+            if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", correo):
+                continue
+            try:
+                if _send_ilus_email(correo, asunto(titulo), html, evento="flota_llave_atrasada_solicitante", modulo="comunicacion_interna",
+                                    asincrono=True, correo="flota_llave_atrasada_solicitante") is not False:
+                    n += 1
+            except Exception as e:
+                print(f"[flota] correo al solicitante {u.get('id')}: {type(e).__name__}", flush=True)
+        return n
 
     ctx["_flota_sla_barrido"] = _flota_sla_barrido
 
