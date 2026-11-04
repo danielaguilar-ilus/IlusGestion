@@ -343,9 +343,11 @@ def _construir_mail(asunto, de, texto, message_id, cuando):
 
 
 class Banco:
-    def __init__(self, tickets, ya_ingeridos=(), mensajes_previos=()):
+    def __init__(self, tickets, ya_ingeridos=(), mensajes_previos=(), reclamados_por_otro=()):
         self.tickets = dict(tickets)
         self.ya_ingeridos = set(ya_ingeridos)
+        # Correos que OTRO barrido ya reclamó pero que el SELECT de este no ve (foto vieja de REPEATABLE READ).
+        self.reclamados_por_otro = set(reclamados_por_otro)
         self.mensajes_previos = list(mensajes_previos)
         self.ejecutados = []
 
@@ -372,6 +374,16 @@ class Banco:
             self.ya_ingeridos.add(params[0])
         return 1
 
+    def execute_rowcount(self, sql, params=None):
+        """mysql_execute_returning_rowcount: un INSERT IGNORE devuelve 0 filas si la PRIMARY KEY ya estaba."""
+        s = " ".join(sql.split())
+        self.ejecutados.append((s, params))
+        if "INSERT IGNORE INTO tk_mail_ingeridos" in s:
+            ya = params[0] in self.ya_ingeridos or params[0] in self.reclamados_por_otro
+            self.ya_ingeridos.add(params[0])
+            return 0 if ya else 1
+        return 1
+
     def escrituras(self):
         return [s for s, _ in self.ejecutados]
 
@@ -392,8 +404,8 @@ def _stub_extraer_cuerpo(msg):
 
 
 def _correr_barrido_enviado(mensajes, tickets, ya_ingeridos=(),
-                            mensajes_previos=(), **kw):
-    banco = Banco(tickets, ya_ingeridos, mensajes_previos)
+                            mensajes_previos=(), reclamados_por_otro=(), **kw):
+    banco = Banco(tickets, ya_ingeridos, mensajes_previos, reclamados_por_otro)
     imap = FakeIMAPEnviados(mensajes)
     efectos = {"log": []}
 
@@ -421,6 +433,7 @@ def _correr_barrido_enviado(mensajes, tickets, ya_ingeridos=(),
         "mysql_fetchone": banco.fetchone,
         "mysql_fetchall": banco.fetchall,
         "mysql_execute": banco.execute,
+        "ctx": {"mysql_execute_returning_rowcount": banco.execute_rowcount},
         "_tk_log": _tk_log,
         "_tk_extraer_cuerpo_mail": _stub_extraer_cuerpo,
         "_html_mod": __import__("html"),
@@ -432,6 +445,7 @@ def _correr_barrido_enviado(mensajes, tickets, ya_ingeridos=(),
     exec(_aislar_asignacion("_TK_DEDUP_HEUR_VENTANA_MIN"), ns)
     exec(_aislar_funcion("def _tk_normalizar_para_dedup("), ns)
     exec(_aislar_funcion("def _tk_ya_registrado_como_respuesta("), ns)
+    exec(_aislar_funcion("def _tk_mail_reclamar("), ns)
     exec(_aislar_funcion("def _tk_leer_correo_enviado("), ns)
     resumen = ns["_tk_leer_correo_enviado"](**kw)
     return resumen, banco, imap, efectos
@@ -515,6 +529,17 @@ resumen2, banco2, _, ef2 = _correr_barrido_enviado(
     dias=20, max_correos=50, dry_run=False)
 check(resumen2["capturados"] == 0, "nada nuevo que capturar -- ya quedó todo marcado")
 check(ef2["log"] == [], "segunda pasada no vuelve a llamar _tk_log")
+
+print("\n3c-bis. Dos barridos a la vez: otro ya reclamó el correo y este no lo ve en su SELECT (foto vieja)")
+resumen_pisado, banco_pisado, _, ef_pisado = _correr_barrido_enviado(
+    TODOS, TICKETS, YA_INGERIDOS, MENSAJES_PREVIOS,
+    reclamados_por_otro=["<nuevo-sent-1@mail.gmail.com>"],
+    dias=20, max_correos=50, dry_run=False)
+check(resumen_pisado["capturados"] == 0,
+      "si otro barrido ya reclamó el correo, este NO lo captura aunque su SELECT no lo vea")
+check(ef_pisado["log"] == [], "y no llama _tk_log: el mensaje no se guarda dos veces")
+check(resumen_pisado["duplicados"] == 2,
+      "se cuenta como duplicado (el ya ingerido de siempre + el que otro barrido ganó)")
 
 print("\n3d. Reglas innegociables del buzón (misma casilla real de Daniel)")
 check(imap.select_readonly is True, "select() de Enviados es SIEMPRE readonly=True")

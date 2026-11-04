@@ -350,9 +350,11 @@ def _construir_mail(asunto, de, texto, message_id, cuando=None, adjunto=None):
 class Banco:
     """MySQL de mentira: guarda lo que se escribió para poder afirmarlo."""
 
-    def __init__(self, tickets, ya_ingeridos):
+    def __init__(self, tickets, ya_ingeridos, reclamados_por_otro=()):
         self.tickets = tickets            # numero -> dict
         self.ya_ingeridos = set(ya_ingeridos)
+        # Correos que OTRO barrido ya reclamó pero que el SELECT de este no ve (foto vieja de REPEATABLE READ).
+        self.reclamados_por_otro = set(reclamados_por_otro)
         self.ejecutados = []              # (sql, params)
 
     def fetchone(self, sql, params=None):
@@ -370,6 +372,16 @@ class Banco:
             self.ya_ingeridos.add(params[0])
         return 1
 
+    def execute_rowcount(self, sql, params=None):
+        """mysql_execute_returning_rowcount: un INSERT IGNORE devuelve 0 filas si la PRIMARY KEY ya estaba."""
+        s = " ".join(sql.split())
+        self.ejecutados.append((s, params))
+        if "INSERT IGNORE INTO tk_mail_ingeridos" in s:
+            ya = params[0] in self.ya_ingeridos or params[0] in self.reclamados_por_otro
+            self.ya_ingeridos.add(params[0])
+            return 0 if ya else 1
+        return 1
+
     # ── ayudas de aserción ──
     def escrituras(self):
         return [s for s, _ in self.ejecutados]
@@ -378,10 +390,10 @@ class Banco:
         return sum(1 for s in self.escrituras() if fragmento in s)
 
 
-def _correr_barrido(mensajes, tickets, ya_ingeridos=(), **kw):
+def _correr_barrido(mensajes, tickets, ya_ingeridos=(), reclamados_por_otro=(), **kw):
     """Ejecuta _tk_leer_correo_entrante contra el buzón falso.
     Devuelve (resumen, banco, imap, efectos)."""
-    banco = Banco(tickets, ya_ingeridos)
+    banco = Banco(tickets, ya_ingeridos, reclamados_por_otro)
     imap = FakeIMAP(mensajes)
     efectos = {"log": [], "subidas": [], "notifs": [], "salud": [], "reabiertos": []}
 
@@ -400,7 +412,7 @@ def _correr_barrido(mensajes, tickets, ya_ingeridos=(), **kw):
 
     ns = _ns_base()
     ns.update({
-        "imaplib": types.SimpleNamespace(IMAP4_SSL=lambda host, port: imap),
+        "imaplib": types.SimpleNamespace(IMAP4_SSL=lambda host, port, timeout=None: imap),
         "_tk_imap_creds": lambda: (BUZON, "clave-app"),
         "_tk_imap_host": lambda: "imap.gmail.com",
         "mysql_fetchone": banco.fetchone,
@@ -410,15 +422,19 @@ def _correr_barrido(mensajes, tickets, ya_ingeridos=(), **kw):
         "_EXT_PERMITIDAS": {".pdf", ".jpg", ".png"},
         "MAX_ADJUNTO_MB": 25,
         "_tk_reabrir_si_cerrado": lambda tid, est: efectos["reabiertos"].append(tid),
-        "ctx": {"_mant_notificar": _mant_notificar},
+        "ctx": {"_mant_notificar": _mant_notificar,
+                "mysql_execute_returning_rowcount": banco.execute_rowcount},
         "_fmt_dt": lambda v, only_date=False: (v.strftime("%d/%m/%Y %H:%M")
                                                if hasattr(v, "strftime") else ""),
         "_tk_salud_registrar": lambda ok, **k: efectos["salud"].append((ok, k)),
     })
     exec(_fuente_asignacion("_TK_NUM_TICKET_RE"), ns)
+    exec(_fuente_asignacion("_TK_TAA_NUM_RE"), ns)
+    exec(_fuente_asignacion("_TK_REABRIR_DIAS_MAX"), ns)
     exec(_fuente_asignacion("_TK_QUOTE_RE"), ns)
     exec(_fuente_funcion("_tk_clasificar_correo"), ns)
     exec(_fuente_funcion("_tk_extraer_cuerpo_mail"), ns)
+    exec(_fuente_funcion("_tk_mail_reclamar"), ns)
     exec(_fuente_funcion("_tk_leer_correo_entrante"), ns)
     resumen = ns["_tk_leer_correo_entrante"](**kw)
     return resumen, banco, imap, efectos
