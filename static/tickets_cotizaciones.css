@@ -657,7 +657,10 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
 .cot-lista td[data-label="Ticket"]{width:124px}
 .cot-lista td[data-label="Ticket"] > .tk-row-btn-ticket,
 .cot-lista td[data-label="Ticket"] > .tk-row-btn-linkticket{display:block;width:100%;margin:3px 0 0}
-.cot-lista td[data-label="Acciones"]{width:176px;min-width:176px;text-align:center}
+/* 184 px: 8 íconos de 34–36 px (+2 de margen y el espacio entre ellos) suman ≈ 161 px por fila; con 176 px (158 útiles) el octavo caía solo en una
+   3.ª fila (4+3+1). Con 184 px (166 útiles) quedan en 2 filas parejas (4+4) y un 5.º ícono por fila no cabe nunca (necesitaría ≈ 197 px útiles).
+   No se sube más: a 186 px la tabla ya medía 980 px a 1240 de ventana (contenedor de 978) y asomaba un scroll de 2 px. */
+.cot-lista td[data-label="Acciones"]{width:184px;min-width:184px;text-align:center}
 .cot-lista td[data-label="Acciones"] > a,.cot-lista td[data-label="Acciones"] > button{margin:1px}
 
 @media (max-width:1239.98px){

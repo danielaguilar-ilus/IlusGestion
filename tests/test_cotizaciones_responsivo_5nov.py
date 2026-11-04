@@ -82,7 +82,9 @@ class TestListaResponsiva(unittest.TestCase):
         self.assertIn('td[data-label="Ticket"] [data-acc]{display:none !important}', CSS)
         self.assertIn(".cot-lista .cot-acc-m{display:flex", CSS)
         # la tabla de escritorio: celdas que se parten y acciones en 2 filas (no 332 px de una línea)
-        self.assertIn('.cot-lista td[data-label="Acciones"]{width:176px;min-width:176px', CSS)
+        # 184 px: 8 íconos caben en 2 filas parejas (4+4); con 176 px el octavo caía solo en una 3.ª fila, y con 186 px la tabla ya no cabía
+        # a 1240 de ventana (medido en Chromium, 5-nov)
+        self.assertIn('.cot-lista td[data-label="Acciones"]{width:184px;min-width:184px', CSS)
         self.assertIn(".cot-lista .cot-docs-chips{display:flex;flex-direction:column", CSS)
 
     def test_todo_va_bajo_cot_lista_para_no_tocar_las_otras_tablas(self):
@@ -109,6 +111,18 @@ class TestLetraYContraste(unittest.TestCase):
                         continue
                     malos.append((nombre, sel[:70], fs))
         self.assertEqual(malos, [], "letra de menos de 12 px (.75rem) en la lista, el asistente o los indicadores: %r" % (malos,))
+
+    def test_ninguna_letra_en_linea_de_la_plantilla_baja_de_12_px(self):
+        """El chip de la UF (cabecera de la pantalla) traía `font-size:.7rem` EN LÍNEA: su valor «UF $41.268,88» medía 11,2 px en escritorio (el CSS ya lo
+        subía en celular, por eso la medición de 390 px no lo vio). La prueba de arriba solo mira hojas de estilo: aquí se revisan los style="" de la plantilla."""
+        malos = []
+        for m in re.finditer(r"font-size\s*:\s*([0-9]*\.?[0-9]+)\s*(rem|em|px)", HTML):
+            valor, unidad = float(m.group(1)), m.group(2)
+            px = valor * 16 if unidad in ("rem", "em") else valor
+            if px < 12:
+                malos.append(m.group(0))
+        self.assertEqual(malos, [], "letra en línea de menos de 12 px en cotizaciones.html: %r" % (malos,))
+        self.assertIn("padding:3px 12px;font-size:.8rem;font-weight:800;margin-left:8px", HTML, "el chip de la UF quedó en .8rem como en celular")
 
     def test_los_grises_de_texto_sobre_blanco_ya_no_son_9ca3af(self):
         por_sel = {sel: props for sel, props in _reglas(CSS)}
