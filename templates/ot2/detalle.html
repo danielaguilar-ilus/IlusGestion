@@ -1849,6 +1849,12 @@
 .otd-wk-item .nm b{display:block;font-size:.88rem;color:#0a0a0a;font-weight:700;
   overflow-wrap:break-word;white-space:normal}
 .otd-wk-item .nm small{font-size:.7rem;color:#9ca3af}
+/* ⏱️ 2026-11-04 (Daniel: «reconociendo si hay otro técnico trabajando un equipo»): aviso ámbar, nunca candado -- dos técnicos pueden
+   repartirse un equipo grande. Nombre completo, sin truncar (REGLA #15). */
+.otd-wk-item .nm .otd-wk-pres{display:flex;align-items:center;gap:6px;width:fit-content;max-width:100%;margin-top:5px;padding:4px 10px;
+  border-radius:99px;background:#fff8e1;color:#92400e;font-size:.74rem;font-weight:800;line-height:1.3;overflow-wrap:anywhere}
+.otd-wk-item .nm .otd-wk-pres[hidden]{display:none}
+.otd-wk-item .nm .otd-wk-pres::before{content:"";width:8px;height:8px;border-radius:50%;background:#f59e0b;flex:none}
 /* Mismo pill que .otd-eq .sel (tamaño/forma) -- se declara aparte porque
    este <span class="sel"> vive dentro de <summary>, no de .otd-eq. Los
    colores por estado (.eq-ok/.eq-go/.eq-pend/.eq-warn) son reglas
@@ -2121,6 +2127,7 @@
 .otd-crono .mq .nm{flex:1;min-width:120px;font-size:.82rem;font-weight:800;
   color:#0f172a;overflow-wrap:anywhere}
 .otd-crono .mq .tk{font-size:.7rem;color:#9ca3af;font-weight:700;white-space:nowrap}
+.otd-crono .mq .tr{font-size:.7rem;color:#15803d;font-weight:800;white-space:nowrap}
 .otd-crono .mq .hs{font-size:.72rem;color:#6b7280;font-variant-numeric:tabular-nums;
   white-space:nowrap}
 .otd-crono .mq .du{min-width:64px;text-align:right;font-size:.86rem;font-weight:900;
@@ -4406,6 +4413,8 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           <div class="mq">
             <span class="nm">{{ m.nombre }}</span>
             <span class="tk">{{ m.n_ok }}/{{ m.n_tareas }} tareas</span>
+            {#- ⏱️ 2026-11-04: tiempo realmente trabajado (sesiones con pausa al cambiar de equipo). Solo aparece si el técnico trabajó con el cronómetro nuevo. -#}
+            {% if m.trabajado %}<span class="tr" title="Tiempo con el equipo abierto, sin contar las pausas">Trabajado {{ m.trabajado }}</span>{% endif %}
             <span class="hs">{{ m.desde or '—' }}{% if m.hasta %} → {{ m.hasta }}{% endif %}</span>
             <span class="du {{ 'aprox' if m.aprox }}">
               {{- ('≈ ' if m.aprox else '') ~ m.duracion if m.duracion else '—' -}}</span>
@@ -5478,6 +5487,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       <div class="otd-wk-sinres" id="otdWkSinRes" style="display:none">
         <i class="bi bi-search"></i> Ningún equipo coincide con la búsqueda.
       </div>
+      {#- ⏱️ 2026-11-04 (Daniel: «si selecciona otro equipo debe contraer el equipo seleccionado y pausar sus tiempos… reconociendo si hay otro técnico
+          trabajando un equipo»): acordeón + sesión de trabajo por equipo + aviso de otro técnico. `puede` = técnico con la OT en ejecución; la
+          gestión que mira la ficha ni suma tiempo ni aparece. Lógica: static/ot_equipo_sesiones.js · reglas: ot_equipo_sesiones.py. -#}
+      <script>window.OTD_EQS_CFG = { vid: {{ v.id }}, puede: {{ 'true' if (es_tecnico and puede_ejecutar and not ot_solo_lectura) else 'false' }}, latidoSeg: 30 };</script>
+      <script defer src="{{ url_for('static', filename='ot_equipo_sesiones.js') }}"></script>
       {% endif %}
 
       {#- 🔧 2026-09-20 -- resumen de lo que esta OT MOVIÓ (solicitudes de
@@ -5551,12 +5565,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             (clase «accesorio» del Catálogo) cuenta UNA obligatoria —«¿Llegó?»— en vez de su checklist. data-obl=1 y data-oblok=1 solo cuando ya
             contestó (Sí llegó / No llegó): el servidor (_ot_chk_revision_pendientes) cuenta lo mismo, así el botón de firma y el candado coinciden. -#}
         {% set _es_acc = (e.es_accesorio and not e._interno) %}
+        {#- ⏱️ 2026-11-04: la misma clave que usa la barra de acciones (e<id> equipo del cliente · i<id> producto agregado): ata cada tarjeta a su sesión de trabajo. -#}
+        {% set _clave_eq = ('i' ~ e.id) if e._interno else ('e' ~ e.id) %}
         <details class="otd-wk-item{{ ' is-complete' if (e.acc_respondido if _es_acc else (_excluido_cierre or (e.n_obl and e.n_obl_ok == e.n_obl))) }}{{ ' otd-wk-acc' if _es_acc }}"
                  data-obl="{{ 1 if (_excluido_cierre or _es_acc) else e.n_obl }}"
                  data-oblok="{{ (1 if e.acc_respondido else 0) if _es_acc else (1 if _excluido_cierre else e.n_obl_ok) }}"
                  data-excluido="{{ '1' if _excluido_cierre else '' }}"
                  data-acc="{{ '1' if _es_acc else '' }}"
-                 data-mid="{{ e.id }}" data-idx="{{ loop.index }}"
+                 data-mid="{{ e.id }}" data-idx="{{ loop.index }}" data-clave="{{ _clave_eq }}"
                  data-buscar="{{ ((e.nombre or '') ~ ' ' ~ (e.sku or '') ~ ' ' ~ (e.serie or '') ~ ' ' ~ (e.marca or '')) | lower }}">
           <summary>
             {# Numeración + semáforo, como la pantalla clásica que Daniel
@@ -5599,6 +5615,8 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <div class="nm">
               <b>{{ e.nombre or ('Equipo #' ~ e.id) }}{% if e.rep_abiertas %} <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>{% endif %}</b>
               <small id="otdWkSum-{{ e.id }}">{% if e.serie %}S/N {{ e.serie }} · {% endif %}{% if _es_acc %}Accesorio · {{ e.acc_chip if e.acc_respondido and e.acc_chip else ('respondido' if e.acc_respondido else 'falta indicar si llegó') }}{% else %}{% if _excluido_cierre %}No exige checklist{% else %}{{ e.n_obl_ok }}/{{ e.n_obl }} obligatorias{% endif %}{% endif %}</small>
+              {#- ⏱️ 2026-11-04: aviso (nunca candado) de que OTRO técnico tiene este equipo abierto. Lo pinta otdEqsPintar con los nombres. -#}
+              <span class="otd-wk-pres" data-pres="{{ _clave_eq }}" role="status" hidden></span>
             </div>
             <span class="sel {{ e.sello_cls }}">{{ e.sello }}</span>
             <i class="bi bi-chevron-right chev"></i>
@@ -10857,6 +10875,9 @@ function _otdWkAbrir(el){
   document.querySelectorAll('#otdWkCard .otd-wk-item[open]').forEach(function(o){
     if (o !== el) o.open = false;
   });
+  // ⏱️ 2026-11-04: marca que esta apertura la hizo «Siguiente equipo» (que ya lleva la pantalla al equipo): ot_equipo_sesiones.js
+  // no vuelve a desplazar. Solo si el equipo estaba cerrado: si ya estaba abierto no hay evento «toggle» y la marca quedaría colgada.
+  if (!el.open) el.dataset.prog = '1';
   el.open = true;
   // El scroll va al summary, no al details: si no, en un equipo con
   // checklist largo la pantalla aterriza a mitad del formulario.

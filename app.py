@@ -82,6 +82,7 @@ import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» au
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
 import maquina_historia as _mh    # 2026-10-21: Historia del equipo (hoja de vida unificada: línea de tiempo sin duplicados, por rol): reglas puras con pruebas
+import ot_equipo_sesiones as _oes    # 2026-11-04: sesiones de trabajo por equipo en la OT (pausa al cambiar de equipo, aviso de otro técnico): reglas puras con pruebas
 import repuestos_respuesta as _rresp    # 2026-10-21: solicitud de repuesto — dueño al nacer, reloj de primera respuesta, avisos y tiempos (módulo puro con pruebas)
 import hallazgos_sla as _hs    # 2026-10-26: SLA y trazabilidad de los hallazgos (plazos, recorrido de 7 pasos, abastecimiento, bodega, consumo de la OT)
 import gestion_circular as _gc    # 2026-10-26: gestión circular de hallazgos e inquietudes (editar, borrar, valorizar, ticket, repuesto)
@@ -96180,6 +96181,15 @@ def ot2_detalle(vid):
                 "n_ok": int(_r.get("n_ok") or 0),
                 "_orden": _ini,
             })
+        # ⏱️ 2026-11-04: tiempo realmente TRABAJADO en cada equipo (sesiones con pausa al cambiar de equipo). Solo para la gestión:
+        # el técnico no ve sus tiempos (2026-09-08) y el dato no viaja en la respuesta que arma su pantalla.
+        try:
+            if _eqs_ok() and not _es_rol_tecnico():
+                _eqs_tot = _oes.total_por_clave(_eqs_sesiones(vid), _eqs_ahora())
+                for _m in cronometro["por_maquina"]:
+                    _m["trabajado"] = _oes.texto_duracion(_eqs_tot.get(_oes.clave_de(_m["maquina_id"]), 0))
+        except Exception as _e_eqs:
+            print(f"[ot2_detalle] sesiones por equipo vid={vid}: {type(_e_eqs).__name__}", flush=True)
         # Orden cronológico real: en qué orden atacó las máquinas.
         cronometro["por_maquina"].sort(
             key=lambda x: (x["_orden"] is None, x["_orden"]))
@@ -172909,6 +172919,166 @@ def _qp_contexto_ficha(vid, v, puede_configurar, ot_solo_lectura):
         return None
 
 
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  SESIONES DE TRABAJO POR EQUIPO (Daniel, 2026-11-04)
+#  «Si el técnico selecciona otro equipo debe contraer el equipo seleccionado y pausar sus tiempos para que continúe con el otro,
+#  reconociendo si hay otro técnico trabajando un equipo.» Una sesión = un tramo en que UN técnico tuvo UN equipo abierto. Las
+#  reglas (pausa por inactividad, quién está trabajando ahora) viven en ot_equipo_sesiones.py; aquí solo se guardan y se leen filas.
+#  · Solo registra el técnico (familia técnico) con la OT en ejecución: la gestión que mira la ficha no suma tiempo ni aparece.
+#  · Es AVISO, nunca candado: otro técnico en el mismo equipo no impide entrar. Nada se borra: cada tramo queda con su motivo.
+#  · El tiempo por equipo lo ve la gestión (tarjeta «Tiempos del técnico»); el técnico solo recibe los nombres de sus colegas.
+#  · Best-effort: si la tabla falta o la base falla, el técnico sigue trabajando como siempre (el endpoint responde ok sin registrar).
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+_EQS_ESTADO = {"ok": False, "revisado_en": 0.0}
+
+
+def _ensure_ot_equipo_sesiones():
+    """Tabla mant_ot_equipo_sesiones. Barata cuando ya existe (REGLA #18): un solo CREATE TABLE IF NOT EXISTS que la guarda de
+    mysql_execute salta sin pedir lock. Sin llaves foráneas (como mant_ot_hallazgos) y sin tocar mant_visitas."""
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS mant_ot_equipo_sesiones ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  visita_id INT NOT NULL,"
+            "  clave VARCHAR(12) NOT NULL COMMENT 'e<id> equipo del cliente · i<id> producto agregado a la OT',"
+            "  user_id INT NOT NULL,"
+            "  user_nombre VARCHAR(190) NULL,"
+            "  inicio DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "  ultimo_latido DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "  fin DATETIME NULL,"
+            "  motivo_fin VARCHAR(12) NULL COMMENT 'cambio | contrajo | salio | inactivo | cerrada',"
+            "  KEY ix_eqs_visita (visita_id, clave),"
+            "  KEY ix_eqs_abiertas (visita_id, user_id, fin)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        ok = True
+    except Exception as e:
+        print(f"[ensure_ot_equipo_sesiones] {e}", flush=True)
+        ok = False
+    _EQS_ESTADO["ok"] = bool(ok)
+    _EQS_ESTADO["revisado_en"] = time.time()
+    return bool(ok)
+
+
+def _eqs_ok():
+    """¿Existe la tabla? Se recuerda por proceso; si quedó en False, se vuelve a mirar a lo más cada 5 minutos. Mientras no exista,
+    las sesiones quedan dormidas y el resto de la OT funciona igual."""
+    if _EQS_ESTADO["ok"]:
+        return True
+    if time.time() - _EQS_ESTADO["revisado_en"] < 300:
+        return False
+    return _ensure_ot_equipo_sesiones()
+
+
+def _eqs_ahora():
+    """La hora de la base de datos (la misma con que se guardan inicio/latido/fin): evita comparar relojes distintos."""
+    return mysql_fetchone("SELECT NOW() AS n")["n"]
+
+
+def _eqs_sesiones(vid):
+    return [dict(r) for r in (mysql_fetchall(
+        "SELECT id, clave, user_id, user_nombre, inicio, ultimo_latido, fin "
+        "  FROM mant_ot_equipo_sesiones WHERE visita_id=%s ORDER BY inicio", (int(vid),)) or [])]
+
+
+def _eqs_cerrar(sesion_id, motivo):
+    """Cierra una sesión donde la dejó su último latido (más la gracia), NO en este instante: si el teléfono estuvo dormido, esa
+    pausa no se cuenta como trabajo."""
+    mysql_execute(
+        "UPDATE mant_ot_equipo_sesiones "
+        "   SET fin=LEAST(NOW(), ultimo_latido + INTERVAL %s SECOND), motivo_fin=%s "
+        " WHERE id=%s AND fin IS NULL", (int(_oes.GRACIA_SEG), motivo, int(sesion_id)))
+
+
+def _eqs_aplicar(vid, uid, nombre, accion, clave, motivo):
+    """Aplica 'iniciar' / 'latido' / 'pausar' de UN técnico sobre sus sesiones abiertas de esta OT."""
+    ahora = _eqs_ahora()
+    abiertas = [dict(r) for r in (mysql_fetchall(
+        "SELECT id, clave, inicio, ultimo_latido FROM mant_ot_equipo_sesiones "
+        " WHERE visita_id=%s AND user_id=%s AND fin IS NULL", (int(vid), int(uid))) or [])]
+    if accion == "pausar":
+        for s in abiertas:
+            if clave and s["clave"] != clave:
+                continue
+            _eqs_cerrar(s["id"], motivo)
+        return
+    propias = [s for s in abiertas if s["clave"] == clave]
+    for s in abiertas:
+        # Una persona no trabaja en dos equipos a la vez: abrir uno pausa el otro (y cualquier duplicado del mismo).
+        if s["clave"] != clave or s is not propias[0]:
+            _eqs_cerrar(s["id"], "cambio")
+    propia = propias[0] if propias else None
+    decision = _oes.decidir_reanudacion(propia, ahora)
+    if decision == "refrescar":
+        mysql_execute("UPDATE mant_ot_equipo_sesiones SET ultimo_latido=NOW() WHERE id=%s AND fin IS NULL", (int(propia["id"]),))
+        return
+    if decision == "nueva" and accion == "latido":
+        return   # un latido tardío de un equipo que el técnico ya dejó (pausó o cambió desde otra pestaña): no resucita nada
+    if decision == "reabrir":
+        _eqs_cerrar(propia["id"], "inactivo")
+    mysql_execute(
+        "INSERT INTO mant_ot_equipo_sesiones (visita_id, clave, user_id, user_nombre) VALUES (%s,%s,%s,%s)",
+        (int(vid), clave, int(uid), (nombre or "")[:190]))
+
+
+def _eqs_otros_json(sesiones, ahora, yo_id):
+    return {c: {"nombres": n, "texto": _oes.texto_aviso(n)}
+            for c, n in _oes.otros_trabajando(sesiones, ahora, yo_id=yo_id).items()}
+
+
+@app.route("/ot/api/<int:vid>/equipo-trabajo", methods=["POST"])
+@_mant_required
+@_tecnico_owns_visita
+def ot_api_equipo_trabajo_registrar(vid):
+    """El técnico abre un equipo ('iniciar'), sigue en él ('latido') o lo contrae / sale de la OT ('pausar'). Responde quién más está
+    trabajando en cada equipo ahora. Nunca falla hacia el técnico: si algo se rompe, responde ok sin registrar."""
+    sin_registro = jsonify({"ok": True, "registra": False, "otros": {}})
+    if not _eqs_ok():
+        return sin_registro
+    d = request.get_json(silent=True) or {}
+    accion = str(d.get("accion") or "").strip()
+    clave = str(d.get("clave") or "").strip()
+    motivo = str(d.get("motivo") or "contrajo").strip()
+    if accion not in _oes.ACCIONES:
+        return _ot2_err("Acción no válida.", "EQS_ACCION", http=400)
+    if (accion != "pausar" or clave) and not _oes.clave_valida(clave):
+        return _ot2_err("Equipo no válido.", "EQS_CLAVE", http=400)
+    if motivo not in _oes.MOTIVOS_FIN:
+        motivo = "contrajo"
+    u = getattr(g, "user", None) or {}
+    uid = u.get("id")
+    registra = bool(uid and _es_rol_tecnico())
+    try:
+        if registra:
+            _eqs_aplicar(vid, uid, u.get("nombre") or u.get("username") or "", accion, clave, motivo)
+        ahora = _eqs_ahora()
+        otros = _eqs_otros_json(_eqs_sesiones(vid), ahora, uid)
+    except Exception as e:
+        print(f"[eqs] registrar vid={vid}: {type(e).__name__}", flush=True)
+        return sin_registro
+    return jsonify({"ok": True, "registra": registra, "otros": otros})
+
+
+@app.route("/ot/api/<int:vid>/equipo-trabajo", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot_api_equipo_trabajo_leer(vid):
+    """Quién más está trabajando en cada equipo (nombres) y, SOLO para la gestión, cuánto tiempo se trabajó en cada uno."""
+    if not _eqs_ok():
+        return jsonify({"ok": True, "otros": {}, "totales": {}})
+    try:
+        ahora = _eqs_ahora()
+        sesiones = _eqs_sesiones(vid)
+        uid = (getattr(g, "user", None) or {}).get("id")
+        otros = _eqs_otros_json(sesiones, ahora, uid)
+        totales = {}
+        if not _es_rol_tecnico():
+            totales = {c: {"seg": s, "texto": _oes.texto_duracion(s)} for c, s in _oes.total_por_clave(sesiones, ahora).items()}
+    except Exception as e:
+        print(f"[eqs] leer vid={vid}: {type(e).__name__}", flush=True)
+        return jsonify({"ok": True, "otros": {}, "totales": {}})
+    return jsonify({"ok": True, "otros": otros, "totales": totales})
+
+
 @app.route("/ot/api/<int:vid>/que-paso", methods=["GET"])
 @_mant_required
 @_ot_can_view
@@ -184371,6 +184541,12 @@ try:
         _ensure_ot_hallazgos()
 except Exception as _ensure_ot_hall_err:
     print(f"[ILUS][WARN] _ensure_ot_hallazgos: {_ensure_ot_hall_err}", flush=True)
+# ⏱️ 2026-11-04: sesiones de trabajo por equipo en la OT (una sola sentencia CREATE TABLE IF NOT EXISTS, REGLA #18). Dormidas hasta que exista.
+try:
+    with app.app_context():
+        _ensure_ot_equipo_sesiones()
+except Exception as _ensure_eqs_err:
+    print(f"[ILUS][WARN] _ensure_ot_equipo_sesiones: {_ensure_eqs_err}", flush=True)
 # 🔁 2026-10-26: gestión circular de hallazgos e inquietudes (tres CREATE TABLE IF NOT EXISTS, REGLA #18). Dormida hasta que existan.
 try:
     with app.app_context():
