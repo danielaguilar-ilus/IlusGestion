@@ -348,8 +348,9 @@ class Falsa(BaseFalsa):
                         if x["vehiculo_id"] == p[0] and x["estado"] in ("llave_entregada", "devuelta")]
             if s.endswith("WHERE s.fin < %s ORDER BY s.inicio DESC, s.id DESC LIMIT 500"):
                 return [self._sol_row(x) for x in sorted(filas, key=lambda x: (x["inicio"], x["id"]), reverse=True) if x["fin"] < p[0]]
-            if s.endswith("WHERE s.fin >= %s ORDER BY s.inicio, s.id LIMIT 500"):
-                return [self._sol_row(x) for x in sorted(filas, key=lambda x: (x["inicio"], x["id"])) if x["fin"] >= p[0]]
+            if s.endswith("WHERE s.fin >= %s OR (s.estado='devuelta' AND s.dev_confirmada_at IS NULL) ORDER BY s.inicio, s.id LIMIT 500"):
+                return [self._sol_row(x) for x in sorted(filas, key=lambda x: (x["inicio"], x["id"]))
+                        if x["fin"] >= p[0] or (x["estado"] == "devuelta" and not x.get("dev_confirmada_at"))]
             if "WHERE s.inicio < %s AND s.fin > %s AND s.estado <> 'cancelada'" in s:
                 return [self._sol_row(x) for x in sorted(filas, key=lambda x: (x["inicio"], x["id"]))
                         if x["inicio"] < p[0] and x["fin"] > p[1] and x["estado"] != "cancelada"]
@@ -368,6 +369,8 @@ class Falsa(BaseFalsa):
                 if x["fin"] >= p[0]:
                     out[x["estado"]] = out.get(x["estado"], 0) + 1
             return [{"estado": k, "n": v} for k, v in out.items()]
+        if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado='devuelta' AND dev_confirmada_at IS NULL"):
+            return [{"n": sum(1 for x in self.sol.values() if x["estado"] == "devuelta" and not x.get("dev_confirmada_at"))}]
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado IN"):
             return [{"n": sum(1 for x in self.sol.values() if x["estado"] in R.ESTADOS_OCUPAN and x["inicio"] < p[0] and x["fin"] > p[1])}]
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE vehiculo_id=%s") or \
@@ -509,6 +512,13 @@ class Falsa(BaseFalsa):
             if not x or x["estado"] != "confirmada":
                 return 0, None
             x.update(estado="llave_entregada", llave_por=por, llave_at=dt.datetime.utcnow(), llave_nota=nota)
+            return 1, None
+        if s.startswith("UPDATE flota_solicitudes SET dev_confirmada_por=%s"):
+            por, nota, sid = p
+            x = self.sol.get(sid)
+            if not x or x["estado"] != "devuelta" or x.get("dev_confirmada_at"):
+                return 0, None
+            x.update(dev_confirmada_por=por, dev_confirmada_at=dt.datetime.utcnow(), dev_confirmada_nota=nota)
             return 1, None
         if s.startswith("UPDATE flota_solicitudes SET estado='devuelta'"):
             por, km, comb, obs, nov, sid = p

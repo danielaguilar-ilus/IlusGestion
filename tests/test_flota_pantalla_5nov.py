@@ -36,7 +36,7 @@ class TestPestanas(unittest.TestCase):
 
     def test_los_contadores_se_llenan_al_cargar_cada_lista(self):
         self.assertIn("function ponerNTab(", JS_USO)
-        self.assertIn("ponerNTab('solicitudes', r.por_confirmar, 'por confirmar')", JS_USO)
+        self.assertIn("ponerNTab('solicitudes', (r.por_confirmar || 0) + (r.por_cerrar || 0), 'por confirmar')", JS_USO)
         self.assertIn("ponerNTab('vehiculos',", JS_USO)
         self.assertIn("ponerNTab('choferes', r.habilitados, 'choferes habilitados')", JS_USO)
 

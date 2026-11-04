@@ -245,6 +245,10 @@ def register_flota_routes(app, ctx):
             # Reserva que nace desde «Nueva OT» (Daniel, 04-nov-2026): la solicitud recuerda de qué orden de trabajo viene.
             "ALTER TABLE flota_solicitudes ADD COLUMN ot_id INT NULL",
             "ALTER TABLE flota_solicitudes ADD COLUMN ot_numero VARCHAR(40) NULL",
+            # 05-nov-2026 (Daniel): la gestión CONFIRMA la recepción de la llave y que los datos de la devolución son reales; ahí se cierra.
+            "ALTER TABLE flota_solicitudes ADD COLUMN dev_confirmada_por VARCHAR(190) NULL",
+            "ALTER TABLE flota_solicitudes ADD COLUMN dev_confirmada_at DATETIME NULL",
+            "ALTER TABLE flota_solicitudes ADD COLUMN dev_confirmada_nota VARCHAR(500) NULL",
         )
         for sql_col in columnas_nuevas:
             try:
@@ -1275,13 +1279,21 @@ def register_flota_routes(app, ctx):
         resp_at = r.get("confirmada_at") or (r.get("cancelada_at") if est == "cancelada" else None)
         sla_resp = (fr.sla_respuesta(_utc_a_chile(r.get("sello_at")), _utc_a_chile(resp_at), ahora, fer)
                     if est in ("solicitada", "cancelada") or resp_at else None)
+        # Daniel, 05-nov-2026: «cuando el chofer gestione la entrega de llaves a Aarón, este las pueda confirmar y que los datos son reales, y ahí
+        # sí quedaría cerrado»: una solicitud devuelta queda «por confirmar» hasta que la gestión confirma la recepción; ahí queda «Cerrada».
+        cierre = None
+        if est == "devuelta":
+            cierre = "cerrada" if r.get("dev_confirmada_at") else "por_confirmar"
+        estado_texto = {"cerrada": "Cerrada", "por_confirmar": "Devuelta · por confirmar"}.get(cierre) or fr.ESTADOS.get(est, est)
         return {
-            "id": r["id"], "numero": r.get("numero") or "", "estado": est, "estado_texto": fr.ESTADOS.get(est, est),
+            "id": r["id"], "numero": r.get("numero") or "", "estado": est, "estado_texto": estado_texto, "cierre": cierre,
             "vehiculo": {"id": r["vehiculo_id"], "patente_fmt": fr.patente_con_guion(r.get("v_patente")), "titulo": titulo,
                          "km_actual": r.get("v_km")},
             "devolucion": ({"km": r.get("dev_km"), "combustible": r.get("dev_combustible"),
                             "combustible_texto": fr.combustible_texto(r.get("dev_combustible")), "observaciones": r.get("dev_obs"),
-                            "novedad": bool(r.get("dev_novedad")), "por": r.get("devuelta_por"), "fmt": _hora_chile(r.get("devuelta_at"))}
+                            "novedad": bool(r.get("dev_novedad")), "por": r.get("devuelta_por"), "fmt": _hora_chile(r.get("devuelta_at")),
+                            "confirmada_por": r.get("dev_confirmada_por"), "confirmada_fmt": _hora_chile(r.get("dev_confirmada_at")),
+                            "confirmada_nota": r.get("dev_confirmada_nota")}
                            if est == "devuelta" else None),
             "area": r.get("area"), "solicitante": r.get("solicitante_nombre"),
             "ot": ({"id": r["ot_id"], "numero": r.get("ot_numero") or f"OT #{r['ot_id']}"} if r.get("ot_id") else None),
@@ -1307,6 +1319,8 @@ def register_flota_routes(app, ctx):
                 "cancelar": (gest and est in fr.ESTADOS_OCUPAN) or (mia and est in fr.ESTADOS_EDITABLES),
                 # Devolver la llave (FASE 2): la gestión, que la recibe, o quien pidió el vehículo, que la trae.
                 "devolver": est == "llave_entregada" and (gest or mia or soy_chofer),
+                # Cerrar: la gestión, que recibe la llave, confirma que la devolución es real (05-nov-2026).
+                "confirmar_recepcion": gest and cierre == "por_confirmar",
             },
         }
 
@@ -1825,9 +1839,13 @@ def register_flota_routes(app, ctx):
             if vista == "pasadas":
                 filas = mysql_fetchall(_SQL_SOL + " WHERE s.fin < %s ORDER BY s.inicio DESC, s.id DESC LIMIT 500", (inicio_hoy,)) or []
             else:
-                filas = mysql_fetchall(_SQL_SOL + " WHERE s.fin >= %s ORDER BY s.inicio, s.id LIMIT 500", (inicio_hoy,)) or []
+                # Las devueltas que la gestión aún no confirma se ven aunque su horario ya haya pasado: son lo que falta por cerrar.
+                filas = mysql_fetchall(_SQL_SOL + " WHERE s.fin >= %s OR (s.estado='devuelta' AND s.dev_confirmada_at IS NULL) "
+                                       "ORDER BY s.inicio, s.id LIMIT 500", (inicio_hoy,)) or []
             cuentas = {r["estado"]: int(r["n"]) for r in (mysql_fetchall(
                 "SELECT estado, COUNT(*) AS n FROM flota_solicitudes WHERE fin >= %s GROUP BY estado", (inicio_hoy,)) or [])}
+            por_cerrar = int((mysql_fetchone("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado='devuelta' AND dev_confirmada_at IS NULL")
+                              or {}).get("n") or 0)
             hoy_n = int((mysql_fetchone(
                 "SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado IN ('solicitada','confirmada','llave_entregada') "
                 "AND inicio < %s AND fin > %s", (inicio_hoy + timedelta(days=1), inicio_hoy)) or {}).get("n") or 0)
@@ -1837,7 +1855,7 @@ def register_flota_routes(app, ctx):
         return jsonify({
             "ok": True, "vista": vista, "solicitudes": [_sol_json(dict(f)) for f in filas],
             "resumen": {"por_confirmar": cuentas.get("solicitada", 0), "confirmadas": cuentas.get("confirmada", 0),
-                        "llave_entregada": cuentas.get("llave_entregada", 0), "hoy": hoy_n},
+                        "llave_entregada": cuentas.get("llave_entregada", 0), "hoy": hoy_n, "por_cerrar": por_cerrar},
             "horario": {"tramos": [list(t) for t in fr.HORARIO_LLAVES], "texto": fr.HORARIO_TEXTO,
                         "tolerancia_min": fr.SLA_TOLERANCIA_MIN, "critico_min": fr.SLA_CRITICO_MIN},
             "hoy": ahora.date().isoformat(), "ahora_hhmm": ahora.strftime("%H:%M"),
@@ -1912,7 +1930,7 @@ def register_flota_routes(app, ctx):
         titulos = {"creada": "Solicitud creada", "confirmada": "Confirmada por la gestión", "llave_entregada": "Llave entregada",
                    "editada": "Reserva modificada", "cancelada": "Cancelada", "sla_aviso": "Aviso de llave atrasada a la gestión",
                    "aviso_solicitante": "Aviso de llave sin retirar a quien la pidió",
-                   "devuelta": "Vehículo devuelto"}
+                   "devuelta": "Vehículo devuelto", "recepcion_confirmada": "Recepción confirmada · solicitud cerrada"}
         for f in mysql_fetchall(
                 "SELECT id, accion, detalle, usuario, created_at FROM flota_solicitud_log WHERE solicitud_id=%s ORDER BY id DESC LIMIT 200",
                 (sid,)) or []:
@@ -1939,6 +1957,8 @@ def register_flota_routes(app, ctx):
                     "Con novedad o daño" if det.get("novedad") else None,
                     ("Observaciones: " + det["observaciones"]) if det.get("observaciones") else None) if x]
                 lineas += list(det.get("avisos") or [])
+            elif f["accion"] == "recepcion_confirmada":
+                lineas = ["La gestión recibió la llave y confirmó que los datos de la devolución son reales."] + (["Nota: " + det["nota"]] if det.get("nota") else [])
             eventos.append({"accion": f["accion"], "titulo": titulos.get(f["accion"], f["accion"]), "lineas": lineas,
                             "usuario": f.get("usuario") or "", "fecha": _hora_chile(f.get("created_at"))})
         fotos = []
@@ -2044,6 +2064,39 @@ def register_flota_routes(app, ctx):
         return resp
 
 
+    # ── Recepción de la llave confirmada por la gestión (05-nov-2026) ────────────────────────────────────────────────────
+    # Daniel: «cuando el chofer gestione la entrega de llaves a Aarón, este las pueda confirmar y que los datos son reales, y ahí sí quedaría
+    # cerrado, al igual que cuando solicitan la agenda Aarón debe confirmar la agenda». Sin correo propio: el aviso de la devolución ya le pide
+    # a la gestión confirmar. Una persona de la gestión puede cerrar la solicitud aunque haya registrado ella la devolución; queda anotado quién.
+    @app.route("/flota/api/solicitudes/<int:sid>/recepcion", methods=["POST"])
+    @_flota_gestion_required
+    def flota_api_solicitud_recepcion(sid):
+        fila = _sol_fila(sid)
+        if not fila:
+            return _error("No encontré esa solicitud.", 404)
+        fila = dict(fila)
+        if fila["estado"] != "devuelta":
+            return _error(f"Solo se confirma la recepción de un vehículo ya devuelto; esta está «{fr.ESTADOS.get(fila['estado'], fila['estado'])}».",
+                          409, solicitud=_sol_json(fila))
+        if fila.get("dev_confirmada_at"):
+            return _error(f"La recepción ya la confirmó {fila.get('dev_confirmada_por') or 'la gestión'}.", 409, solicitud=_sol_json(fila))
+        cuerpo = request.get_json(silent=True) or {}
+        if cuerpo.get("datos_reales") not in (True, 1, "1", "true"):
+            msg = "Marca que recibiste la llave y que los datos de la devolución son reales para cerrar la solicitud."
+            return _error(msg, 400, errores={"datos_reales": msg})
+        nota = re.sub(r"\s+", " ", str(cuerpo.get("nota") or "")).strip()
+        if len(nota) > 500:
+            return _error("La nota puede tener hasta 500 caracteres.", 400, errores={"nota": "Máximo 500 caracteres."})
+        n = mysql_rowcount(
+            "UPDATE flota_solicitudes SET dev_confirmada_por=%s, dev_confirmada_at=NOW(), dev_confirmada_nota=%s "
+            "WHERE id=%s AND estado='devuelta' AND dev_confirmada_at IS NULL", (current_username(), nota or None, sid))
+        if not n:
+            actual = _sol_fila(sid) or fila
+            return _error("Otra persona ya confirmó esta recepción. Recarga la pantalla.", 409, solicitud=_sol_json(dict(actual)))
+        _slog(sid, "recepcion_confirmada", {"nota": nota or None, "km": fila.get("dev_km"), "combustible": fila.get("dev_combustible"),
+                                            "novedad": bool(fila.get("dev_novedad"))})
+        return jsonify({"ok": True, "solicitud": _sol_json(dict(_sol_fila(sid) or fila))})
+
     # ── Barrido del SLA de la llave (cuelga de Cloud Scheduler `simpliroute-poll`, cada 10 min) ─────────────────────────────
     def _flota_sla_barrido():
         """Avisa por correo a la gestión cuando una llave se atrasa (15 min hábiles) y otra vez cuando el atraso es crítico (60). Solo
@@ -2140,13 +2193,12 @@ def register_flota_routes(app, ctx):
     #  creerles el kilometraje. Además una foto interna y una externa». Kilometraje + nivel de combustible + 4 fotos obligatorias.
     #  Un km MENOR al último no se acepta (03-nov-2026); un salto grande se AVISA y queda en la bitácora: la foto es la evidencia.
     # ═══════════════════════════════════════════════════════════════════════
-    def _guardar_imagen_solicitud(sid, tipo, archivo):
-        """Sube UNA foto de la devolución al almacenamiento privado y la registra. (fila_id, error)."""
-        data = archivo.read() if archivo else b""
+    def _subir_imagen_solicitud(sid, tipo, data, nombre_original, bucket):
+        """Valida, reduce y sube UNA foto de la devolución al almacenamiento privado. NO toca la base ni lee la petición: así se puede correr en un
+        hilo (05-nov-2026, Daniel: «tarda mucho subiendo las fotos»: las cuatro suben a la vez). → (datos de la foto, error)."""
         info, err = fr.validar_archivo("solicitud", tipo, data)
         if err:
             return None, err
-        bucket = _bucket()
         if bucket is None:
             return None, "El almacenamiento de archivos no está disponible en este momento. Intenta de nuevo en unos minutos."
         contenido, ct, ext = data, info["content_type"], info["extension"]
@@ -2157,22 +2209,30 @@ def register_flota_routes(app, ctx):
                 ext = ".png" if ct == "image/png" else (".webp" if ct == "image/webp" else ".jpg")
         except Exception as e:
             print(f"[flota] redimensionar foto de devolución: {type(e).__name__}", flush=True)
-        nombre = fr.nombre_seguro(getattr(archivo, "filename", "") or fr.ETIQUETAS_ARCHIVO.get(tipo, "foto"), ext)
+        nombre = fr.nombre_seguro(nombre_original or fr.ETIQUETAS_ARCHIVO.get(tipo, "foto"), ext)
         clave = f"{_PREFIJO_PRIVADO}solicitud/{sid}/{tipo}_{secrets.token_hex(8)}{ext}"
         try:
             blob = bucket.blob(clave)
             blob.cache_control = "private, max-age=0"
             blob.upload_from_string(contenido, content_type=ct)
+        except Exception as e:
+            print(f"[flota] subir foto de devolución: {type(e).__name__}: {e}", flush=True)
+            return None, "No se pudo guardar la foto. Intenta de nuevo."
+        return {"nombre": nombre, "ct": ct, "bytes": len(contenido), "clave": clave, "sha": hashlib.sha256(contenido).hexdigest()}, None
+
+    def _registrar_imagen_solicitud(sid, tipo, f):
+        """Anota en la base la foto ya subida (la anterior de ese tipo queda como no vigente). → texto del error o None."""
+        try:
             mysql_execute("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() "
                           "WHERE entidad=%s AND entidad_id=%s AND tipo=%s AND activo=1", (current_username(), "solicitud", sid, tipo))
             mysql_execute(
                 "INSERT INTO flota_archivos (entidad, entidad_id, tipo, nombre_original, content_type, bytes, gcs_key, sha256, subido_por) "
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                ("solicitud", sid, tipo, nombre, ct, len(contenido), clave, hashlib.sha256(contenido).hexdigest(), current_username()))
+                ("solicitud", sid, tipo, f["nombre"], f["ct"], f["bytes"], f["clave"], f["sha"], current_username()))
         except Exception as e:
             print(f"[flota] guardar foto de devolución: {type(e).__name__}: {e}", flush=True)
-            return None, "No se pudo guardar la foto. Intenta de nuevo."
-        return True, None
+            return "No se pudo guardar la foto. Intenta de nuevo."
+        return None
 
     @app.route("/flota/api/solicitudes/<int:sid>/devolucion", methods=["POST"])
     @_flota_required
@@ -2196,10 +2256,25 @@ def register_flota_routes(app, ctx):
                 fotos[tipo] = f
         if errores:
             return _error("Revisa lo marcado: el kilometraje, el combustible y las cuatro fotos son obligatorios.", 400, errores=errores)
-        for tipo, f in fotos.items():
-            ok, err = _guardar_imagen_solicitud(sid, tipo, f)
-            if err:
-                return _error(f"{dict(fr.FOTOS_DEVOLUCION)[tipo]}: {err}", 400, errores={tipo: err})
+        # Las cuatro fotos se leen acá, se reducen y suben A LA VEZ en hilos, y la base se escribe después, en orden.
+        leidas = {tipo: (f.read(), getattr(f, "filename", "")) for tipo, f in fotos.items()}
+        bucket = _bucket()
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=len(leidas) or 1) as pool:
+                futuros = {tipo: pool.submit(_subir_imagen_solicitud, sid, tipo, datos, nombre, bucket) for tipo, (datos, nombre) in leidas.items()}
+                subidas = {tipo: fu.result() for tipo, fu in futuros.items()}
+        except Exception as e:
+            print(f"[flota] subir las fotos de la devolución: {type(e).__name__}: {e}", flush=True)
+            return _error("No se pudieron subir las fotos. Intenta de nuevo.", 502)
+        for tipo, _n in fr.FOTOS_DEVOLUCION:
+            if tipo in subidas and subidas[tipo][1]:
+                return _error(f"{dict(fr.FOTOS_DEVOLUCION)[tipo]}: {subidas[tipo][1]}", 400, errores={tipo: subidas[tipo][1]})
+        for tipo, _n in fr.FOTOS_DEVOLUCION:
+            if tipo in subidas:
+                err = _registrar_imagen_solicitud(sid, tipo, subidas[tipo][0])
+                if err:
+                    return _error(f"{dict(fr.FOTOS_DEVOLUCION)[tipo]}: {err}", 400, errores={tipo: err})
         n = mysql_rowcount(
             "UPDATE flota_solicitudes SET estado='devuelta', devuelta_por=%s, devuelta_at=NOW(), dev_km=%s, dev_combustible=%s, "
             "dev_obs=%s, dev_novedad=%s WHERE id=%s AND estado='llave_entregada'",
@@ -2225,6 +2300,7 @@ def register_flota_routes(app, ctx):
             primera += " Observaciones: " + datos["observaciones"]
         if avisos:
             primera += " Ojo: " + " ".join(avisos)
+        primera += " Confirma la recepción de la llave y de los datos en Solicitudes de vehículo para cerrar la solicitud."
         _correo_flota("flota_devolucion", [u for u in _gestores_flota() if u != _uid()],
                       f"Vehículo devuelto {r.get('numero') or ''}: {fr.patente_con_guion(r.get('v_patente'))}"
                       + (" · con novedad" if datos["novedad"] else ""), _cuerpo_correo(r, primera), sid=r.get("id"))

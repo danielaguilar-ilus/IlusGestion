@@ -10,7 +10,8 @@
 
   var API = '/flota/api';
   var DIAS = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
-  var ICONOS = { solicitada: 'bi-hourglass-split', confirmada: 'bi-check-circle-fill', llave_entregada: 'bi-key-fill', devuelta: 'bi-box-arrow-in-down', cancelada: 'bi-x-circle' };
+  var ICONOS = { solicitada: 'bi-hourglass-split', confirmada: 'bi-check-circle-fill', llave_entregada: 'bi-key-fill', devuelta: 'bi-box-arrow-in-down', cancelada: 'bi-x-circle',
+    por_cerrar: 'bi-hourglass-split', cerrada: 'bi-patch-check-fill' };
   var OCUPAN = ['solicitada', 'confirmada', 'llave_entregada'];
   var PERM = window.FLOTA_PERMISOS || {};
   var S = {
@@ -177,7 +178,9 @@
       var avCorreo = $('flSolAvisoCorreo');
       if (avCorreo) avCorreo.hidden = d.gestores_avisos !== 0;
       var r = d.resumen || {};
-      ponerNTab('solicitudes', r.por_confirmar, 'por confirmar');
+      // Lo que la gestión debe confirmar: reservas por confirmar y devoluciones por cerrar.
+      ponerNTab('solicitudes', (r.por_confirmar || 0) + (r.por_cerrar || 0), 'por confirmar');
+      escribir($('flChipPorCerrarN'), r.por_cerrar ? String(r.por_cerrar) : '');
       $('flKpiPorConfirmar').textContent = r.por_confirmar != null ? r.por_confirmar : '–';
       $('flKpiConfirmadas').textContent = r.confirmadas != null ? r.confirmadas : '–';
       $('flKpiLlave').textContent = r.llave_entregada != null ? r.llave_entregada : '–';
@@ -201,8 +204,14 @@
   }
 
   /* ═══ SOLICITUDES · LISTA ═══ */
+  /* Una devuelta tiene dos caras (05-nov-2026): «por confirmar» (amarillo) hasta que la gestión confirma la recepción, y «Cerrada» (verde). */
+  function claveEstado(s) {
+    if (s.estado === 'devuelta') return s.cierre === 'cerrada' ? 'cerrada' : 'por_cerrar';
+    return s.estado;
+  }
   function pill(s) {
-    return '<span class="fl-est fl-est--' + esc(s.estado) + '"><i class="bi ' + (ICONOS[s.estado] || 'bi-circle') + '"></i>' + esc(s.estado_texto) + '</span>';
+    var k = claveEstado(s);
+    return '<span class="fl-est fl-est--' + esc(k) + '"><i class="bi ' + (ICONOS[k] || 'bi-circle') + '"></i>' + esc(s.estado_texto) + '</span>';
   }
   /* «Llaves de hoy»: confirmadas cuya llave se entrega hoy (la llave solo se entrega el día de la reserva, 03-nov-2026). */
   function esLlaveHoy(s) { return s.estado === 'confirmada' && !!(s.llave_dia && s.llave_dia.ok); }
@@ -210,6 +219,7 @@
     var q = norm(S.solQ);
     return S.sol.filter(function (s) {
       if (S.solEstado === 'llave_hoy') { if (!esLlaveHoy(s)) return false; }
+      else if (S.solEstado === 'por_cerrar') { if (s.cierre !== 'por_confirmar') return false; }
       else if (S.solEstado !== 'todas' && s.estado !== S.solEstado) return false;
       if (S.solVeh && String(s.vehiculo.id) !== S.solVeh) return false;
       if (!q) return true;
@@ -228,6 +238,7 @@
     if (p.confirmar) b.push('<button type="button" class="fl-btn fl-btn--ok" data-acc="confirmar"><i class="bi bi-check-circle"></i>Confirmar</button>');
     if (p.llave) b.push('<button type="button" class="fl-btn fl-btn--llave" data-acc="llave"><i class="bi bi-key"></i>Llave entregada</button>');
     if (p.devolver) b.push('<button type="button" class="fl-btn fl-btn--dev" data-acc="devolver"><i class="bi bi-box-arrow-in-down"></i>Devolver</button>');
+    if (p.confirmar_recepcion) b.push('<button type="button" class="fl-btn fl-btn--ok" data-acc="recepcion"><i class="bi bi-patch-check"></i>Confirmar recepción</button>');
     if (p.cancelar) b.push('<button type="button" class="fl-btn fl-btn--peligro" data-acc="cancelar"><i class="bi bi-x-circle"></i>Cancelar</button>');
     return b.join('');
   }
@@ -240,7 +251,7 @@
   function semaforoFila(s) {      // franja de color a la izquierda, como el Monitor de Retiros
     if (s.sla && (s.sla.estado === 'critica' || s.sla.estado === 'atrasada')) return 'fl-sem--alerta';
     if (s.sla_respuesta && s.sla_respuesta.estado === 'atrasada') return 'fl-sem--alerta';
-    return 'fl-sem--' + s.estado;
+    return 'fl-sem--' + claveEstado(s);
   }
   function filaSol(s) {
     return '<tr class="' + semaforoFila(s) + (s.estado === 'cancelada' ? ' inhab' : '') + '" data-id="' + s.id + '">' +
@@ -746,8 +757,9 @@
      la confirme o la cancele. */
   function guiaSolicitud(s) {
     var p = s.puede || {}, est = s.estado, cancel = est === 'cancelada';
-    var hecho = { pedida: true, confirmada: !!s.confirmada_por, llave: !!s.llave_por || est === 'devuelta', devuelta: est === 'devuelta' };
-    var actual = cancel ? '' : (!hecho.confirmada ? 'confirmada' : (!hecho.llave ? 'llave' : (!hecho.devuelta ? 'devuelta' : '')));
+    var hecho = { pedida: true, confirmada: !!s.confirmada_por, llave: !!s.llave_por || est === 'devuelta', devuelta: est === 'devuelta',
+      cierre: !!(s.devolucion && s.devolucion.confirmada_por) };
+    var actual = cancel ? '' : (!hecho.confirmada ? 'confirmada' : (!hecho.llave ? 'llave' : (!hecho.devuelta ? 'devuelta' : (!hecho.cierre ? 'cierre' : ''))));
     function paso(n, clave, titulo, cuerpo, boton) {
       var cls = hecho[clave] ? 'ok' : (clave === actual ? 'actual' : (cancel ? 'off' : 'pend'));
       return '<li class="fl-guia-p ' + cls + '"><span class="fl-guia-n" aria-hidden="true">' + (hecho[clave] ? '<i class="bi bi-check-lg"></i>' : n) + '</span>' +
@@ -774,6 +786,12 @@
           (s.plan_real && s.plan_real.devolucion ? '<span class="fl-dsv fl-dsv--' + esc(s.plan_real.devolucion.estado) + '">Devolvió: ' + esc(s.plan_real.devolucion.texto.toLowerCase()) + '</span>' : '')
         : sub('Kilometraje (no puede ser menor al último), combustible y cuatro fotos. Se puede hacer desde el celular.'),
       p.devolver ? '<button type="button" class="fl-btn fl-btn--dev" data-dacc="devolver"><i class="bi bi-box-arrow-in-down"></i>Registrar devolución</button>' : '');
+    // Paso 5 (05-nov-2026): la gestión confirma que recibió la llave y que los datos son reales; ahí se cierra (como la agenda, que confirma la gestión).
+    var cr = s.devolucion || {};
+    h += paso(5, 'cierre', 'Recepción confirmada · cierre',
+      hecho.cierre ? sub((cr.confirmada_por || '') + ' · ' + (cr.confirmada_fmt || '')) + (cr.confirmada_nota ? sub('Nota: ' + cr.confirmada_nota) : '')
+        : sub('La gestión revisa que la llave y los datos (kilometraje, combustible y fotos) sean reales y cierra la solicitud.'),
+      p.confirmar_recepcion ? '<button type="button" class="fl-btn fl-btn--ok" data-dacc="recepcion"><i class="bi bi-patch-check"></i>Confirmar recepción</button>' : '');
     h += '</ol>';
     if (cancel) h += '<div class="fl-guia-cancel"><i class="bi bi-x-octagon"></i>Cancelada por ' + esc(s.cancelada_por || '—') + ' · ' + esc(s.cancelada_fmt || '') +
       (s.cancelada_motivo ? '<span>' + esc(s.cancelada_motivo) + '</span>' : '') + '</div>';
@@ -808,6 +826,7 @@
     if (p.confirmar) b.push('<button type="button" class="btn btn-success" data-dacc="confirmar"><i class="bi bi-check-circle me-1"></i>Confirmar</button>');
     if (p.llave) b.push('<button type="button" class="btn btn-dark" data-dacc="llave"><i class="bi bi-key me-1"></i>Llave entregada</button>');
     if (p.devolver) b.push('<button type="button" class="btn btn-danger" data-dacc="devolver"><i class="bi bi-box-arrow-in-down me-1"></i>Devolver el vehículo</button>');
+    if (p.confirmar_recepcion) b.push('<button type="button" class="btn btn-success" data-dacc="recepcion"><i class="bi bi-patch-check me-1"></i>Confirmar recepción</button>');
     if (p.editar) b.push('<button type="button" class="btn btn-outline-secondary" data-dacc="editar"><i class="bi bi-pencil me-1"></i>Mover o cambiar</button>');
     if (p.cancelar) b.push('<button type="button" class="btn btn-outline-danger" data-dacc="cancelar"><i class="bi bi-x-circle me-1"></i>Cancelar</button>');
     b.push('<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>');
@@ -970,6 +989,10 @@
     abrirModal('flModalDev');
     evaluarDev();
   }
+  /* Mientras sube, no se puede cerrar la ventana (se perdería la subida): se apagan «Cancelar» y la X. */
+  function ponerCierresDev(apagar) {
+    Array.prototype.forEach.call(document.querySelectorAll('#flModalDev [data-bs-dismiss="modal"]'), function (b) { b.disabled = !!apagar; });
+  }
   function guardarDev() {
     if (D.guardando || !D.s) return;
     D.intento = true;
@@ -978,14 +1001,32 @@
     var fd = new FormData();
     fd.append('km', $('flDevKm').value); fd.append('combustible', D.comb); fd.append('novedad', D.nov ? '1' : '');
     fd.append('observaciones', $('flDevObs').value);
-    DEV_FOTOS.forEach(function (f) { fd.append(f.tipo, D.fotos[f.tipo].file, D.fotos[f.tipo].file.name || (f.tipo + '.jpg')); });
     D.guardando = true; $('flDevGuardar').disabled = true;
-    escribir($('flDevPie'), 'Subiendo las fotos…');
-    fetch(API + '/solicitudes/' + D.s.id + '/devolucion', { method: 'POST', body: fd, credentials: 'same-origin', headers: { Accept: 'application/json' } })
-      .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'El servidor respondió algo inesperado.' }; }); })
-      .catch(function () { return { ok: false, error: 'No hay conexión con el servidor. Revisa tu internet e intenta de nuevo.' }; })
+    ponerCierresDev(true);
+    escribir($('flDevPie'), '');
+    // Daniel, 05-nov-2026: «tarda mucho subiendo las fotos, colócale una barra de proceso». Las fotos se reducen en el celular, suben con su
+    // avance (preparar 0–20 %, subir 20–95 %, guardar 97 %) y el servidor las guarda a la vez.
+    var pb = D.pb || (D.pb = window.flotaSubida.barra($('flDevProgreso')));
+    pb.mostrar('Preparando las fotos…', 0);
+    var hechas = 0;
+    Promise.all(DEV_FOTOS.map(function (f) {
+      return window.flotaSubida.comprimir(D.fotos[f.tipo].file).then(function (arch) {
+        hechas++;
+        pb.mostrar('Preparando las fotos · ' + hechas + ' de ' + DEV_FOTOS.length, 0.2 * hechas / DEV_FOTOS.length);
+        return { tipo: f.tipo, arch: arch };
+      });
+    })).then(function (lista) {
+      lista.forEach(function (x) { fd.append(x.tipo, x.arch, x.arch.name || (x.tipo + '.jpg')); });
+      return window.flotaSubida.enviar({
+        url: API + '/solicitudes/' + D.s.id + '/devolucion', method: 'POST', form: fd,
+        onProgreso: function (frac, a, b) { pb.mostrar('Subiendo las fotos · ' + window.flotaSubida.mb(a) + ' de ' + window.flotaSubida.mb(b) + ' MB', 0.2 + 0.75 * frac); },
+        onSubido: function () { pb.mostrar('Guardando la devolución…', 0.97); }
+      });
+    })
       .then(function (d) {
         D.guardando = false; $('flDevGuardar').disabled = false;
+        ponerCierresDev(false);
+        pb.ocultar();
         if (!d.ok) { toast(d.error || 'No se pudo registrar la devolución.', 'error'); evaluarDev(); return; }
         cerrarModal('flModalDev');
         toast(D.s.vehiculo.patente_fmt + ' quedó devuelto.', 'success');
@@ -993,6 +1034,48 @@
         recargarSol();
         if ($('flModalSolDet').classList.contains('show') && S.det) refrescarDetalle(S.det.id);
       });
+  }
+  /* ═══ Confirmar la recepción de la llave (05-nov-2026) ═══ */
+  var RC = { s: null, guardando: false };
+  function evaluarRecep() {
+    var ok = $('flRecReal').checked;
+    $('flRecChk').classList.toggle('on', ok);
+    $('flRecChk').classList.remove('bad');
+    escribir($('flRecMsg'), '');
+    $('flRecGuardar').disabled = !ok || RC.guardando;
+    escribir($('flRecPie'), ok ? 'Al confirmar, la solicitud queda cerrada.' : 'Marca la casilla para poder cerrarla.');
+  }
+  function abrirRecepcion(s) {
+    RC.s = s; RC.guardando = false;
+    $('flRecTitulo').textContent = 'Confirmar la recepción · ' + s.numero;
+    $('flRecResumen').innerHTML = '<div class="text-muted">Cargando lo que declaró el chofer…</div>';
+    $('flRecReal').checked = false; $('flRecNota').value = '';
+    evaluarRecep();
+    abrirModal('flModalRecep');
+    api(API + '/solicitudes/' + s.id).then(function (d) {
+      if (!d.ok || !d.solicitud) { $('flRecResumen').innerHTML = '<div class="text-danger">' + esc(d.error || 'No se pudo leer la devolución.') + '</div>'; return; }
+      RC.s = d.solicitud;
+      var x = d.solicitud;
+      $('flRecResumen').innerHTML = '<div class="fl-dev-cab">' + vehFoto(vehPorId(x.vehiculo.id), 'fl-dev-cab-foto') + '<span><b>' + esc(x.vehiculo.patente_fmt + ' · ' + x.vehiculo.titulo) + '</b>' +
+        '<span>' + esc(x.numero + ' · ' + x.rango_texto) + '</span><span>' + esc(x.area + ' · retiró ' + x.chofer.nombre) + '</span></span></div>' +
+        bloqueDevolucion(x, d.fotos_devolucion);
+    });
+  }
+  function guardarRecep() {
+    if (RC.guardando || !RC.s) return;
+    if (!$('flRecReal').checked) { $('flRecChk').classList.add('bad'); escribir($('flRecMsg'), 'Marca que recibiste la llave y que los datos son reales.'); return; }
+    RC.guardando = true; $('flRecGuardar').disabled = true;
+    api(API + '/solicitudes/' + RC.s.id + '/recepcion', { method: 'POST', body: { datos_reales: true, nota: $('flRecNota').value } }).then(function (d) {
+      RC.guardando = false;
+      if (!d.ok) {
+        toast(d.error || 'No se pudo confirmar la recepción.', 'error');
+        if (d.solicitud) { cerrarModal('flModalRecep'); recargarSol(); } else evaluarRecep();
+        return;
+      }
+      cerrarModal('flModalRecep');
+      toast(RC.s.numero + ' quedó cerrada: recepción confirmada.', 'success');
+      recargarSol();
+    });
   }
   function bloqueDevolucion(s, fotos) {
     var dv = s.devolucion;
@@ -1012,6 +1095,7 @@
     else if (a === 'llave') entregarLlave(s);
     else if (a === 'cancelar') cancelar(s);
     else if (a === 'devolver') despuesDeCerrar('flModalSolDet', function () { abrirDevolucion(s); });
+    else if (a === 'recepcion') despuesDeCerrar('flModalSolDet', function () { abrirRecepcion(s); });
     else if (a === 'editar') despuesDeCerrar('flModalSolDet', function () { abrirSolicitud(s); });
   }
 
@@ -2017,10 +2101,20 @@
       var fd = new FormData();
       Object.keys(body).forEach(function (k) { if (k !== 'licencia_clases') fd.append(k, body[k]); });
       body.licencia_clases.forEach(function (c) { fd.append('licencia_clases', c); });
-      if (archivo) fd.append('archivo', archivo);
       S.guardandoCh = true;
       $('flChGuardar').disabled = true;
-      api(editando ? API + '/choferes/' + editando.id : API + '/choferes', { method: editando ? 'PUT' : 'POST', form: fd }).then(function (r) {
+      // La licencia (foto del carnet o PDF) se reduce en el celular y sube con su barra (05-nov-2026).
+      var pbc = window.flotaSubida.barra($('flChProgreso'));
+      if (archivo) pbc.mostrar('Preparando la licencia…', 0.05);
+      (archivo ? window.flotaSubida.comprimir(archivo) : Promise.resolve(null)).then(function (arch) {
+        if (arch) fd.append('archivo', arch, arch.name || 'licencia.jpg');
+        return window.flotaSubida.enviar({
+          url: editando ? API + '/choferes/' + editando.id : API + '/choferes', method: editando ? 'PUT' : 'POST', form: fd,
+          onProgreso: function (frac, a, b) { if (arch) pbc.mostrar('Subiendo la licencia · ' + window.flotaSubida.mb(a) + ' de ' + window.flotaSubida.mb(b) + ' MB', 0.1 + 0.85 * frac); },
+          onSubido: function () { if (arch) pbc.mostrar('Guardando el chofer…', 0.97); }
+        });
+      }).then(function (r) {
+        pbc.ocultar();
         if (!r.ok) {
           S.guardandoCh = false; $('flChGuardar').disabled = false;
           Object.keys(r.errores || {}).forEach(function (c) {
@@ -2190,6 +2284,10 @@
     $('flFormDev').addEventListener('input', function () { evaluarDev(); });
     $('flDevKm').addEventListener('input', function (e) { var d = e.target.value.replace(/\D/g, ''); e.target.value = d ? Number(d).toLocaleString('es-CL') : ''; });
     $('flDevGuardar').addEventListener('click', guardarDev);
+    // Una subida a medias se pierde si se cierra o se recarga la página: se avisa.
+    window.addEventListener('beforeunload', function (e) { if (D.guardando || S.guardandoCh) { e.preventDefault(); e.returnValue = ''; } });
+    $('flRecReal').addEventListener('change', evaluarRecep);
+    $('flRecGuardar').addEventListener('click', guardarRecep);
     $('flSolDetAcc').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-dacc]');
       if (b && S.det) accion(b.getAttribute('data-dacc'), S.det);

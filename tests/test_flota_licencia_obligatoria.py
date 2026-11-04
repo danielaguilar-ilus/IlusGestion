@@ -357,8 +357,9 @@ class TestFront(unittest.TestCase):
         self.assertIn("paso(2, ['licencia_clases', 'licencia_vence', 'licencia_archivo'])", self.JS)
 
     def test_la_licencia_viaja_con_el_registro_en_una_sola_peticion(self):
-        self.assertIn("fd.append('archivo', archivo)", self.JS)
+        self.assertIn("fd.append('archivo', arch", self.JS)                # la licencia (reducida en el celular) entra al MISMO formulario
         self.assertIn("form: fd", self.JS)
+        self.assertIn("window.flotaSubida.enviar", self.JS)                # y sube con su barra de progreso
         self.assertNotIn("subirArchivoCh", self.JS)                  # ya no se sube aparte después de registrar
 
     def test_ya_no_hay_boton_para_quitar_la_licencia(self):
