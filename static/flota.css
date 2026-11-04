@@ -357,6 +357,9 @@
 .fl-pdf{display:inline-flex;align-items:center;gap:6px;font-weight:800;color:#b91c1c;text-decoration:none}
 .fl-pdf:hover{text-decoration:underline}
 .fl-sin-pdf{display:inline-flex;align-items:center;gap:6px;color:#6b7280;font-weight:700;font-size:.82rem}
+.fl-sin-pdf--falta{color:#92400e;align-items:flex-start;line-height:1.3}
+.fl-subir.bad{border-color:#dc2626;background:#fef2f2}
+.fl-subir.ok{border-color:#16a34a;background:#f0fdf4}
 .fl-mini-acc{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 0}
 .fl-btn--chico{min-height:34px;font-size:.74rem;padding:0 10px}
 .fl-faltan{margin:0;padding-left:18px;font-size:.84rem;color:#374151;columns:2}

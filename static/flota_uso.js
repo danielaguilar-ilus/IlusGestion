@@ -49,6 +49,8 @@
     if (opts.body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(opts.body);
+    } else if (opts.form) {
+      init.body = opts.form;          // FormData: el navegador pone el multipart y su separador
     }
     return fetch(url, init).then(function (r) {
       return r.json().catch(function () { return { ok: false, error: 'El servidor respondió algo inesperado.' }; })
@@ -159,6 +161,9 @@
       if (d.areas) S.config.areas = d.areas;
       if (d.max_dias) S.config.max_dias_uso = d.max_dias;
       if (d.horario) S.horario = d.horario;
+      // Daniel, 04-nov-2026: los correos de la flota solo le llegan a quien está REGISTRADO como gestor; si no hay nadie, se dice a la vista.
+      var avCorreo = $('flSolAvisoCorreo');
+      if (avCorreo) avCorreo.hidden = d.gestores_avisos !== 0;
       var r = d.resumen || {};
       $('flKpiPorConfirmar').textContent = r.por_confirmar != null ? r.por_confirmar : '–';
       $('flKpiConfirmadas').textContent = r.confirmadas != null ? r.confirmadas : '–';
@@ -1093,6 +1098,7 @@
     var c = chofPorId(id);
     if (!c) return res('bad', 'Elige un chofer de la lista.');
     if (!c.habilitado || !c.usuario_activo) return res('bad', c.nombre + ' está inhabilitado como chofer.');
+    if (!c.tiene_licencia_pdf) return res('bad', c.nombre + ' no tiene su licencia escaneada en el sistema: súbela en Choferes antes de reservarle un vehículo.');
     var v = vehPorId(vehSel());
     if (v) {
       var exig = v.licencia_clases || [];
@@ -1213,6 +1219,7 @@
     // Daniel, 03-nov-2026: «todos tienen que pertenecer a la página. Si no está registrado, no puede retirar el camión».
     if (c.externo) return { cls: 'off', t: 'Sin usuario de ILUS: no puede retirar el vehículo', bloq: true };
     if (!c.habilitado || !c.usuario_activo) return { cls: 'off', t: 'Inhabilitado como chofer', bloq: true };
+    if (!c.tiene_licencia_pdf) return { cls: 'off', t: 'Falta escanear su licencia en el sistema', bloq: true };
     if (!c.licencia_vence || c.licencia_estado === 'sin_fecha') return { cls: 'off', t: 'Sin vencimiento de licencia registrado', bloq: true };
     if (c.licencia_estado === 'vencido') return { cls: 'off', t: 'Licencia vencida el ' + c.licencia_vence_fmt, bloq: true };
     var v = vehPorId(vehSel());
@@ -1724,10 +1731,13 @@
     }
     var lic = '<div class="fl-doc fl-doc--' + (c.licencia_estado === 'sin_fecha' ? 'sin_fecha' : esc(c.licencia_estado)) + '"><b>' + esc(c.licencia_texto) + '</b><span>' +
       (c.licencia_vence_fmt ? esc(c.licencia_vence_fmt) + ' · ' : '') + esc(c.licencia_texto_dias) + '</span></div>';
-    if (PERM.documentos) {
-      lic += c.licencia_archivo
-        ? '<a class="fl-pdf" href="/flota/api/archivos/' + c.licencia_archivo.id + '" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf"></i>Ver licencia</a>'
-        : '<span class="fl-sin-pdf"><i class="bi bi-file-earmark-x"></i>Sin PDF de la licencia</span>';
+    if (PERM.documentos && c.licencia_archivo) {
+      lic += '<a class="fl-pdf" href="/flota/api/archivos/' + c.licencia_archivo.id + '" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf"></i>Ver licencia</a>';
+    } else if (!c.tiene_licencia_pdf) {
+      // Sin el escaneo el chofer no puede recibir reservas (Daniel, 04-nov-2026): lo ve todo el que entra a la flota, no solo quien ve los documentos.
+      lic += '<span class="fl-sin-pdf fl-sin-pdf--falta"><i class="bi bi-exclamation-triangle-fill"></i>Falta escanear la licencia: no puede recibir reservas</span>';
+    } else {
+      lic += '<span class="fl-sub"><i class="bi bi-check2-circle"></i> Licencia escaneada</span>';
     }
     var personales = '';
     if (PERM.documentos) {
@@ -1768,7 +1778,7 @@
   function vCh(c) { var el = $('flFormCh').elements[c]; return el && el.value != null ? String(el.value) : ''; }
   function clasesCh() { return Array.prototype.slice.call(document.querySelectorAll('#flChClases input:checked')).map(function (i) { return i.value; }); }
   var NOMBRES_CH = { usuario_id: 'el usuario', telefono: 'el teléfono', nombre_completo: 'el nombre completo', rut: 'el RUT', direccion: 'la dirección validada con Google',
-    licencia_clases: 'la clase de licencia', licencia_vence: 'el vencimiento de la licencia' };
+    licencia_clases: 'la clase de licencia', licencia_vence: 'el vencimiento de la licencia', licencia_archivo: 'la licencia escaneada' };
   function rutValido(t) {
     var r = String(t || '').replace(/[^0-9kK]/g, '').toUpperCase();
     if (!/^\d{7,8}[0-9K]$/.test(r)) return false;
@@ -1830,6 +1840,13 @@
       else if (d != null && d <= (S.config.dias_alerta || 30)) r.licencia_vence = res('warn', 'Vence ' + (d === 0 ? 'hoy' : (d === 1 ? 'mañana' : 'en ' + d + ' días')) + '.');
       else r.licencia_vence = res('ok', d != null ? 'Vigente · vence en ' + d + ' días.' : '');
     }
+    // Daniel, 04-nov-2026: «solo pueda avanzar si el chofer escanea su licencia… además de la fecha de término». Sin el archivo no se guarda.
+    var arch = $('flChArchivo').files && $('flChArchivo').files[0];
+    if (S.chArchivoErr) r.licencia_archivo = res('bad', S.chArchivoErr);
+    else if (arch) r.licencia_archivo = res('ok', 'Se guardará con el chofer: ' + arch.name);
+    else if (S.editCh && S.editCh.tiene_licencia_pdf) r.licencia_archivo = res('ok', 'Ya hay una licencia guardada. Si adjuntas otra, la reemplaza (la anterior queda en el historial).');
+    else if (S.editCh && S.editCh.externo) r.licencia_archivo = res('ok', '');       // el externo antiguo no puede retirar vehículos: corregirle un dato no pide el escaneo
+    else r.licencia_archivo = res('bad', 'Escanea o sube la licencia (foto o PDF): sin ella no se registra al chofer.');
     return r;
   }
   function marcarCh(c, r) {
@@ -1851,7 +1868,7 @@
       el.classList.remove('ok', 'bad', 'warn');
       el.classList.add(e.indexOf('bad') >= 0 ? 'bad' : (e.indexOf('warn') >= 0 ? 'warn' : 'ok'));
     }
-    paso(1, ['usuario_id', 'telefono', 'nombre_completo', 'rut', 'direccion']); paso(2, ['licencia_clases', 'licencia_vence']);
+    paso(1, ['usuario_id', 'telefono', 'nombre_completo', 'rut', 'direccion']); paso(2, ['licencia_clases', 'licencia_vence', 'licencia_archivo']);
     var p3 = document.querySelector('#flFormCh .fl-paso[data-paso="3"]');
     if (p3) { p3.classList.remove('bad', 'warn'); p3.classList.add('ok'); }
     var faltan = Object.keys(r).filter(function (c) { return r[c].estado === 'bad'; });
@@ -1868,21 +1885,14 @@
         '<span><b>Clase ' + esc(c.codigo) + '</b><span>' + esc(c.nombre) + '</span></span></label>';
     }).join('');
   }
-  function subirArchivoCh(id, archivo) {
-    var fd = new FormData();
-    fd.append('entidad', 'chofer'); fd.append('entidad_id', id); fd.append('tipo', 'licencia'); fd.append('archivo', archivo);
-    return fetch('/flota/api/archivos', { method: 'POST', body: fd, credentials: 'same-origin', headers: { Accept: 'application/json' } }).then(function (r) {
-      return r.json().catch(function () { return { ok: false, error: 'El servidor respondió algo inesperado.' }; })
-        .then(function (d) { d.status = r.status; return d; });
-    }).catch(function () { return { ok: false, status: 0, error: 'No hay conexión con el servidor. Revisa tu internet e intenta de nuevo.' }; });
-  }
   function pintarArchivoActualCh(c) {
     var a = c && c.licencia_archivo;
+    // La licencia escaneada ya no se «quita» (Daniel, 04-nov-2026): un chofer registrado siempre la tiene; se cambia subiendo la nueva.
     $('flChArchivoActual').innerHTML = a
       ? '<a class="fl-pdf" href="/flota/api/archivos/' + a.id + '" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf"></i>Ver la licencia guardada</a>' +
         '<span class="fl-sub">' + esc(a.nombre || '') + ' · subida por ' + esc(a.subido_por || '—') + ' · ' + esc(a.subido_fmt || '') + '</span>' +
-        '<button type="button" class="fl-btn fl-btn--chico fl-btn--peligro" data-gcc="quitar-lic" data-aid="' + a.id + '"><i class="bi bi-x-lg"></i>Quitar</button>'
-      : (c ? '<span class="fl-sin-pdf"><i class="bi bi-file-earmark-x"></i>Todavía no hay PDF de la licencia</span>' : '');
+        '<span class="fl-sub">Para cambiarla, adjunta la nueva abajo: la anterior queda en el historial.</span>'
+      : (c ? '<span class="fl-sin-pdf fl-sin-pdf--falta"><i class="bi bi-exclamation-triangle-fill"></i>Este chofer no tiene su licencia escaneada: adjúntala para guardar y para que pueda recibir reservas.</span>' : '');
   }
   function pintarGestionCh(c) {
     var b = [];
@@ -1930,7 +1940,7 @@
     f.elements.licencia_vence.value = c && c.licencia_vence ? c.licencia_vence : '';
     f.elements.notas.value = c && c.notas ? c.notas : '';
     $('flChArchivo').value = '';
-    $('flChArchivoMsg').textContent = '';
+    S.chArchivoErr = '';
     pintarArchivoActualCh(c);
     pintarGestionCh(c);
     abrirModal('flModalChofer');
@@ -1990,9 +2000,14 @@
         licencia_clases: clasesCh(), licencia_vence: vCh('licencia_vence'), notas: vCh('notas') };
       if (esExternoCh()) body.telefono = vCh('telefono');
       if (!editando) body.usuario_id = vCh('usuario_id');
+      // La licencia escaneada viaja con el registro (Daniel, 04-nov-2026): una sola petición; sin el archivo el servidor no guarda al chofer.
+      var fd = new FormData();
+      Object.keys(body).forEach(function (k) { if (k !== 'licencia_clases') fd.append(k, body[k]); });
+      body.licencia_clases.forEach(function (c) { fd.append('licencia_clases', c); });
+      if (archivo) fd.append('archivo', archivo);
       S.guardandoCh = true;
       $('flChGuardar').disabled = true;
-      api(editando ? API + '/choferes/' + editando.id : API + '/choferes', { method: editando ? 'PUT' : 'POST', body: body }).then(function (r) {
+      api(editando ? API + '/choferes/' + editando.id : API + '/choferes', { method: editando ? 'PUT' : 'POST', form: fd }).then(function (r) {
         if (!r.ok) {
           S.guardandoCh = false; $('flChGuardar').disabled = false;
           Object.keys(r.errores || {}).forEach(function (c) {
@@ -2004,19 +2019,13 @@
           toast(r.error || 'No se pudo guardar el chofer.', 'error');
           return;
         }
-        var id = (r.chofer && r.chofer.id) || (editando && editando.id);
         var terminar = function () {
           S.guardandoCh = false; $('flChGuardar').disabled = false;
           cerrarModal('flModalChofer');
           toast(r.sin_cambios && !archivo ? 'No había cambios que guardar.' : (editando ? 'Chofer actualizado.' : 'Chofer agregado y habilitado.'), 'success');
           cargarChof();
         };
-        if (archivo && id) {
-          subirArchivoCh(id, archivo).then(function (u) {
-            if (!u.ok) toast('El chofer se guardó, pero la licencia no: ' + (u.error || 'no se pudo subir el archivo.'), 'warning');
-            terminar();
-          });
-        } else terminar();
+        terminar();
       });
     });
   }
@@ -2087,20 +2096,6 @@
         if (!d.ok) { toast(d.error || 'No se pudo borrar.', 'error'); return; }
         toast(c.nombre + ' se borró definitivamente.', 'success');
         cerrarModal('flModalChofer');
-        cargarChof();
-      });
-    });
-  }
-  function quitarLicencia(aid) {
-    window.ilusConfirm({
-      title: 'Quitar la licencia guardada', message: '¿Dejar de usar este archivo? El original queda guardado en el historial; después puedes subir otro.',
-      okLabel: 'Quitar', cancelLabel: 'Volver', danger: true
-    }).then(function (ok) {
-      if (!ok) return;
-      api('/flota/api/archivos/' + aid + '/quitar', { method: 'POST', body: {} }).then(function (d) {
-        if (!d.ok) { toast(d.error || 'No se pudo quitar el archivo.', 'error'); return; }
-        toast('Archivo quitado.', 'success');
-        if (S.editCh && d.chofer) { S.editCh = d.chofer; pintarArchivoActualCh(d.chofer); }
         cargarChof();
       });
     });
@@ -2357,17 +2352,16 @@
       else if (a === 'desarchivar') desarchivarCh(c);
       else if (a === 'eliminar') eliminarCh(c);
     });
-    $('flChArchivoActual').addEventListener('click', function (ev) {
-      var b = ev.target.closest('[data-gcc="quitar-lic"]');
-      if (b) quitarLicencia(b.getAttribute('data-aid'));
-    });
     $('flChArchivo').addEventListener('change', function (ev) {
-      var f = ev.target.files && ev.target.files[0], msg = $('flChArchivoMsg');
-      if (!f) { msg.textContent = ''; return; }
-      var ok = f.type === 'application/pdf' || /\.pdf$/i.test(f.name) || /^image\/(jpeg|png|webp)$/.test(f.type);
-      if (!ok) { ev.target.value = ''; msg.textContent = 'Sube un PDF (o la foto del carnet en JPG, PNG o WebP).'; return; }
-      if (f.size > 15 * 1024 * 1024) { ev.target.value = ''; msg.textContent = 'El archivo pesa demasiado (máximo 15 MB).'; return; }
-      msg.textContent = 'Se guardará al presionar «Guardar chofer»: ' + f.name;
+      var f = ev.target.files && ev.target.files[0];
+      S.chArchivoErr = '';
+      S.chTocados.licencia_archivo = true;
+      if (f) {
+        var ok = f.type === 'application/pdf' || /\.pdf$/i.test(f.name) || /^image\/(jpeg|png|webp)$/.test(f.type);
+        if (!ok) { ev.target.value = ''; S.chArchivoErr = 'Sube un PDF (o la foto del carnet en JPG, PNG o WebP).'; }
+        else if (f.size > 15 * 1024 * 1024) { ev.target.value = ''; S.chArchivoErr = 'El archivo pesa demasiado (máximo 15 MB).'; }
+      }
+      evaluarChLuego();
     });
 
     var h = (location.hash || '').replace('#', '');
