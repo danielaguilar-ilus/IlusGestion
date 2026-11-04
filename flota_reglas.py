@@ -1057,3 +1057,55 @@ def resumen_usos(usos):
         u["desvio_retiro"] = desvio(u.get("inicio"), u.get("llave_cl"))
         u["desvio_devolucion"] = desvio(u.get("fin"), u.get("devuelta_cl"))
     return sorted(usos, key=lambda x: x["inicio"], reverse=True)
+
+
+MESES_CORTOS = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def graficos_usos(usos, hoy, meses=12):
+    """Lo que dibujan los gráficos de la ficha del vehículo (Daniel, 03-nov-2026: «podemos tener gráficos»), sacado de los usos YA
+    pasados por resumen_usos (cada uno con inicio, fin, area, chofer, km_uso y sus desvíos):
+    - km_mes: km recorridos en cada uno de los últimos `meses` meses (por el mes en que empezó el uso; los meses sin uso van en 0).
+    - areas: horas RESERVADAS por área, de mayor a menor.
+    - puntualidad: por chofer, cuántas veces retiró y devolvió a tiempo (±15 min) de las que se pudieron medir y su desvío promedio."""
+    claves = []
+    a, m = hoy.year, hoy.month
+    for _ in range(meses):
+        claves.append((a, m))
+        a, m = (a, m - 1) if m > 1 else (a - 1, 12)
+    claves.reverse()
+    km = {k: 0 for k in claves}
+    areas, pers = {}, {}
+    for u in usos:
+        ini, fin = u.get("inicio"), u.get("fin")
+        if ini is None:
+            continue
+        k = (ini.year, ini.month)
+        if k in km and u.get("km_uso"):
+            km[k] += int(u["km_uso"])
+        if fin is not None and fin > ini:
+            nombre = u.get("area") or "Otra área"
+            ar = areas.setdefault(nombre, {"area": nombre, "horas": 0.0, "usos": 0})
+            ar["horas"] += (fin - ini).total_seconds() / 3600
+            ar["usos"] += 1
+        p = pers.setdefault(u.get("chofer") or "(sin nombre)", {"chofer": u.get("chofer") or "(sin nombre)", "usos": 0, "medidos": 0,
+                                                                 "a_tiempo": 0, "tarde": 0, "suma_min": 0})
+        p["usos"] += 1
+        for d in (u.get("desvio_retiro"), u.get("desvio_devolucion")):
+            if d:
+                p["medidos"] += 1
+                p["a_tiempo"] += d["estado"] != "tarde"           # llegar antes también es cumplir
+                p["tarde"] += d["estado"] == "tarde"
+                p["suma_min"] += d["min"]
+    puntualidad = []
+    for p in pers.values():
+        prom = round(p.pop("suma_min") / p["medidos"]) if p["medidos"] else None
+        p["promedio_min"] = prom
+        p["pct"] = round(100 * p["a_tiempo"] / p["medidos"]) if p["medidos"] else None
+        puntualidad.append(p)
+    puntualidad.sort(key=lambda p: (p["pct"] is None, p["pct"] if p["pct"] is not None else 0, -p["usos"]))
+    return {
+        "km_mes": [{"mes": f"{y}-{mm:02d}", "texto": f"{MESES_CORTOS[mm - 1]} {y}", "km": km[(y, mm)]} for (y, mm) in claves],
+        "areas": sorted(({**x, "horas": round(x["horas"], 1)} for x in areas.values()), key=lambda x: -x["horas"]),
+        "puntualidad": puntualidad,
+    }
