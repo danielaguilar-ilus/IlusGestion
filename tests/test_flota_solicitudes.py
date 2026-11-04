@@ -1499,3 +1499,21 @@ class TestLlaveDelDiaYSlaRespuesta(unittest.TestCase):
         r = R.sla_respuesta(D(2026, 11, 3, 16, 30), D(2026, 11, 4, 8, 30), None)        # pedida al cierre, respondida a primera hora
         self.assertEqual((r["estado"], r["minutos"]), ("a_tiempo", 60))
         self.assertIsNone(R.sla_respuesta(None, None, D(2026, 11, 3, 9)))
+    def test_graficos_de_la_ficha(self):
+        D = dt.datetime
+        usos = R.resumen_usos([
+            {"inicio": D(2026, 9, 2, 8), "fin": D(2026, 9, 2, 12), "llave_cl": D(2026, 9, 2, 8, 5), "devuelta_cl": D(2026, 9, 2, 12), "dev_km": 55000,
+             "area": "Logística", "chofer": "Beto Soto"},
+            {"inicio": D(2026, 10, 7, 8), "fin": D(2026, 10, 7, 18), "llave_cl": D(2026, 10, 7, 9, 30), "devuelta_cl": D(2026, 10, 7, 18), "dev_km": 55600,
+             "area": "Logística", "chofer": "Beto Soto"},
+            {"inicio": D(2026, 11, 2, 9), "fin": D(2026, 11, 2, 11), "llave_cl": D(2026, 11, 2, 9), "devuelta_cl": D(2026, 11, 2, 11), "dev_km": 55800,
+             "area": "Servicio Técnico", "chofer": "Ana Pérez"}])
+        g = R.graficos_usos(usos, dt.date(2026, 11, 3))
+        self.assertEqual(len(g["km_mes"]), 12)
+        self.assertEqual(g["km_mes"][-1], {"mes": "2026-11", "texto": "nov 2026", "km": 200})
+        self.assertEqual(g["km_mes"][-2]["km"], 600)
+        self.assertEqual(g["km_mes"][-3]["km"], 0)                                    # el primero no tiene contra qué medirse
+        self.assertEqual([(a["area"], a["horas"], a["usos"]) for a in g["areas"]], [("Logística", 14.0, 2), ("Servicio Técnico", 2.0, 1)])
+        beto = next(p for p in g["puntualidad"] if p["chofer"] == "Beto Soto")
+        self.assertEqual((beto["medidos"], beto["a_tiempo"], beto["pct"]), (4, 3, 75))  # una vez retiró 1 h 30 min tarde
+        self.assertEqual(g["puntualidad"][0]["chofer"], "Beto Soto")                   # primero quien más se atrasa

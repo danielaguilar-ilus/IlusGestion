@@ -665,10 +665,11 @@ def register_flota_routes(app, ctx):
                  "devuelta_fmt": _hora_chile(r.get("devuelta_at")), "devuelta_por": r.get("devuelta_por"),
                  "dev_km": r.get("dev_km"), "combustible_texto": fr.combustible_texto(r.get("dev_combustible")),
                  "novedad": bool(r.get("dev_novedad"))} for r in (dict(x) for x in filas)])
+        graficos = fr.graficos_usos(usos, _ahora_chile().date())      # km por mes, horas por área y puntualidad por persona
         for u in usos:                    # las horas crudas solo sirven para calcular el desvío: al navegador va el texto en hora Chile
             for k in ("inicio", "fin", "llave_cl", "devuelta_cl"):
                 u.pop(k, None)
-        return jsonify({"ok": True, "usos": usos, "tolerancia_min": fr.DESVIO_TOLERANCIA_MIN})
+        return jsonify({"ok": True, "usos": usos, "graficos": graficos, "tolerancia_min": fr.DESVIO_TOLERANCIA_MIN})
 
     _TITULOS_HISTORIAL = {
         "creado": "Registrado", "editado": "Datos modificados", "inhabilitado": "Inhabilitado", "habilitado": "Habilitado",

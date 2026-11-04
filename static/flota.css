@@ -1150,3 +1150,44 @@ td > .fl-resp,td > .fl-dsv{display:flex}
 .fl-guia-cancel span{font-weight:500;color:#7f1d1d;flex:1 1 100%}
 @media (max-width: 1100px){ .fl-guia{grid-template-columns:repeat(2,minmax(0,1fr))} }
 @media (max-width: 560px){ .fl-guia{grid-template-columns:1fr} .fl-guia-acc .fl-btn{width:100%;justify-content:center} }
+/* ═══ Gráficos de la ficha del vehículo (Daniel, 03-nov-2026) ═══ Barras finas (≤24 px) con punta redondeada de 4 px, ejes en gris
+   suave, texto siempre en tinta (nunca del color de la barra), una etiqueta solo en el máximo y el último mes. */
+.fl-grafs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 16px}
+.fl-graf{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px 14px;min-width:0}
+.fl-graf h6{display:flex;align-items:center;gap:7px;font-size:.86rem;font-weight:800;margin:0 0 12px;color:#0a0a0a}
+.fl-graf h6 i{color:#dc2626}
+.fl-graf-vacio{margin:0;font-size:.84rem;color:#6b7280}
+.fl-graf-nota{margin:10px 0 0;font-size:.76rem;color:#6b7280}
+/* Columnas: km por mes */
+.fl-graf-col{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));align-items:end;height:150px;border-bottom:1px solid #e5e7eb;margin-bottom:22px}
+.fl-graf-c{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:3px;cursor:default}
+.fl-graf-c i{display:block;width:min(24px,70%);border-radius:4px 4px 0 0;background:#0a0a0a}
+.fl-graf-c:hover i{background:#374151}
+.fl-graf-val{font-size:.74rem;font-weight:800;color:#0a0a0a;font-variant-numeric:tabular-nums;white-space:nowrap}
+.fl-graf-x{position:absolute;bottom:-20px;font-size:.72rem;color:#6b7280}
+/* Filas: uso por área, puntualidad y vencimientos */
+.fl-graf-filas,.fl-graf-linea{display:flex;flex-direction:column;gap:10px}
+.fl-graf-fila{display:grid;grid-template-columns:minmax(0,9rem) minmax(0,1fr) minmax(0,9.5rem);align-items:center;gap:10px;font-size:.82rem}
+.fl-graf-et{display:flex;align-items:center;gap:7px;font-weight:700;color:#111827;overflow-wrap:anywhere}
+.fl-graf-sw{flex:0 0 auto;width:10px;height:10px;border-radius:3px}
+.fl-graf-barra{display:block;height:12px;border-radius:999px;background:#f3f4f6;overflow:hidden}
+.fl-graf-barra i{display:block;height:100%;border-radius:0 4px 4px 0}
+.fl-graf-v{display:flex;flex-direction:column;color:#374151;font-variant-numeric:tabular-nums;line-height:1.3}
+.fl-graf-v span{font-size:.74rem;color:#6b7280}
+.fl-graf-sem--ok{background:#16a34a}.fl-graf-sem--warn{background:#f59e0b}.fl-graf-sem--bad{background:#dc2626}
+.fl-graf-ejes{display:grid;grid-template-columns:minmax(0,9rem) minmax(0,1fr) minmax(0,9.5rem);gap:10px;font-size:.72rem;color:#6b7280}
+.fl-graf-ejes-c{display:flex;justify-content:space-between}
+.fl-graf-v .fl-graf-v1{font-size:.82rem;color:#374151}
+.fl-graf-pista{position:relative;display:block;height:12px;border-radius:999px;background:linear-gradient(90deg,#fee2e2 0,#fff8e1 8%,#f0fdf4 25%,#f0fdf4 100%)}
+.fl-graf-hito{position:absolute;top:50%;width:14px;height:14px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px #fff}
+@media (max-width: 860px){
+  .fl-grafs{grid-template-columns:1fr}
+  .fl-graf-fila,.fl-graf-ejes{grid-template-columns:minmax(0,7rem) minmax(0,1fr) minmax(0,7.5rem)}
+}
+@media (max-width: 420px){
+  .fl-graf-fila{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .fl-graf-fila .fl-graf-barra,.fl-graf-fila .fl-graf-pista{grid-column:1/-1;grid-row:2}
+  .fl-graf-fila .fl-graf-v{grid-row:1;grid-column:2;text-align:right;align-items:flex-end}
+  .fl-graf-ejes{grid-template-columns:minmax(0,1fr)}
+  .fl-graf-ejes > span:empty{display:none}
+}
