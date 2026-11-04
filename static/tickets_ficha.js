@@ -1708,6 +1708,10 @@ function _rpLimpiarPlaceholders(texto, adjs){
 // guarda (tickets_firma_correo.py). Una imagen se considera repetida si hay otra
 // IDÉNTICA en tipo y tamaño (≥3 iguales, o ≥2 si el nombre es de firma);
 // se conserva la primera de cada grupo.
+// 04-nov (Daniel: «se siguen repitiendo las imágenes», ticket 2304): cuando el mismo
+// correo del cliente entraba dos veces, cada foto quedaba ×2 con el MISMO nombre,
+// tipo y tamaño. Esas copias exactas también se pliegan, con 2 basta porque el
+// nombre coincide (los PDF y demás documentos nunca se pliegan).
 const TK_ADJ_NOMBRE_FIRMA = /^(insertpic[_\-]|image\d{2,4}\.|outlook[-_]|~?wrd\d+|sphs[-_ ]?ilus|ilus[-_ ]?(fitness|logo)|logo|firma|signature|banner|footer)/i;
 function tkAdjRepetidos(adjuntos){
   const grupos = {};
@@ -1721,6 +1725,20 @@ function tkAdjRepetidos(adjuntos){
     const g = grupos[k];
     const firma = g.some(function(a){ return TK_ADJ_NOMBRE_FIRMA.test(String(a.archivo_nombre||'').trim()); });
     if(g.length >= 3 || (g.length >= 2 && firma)){
+      veces[g[0].id] = g.length;
+      g.slice(1).forEach(function(a){ ocultos[a.id] = true; });
+    }
+  });
+  const exactas = {};
+  (adjuntos||[]).forEach(function(a){
+    const nombre = String(a.archivo_nombre||'').trim().toLowerCase();
+    if(!nombre || ocultos[a.id] || veces[a.id] || !esImagen(a.mime_type, a.archivo_nombre)) return;
+    const k = nombre+'|'+String(a.mime_type||'').toLowerCase()+'|'+(a.file_size_kb||0);
+    (exactas[k] = exactas[k] || []).push(a);
+  });
+  Object.keys(exactas).forEach(function(k){
+    const g = exactas[k];
+    if(g.length >= 2){
       veces[g[0].id] = g.length;
       g.slice(1).forEach(function(a){ ocultos[a.id] = true; });
     }
@@ -1763,13 +1781,13 @@ function renderAdjuntosInfo(adjuntosTodos){
       return '<a class="tk-adj-item" href="'+esc(url)+'" data-lightbox="1" data-url="'+esc(url)+'"'
         + ' data-mime="'+esc(a.mime_type||'')+'" data-nombre="'+esc(a.archivo_nombre||'archivo')+'"'
         + ' title="'+esc(a.archivo_nombre||'archivo')+'">'
-        + '<div class="tk-adj-thumb">'+thumb+(rep.veces[a.id] && !_tkAdjVerRep ? '<span class="tk-adj-x" title="Se repite en el ticket (firma de correo)">×'+rep.veces[a.id]+'</span>' : '')+'</div>'
+        + '<div class="tk-adj-thumb">'+thumb+(rep.veces[a.id] && !_tkAdjVerRep ? '<span class="tk-adj-x" title="Se repite en el ticket">×'+rep.veces[a.id]+'</span>' : '')+'</div>'
         + '<div class="tk-adj-name">'+esc(a.archivo_nombre||'archivo')+'</div>'
         + (meta?'<div class="tk-adj-meta">'+esc(meta)+'</div>':'')
         + '</a>';
     }).join('');
     return '<div class="tk-adj-grupo-titulo">'+esc(fecha)+'</div><div class="tk-adj-grid">'+items+'</div>';
-  }).join('') + (rep.n ? '<div class="tk-adj-rep-barra"><button type="button" class="tk-adj-rep-btn" onclick="tkAdjToggleRep()"><i class="bi bi-'+(_tkAdjVerRep?'eye-slash':'eye')+'"></i> '+(_tkAdjVerRep ? 'Ocultar las '+rep.n+' repetidas' : 'Se ocultaron '+rep.n+' imágenes repetidas (firma de correo) · Mostrar')+'</button></div>' : '');
+  }).join('') + (rep.n ? '<div class="tk-adj-rep-barra"><button type="button" class="tk-adj-rep-btn" onclick="tkAdjToggleRep()"><i class="bi bi-'+(_tkAdjVerRep?'eye-slash':'eye')+'"></i> '+(_tkAdjVerRep ? 'Ocultar las '+rep.n+' repetidas' : 'Se ocultaron '+rep.n+' imágenes repetidas · Mostrar')+'</button></div>' : '');
   // Galería navegable: TODAS las imágenes de "Información" (no solo la
   // clickeada) — pedido de Daniel ("poder pasarlas para verlas todas
   // juntas"). Si lo clickeado no es imagen (PDF/Word/etc.), se abre solo

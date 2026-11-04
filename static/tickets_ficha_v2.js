@@ -619,7 +619,7 @@
     var partes = [];
     if (fotos) partes.push(plural(fotos, 'foto', 'fotos'));
     if (otros) partes.push(plural(otros, 'documento', 'documentos'));
-    if (rep.n) partes.push(rep.n + ' repetidas de firma plegadas');
+    if (rep.n) partes.push(rep.n + ' repetidas plegadas');
     pintarPaso('pasoAdjuntos', adjTodos.length ? 'ok' : 'opt',
       adjTodos.length ? partes.join(' · ') : 'Opcional: fotos o documentos del caso');
 
