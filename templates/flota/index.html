@@ -22,17 +22,14 @@
   </div>
 </div>
 
-{% if flota_permisos and flota_permisos.admin %}
-<div class="fl-preview" role="note">
-  <i class="bi bi-shield-lock"></i>
-  <span><b>Tú administras la flota.</b> Agregas, editas, archivas y borras vehículos y choferes. Los demás entran únicamente con un permiso en Roles → «Solicitudes de vehículo»: pedir, gestionar solicitudes, ver documentos o administrar.</span>
-</div>
-{% endif %}
+{# Daniel, 05-nov-2026: «sácale ese mensaje» (el aviso amarillo de arriba que explicaba qué puede hacer quien administra): ya no se muestra. #}
 
+{# Pestañas (05-nov-2026, Daniel: «las pestañas las puedes mejorar»): barra en píldora, la activa en negro como los filtros, y un contador de lo
+   que importa en cada una (solicitudes por confirmar, vehículos y choferes habilitados). #}
 <nav class="fl-tabs" role="tablist" aria-label="Secciones de la flota">
-  <button type="button" class="fl-tab on" role="tab" data-tab="solicitudes" aria-selected="true"><i class="bi bi-calendar-week"></i>Solicitudes</button>
-  <button type="button" class="fl-tab" role="tab" data-tab="vehiculos" aria-selected="false"><i class="bi bi-truck"></i>Vehículos</button>
-  <button type="button" class="fl-tab" role="tab" data-tab="choferes" aria-selected="false"><i class="bi bi-person-vcard"></i>Choferes</button>
+  <button type="button" class="fl-tab on" role="tab" data-tab="solicitudes" aria-selected="true"><i class="bi bi-calendar-week" aria-hidden="true"></i><span class="fl-tab-t">Solicitudes</span><span class="fl-tab-n fl-tab-n--aviso" id="flTabN-solicitudes" hidden></span></button>
+  <button type="button" class="fl-tab" role="tab" data-tab="vehiculos" aria-selected="false"><i class="bi bi-truck" aria-hidden="true"></i><span class="fl-tab-t">Vehículos</span><span class="fl-tab-n" id="flTabN-vehiculos" hidden></span></button>
+  <button type="button" class="fl-tab" role="tab" data-tab="choferes" aria-selected="false"><i class="bi bi-person-vcard" aria-hidden="true"></i><span class="fl-tab-t">Choferes</span><span class="fl-tab-n" id="flTabN-choferes" hidden></span></button>
 </nav>
 
 {# ═══ Panel: SOLICITUDES de vehículo (lista y calendario) ═══ #}
@@ -80,7 +77,7 @@
         <button type="button" class="fl-fchip" data-svista="pasadas">Pasadas</button>
       </div>
     </div>
-    <div class="fl-tabla-wrap">
+    <div class="fl-tabla-wrap fl-tabla-wrap--sol">
       <table class="fl-tabla fl-tabla--sol" id="flSolTabla">
         <thead>
           <tr>

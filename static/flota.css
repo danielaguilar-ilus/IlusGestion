@@ -3,12 +3,20 @@
   border-radius:12px;padding:10px 14px;margin:0 0 14px;font-size:.84rem;line-height:1.35}
 .fl-preview i{font-size:1.05rem;flex:0 0 auto}
 
-/* Pestañas: solo «Vehículos» está construida; las otras se ven pero no se pueden abrir todavía. */
-.fl-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;border-bottom:1px solid #e5e7eb}
-.fl-tab{display:inline-flex;align-items:center;gap:7px;border:0;background:transparent;color:#374151;font-weight:700;
-  font-size:.9rem;padding:10px 14px;min-height:44px;border-bottom:3px solid transparent;margin-bottom:-1px}
-.fl-tab.on{color:#0a0a0a;border-bottom-color:#dc2626}
+/* Pestañas (05-nov-2026, Daniel: «las pestañas las puedes mejorar»): barra en píldora; la activa en negro (como los filtros) con un trazo rojo
+   y un contador de lo que importa en cada una. Táctil de 48 px (REGLA #3). */
+.fl-tabs{display:flex;gap:6px;margin:0 0 16px;padding:5px;background:#fff;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 1px 2px rgba(10,10,10,.05)}
+.fl-tab{position:relative;flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:9px;border:0;background:transparent;color:#374151;
+  font-weight:800;font-size:.95rem;padding:10px 16px;min-height:48px;border-radius:12px;transition:background .15s,color .15s,box-shadow .15s}
+.fl-tab > i{font-size:1.1rem;line-height:1}
+.fl-tab:hover:not(.on):not(:disabled){background:#f3f4f6;color:#0a0a0a}
+.fl-tab.on{background:#0a0a0a;color:#fff;box-shadow:0 2px 8px rgba(10,10,10,.28)}
+.fl-tab.on::after{content:"";position:absolute;left:22%;right:22%;bottom:5px;height:3px;border-radius:3px;background:#dc2626}
 .fl-tab:disabled{color:#9ca3af;cursor:not-allowed}
+.fl-tab-n{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 7px;border-radius:999px;background:#e5e7eb;color:#374151;font-size:.74rem;font-weight:800;line-height:1}
+.fl-tab-n[hidden]{display:none}
+.fl-tab.on .fl-tab-n{background:rgba(255,255,255,.22);color:#fff}
+.fl-tab-n--aviso,.fl-tab.on .fl-tab-n--aviso{background:#f59e0b;color:#0a0a0a}
 .fl-soon{font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;background:#f3f4f6;color:#6b7280;
   border-radius:50px;padding:2px 8px}
 
@@ -121,8 +129,10 @@
 /* Celular (REGLA #3): la tabla pasa a tarjetas, los botones son táctiles y el modal ocupa toda la pantalla */
 @media (max-width: 860px){
   .fl-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .fl-tabs{flex-wrap:nowrap;gap:0}
-  .fl-tab{flex:1 1 0;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;font-size:.82rem;text-align:center}
+  .fl-tabs{gap:4px;padding:4px}
+  .fl-tab{flex-direction:column;align-items:center;gap:3px;padding:8px 4px 12px;min-height:58px;font-size:.8rem;text-align:center}
+  .fl-tab-n{position:absolute;top:5px;right:calc(50% - 34px);min-width:20px;height:20px;padding:0 6px;font-size:.7rem}
+  .fl-tab.on::after{left:30%;right:30%;bottom:4px}
   .fl-soon{font-size:.56rem;padding:2px 6px}
   .fl-tabla thead{display:none}
   .fl-tabla,.fl-tabla tbody,.fl-tabla tr,.fl-tabla td{display:block;width:100%}
@@ -423,6 +433,14 @@
 .fl-vtar-cal .fl-falta{margin-top:2px}
 .fl-btn--primario{background:#0a0a0a;color:#fff;border-color:#0a0a0a}.fl-btn--primario:hover{background:#27272a;border-color:#27272a}
 .fl-vtar-docs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid #f3f4f6;background:#fcfcfd}
+/* 05-nov-2026 (Daniel): «la parte de revisión técnica, permiso, SOAP y seguro debería estar arriba de ver ficha, editar». Va dentro de la columna de datos. */
+.fl-vtar-info .fl-vtar-docs{margin:10px 0 4px;border:1px solid #eceef2;border-radius:12px;overflow:hidden}
+.fl-vtar-info .fl-vd{padding:10px 12px}
+@media (max-width: 1180px) and (min-width: 861px){
+  .fl-vtar-info .fl-vtar-docs{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fl-vtar-info .fl-vd:nth-child(odd){border-left:0}
+  .fl-vtar-info .fl-vd:nth-child(n+3){border-top:1px solid #f3f4f6}
+}
 .fl-vd{padding:12px 16px;display:flex;flex-direction:column;gap:3px;border-left:1px solid #f3f4f6;min-width:0}
 .fl-vd:first-child{border-left:0}
 .fl-vd-n{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#6b7280}
@@ -1193,4 +1211,15 @@ td > .fl-resp,td > .fl-dsv{display:flex}
   .fl-graf-fila .fl-graf-v{grid-row:1;grid-column:2;text-align:right;align-items:flex-end}
   .fl-graf-ejes{grid-template-columns:minmax(0,1fr)}
   .fl-graf-ejes > span:empty{display:none}
+}
+
+/* ═══ Solicitudes en el celular (05-nov-2026, Daniel: «una separación más pronunciada de solicitud entre solicitud») ═══
+   Cada solicitud es su PROPIA tarjeta, con aire entre una y otra, su franja de semáforo a la izquierda y una sombra suave. */
+@media (max-width: 860px){
+  .fl-tabla-wrap--sol{background:transparent;border:0;border-radius:0;overflow:visible}
+  .fl-tabla--sol tbody{display:flex;flex-direction:column;gap:20px}
+  .fl-tabla--sol tbody tr,.fl-tabla--sol tbody tr:last-child{background:#fff;border:1px solid #d5dae1;border-radius:16px;padding:16px 16px 16px 22px;
+    box-shadow:inset 6px 0 0 var(--fl-sem,transparent),0 3px 10px rgba(10,10,10,.09)}
+  .fl-tabla--sol tbody tr.inhab{background:#fafafa}
+  .fl-tabla--sol tbody tr:hover td{background:transparent}
 }

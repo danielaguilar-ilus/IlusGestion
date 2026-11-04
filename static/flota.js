@@ -275,9 +275,10 @@
       (meta ? '<p class="fl-vtar-meta">' + esc(meta) + '</p>' : '') +
       '<p class="fl-vtar-l2">' + esc(linea2.join(' · ')) + '</p>' +
       (v.propietario ? '<p class="fl-vtar-prop">Propietario registrado: <b>' + esc(v.propietario) + '</b></p>' : '') +
+      // Los cuatro documentos van ARRIBA de «Ver ficha / Editar» (Daniel, 05-nov-2026).
+      '<div class="fl-vtar-docs" aria-label="Documentos">' + v.documentos.map(bloqueDoc).join('') + '</div>' +
       '<div class="fl-vtar-pie"><div class="fl-vtar-estado">' + celdaEstado(v) + '</div>' + cal + '<div class="fl-acc">' + acc + '</div></div>' +
-      '</div></div>' +
-      '<div class="fl-vtar-docs" aria-label="Documentos">' + v.documentos.map(bloqueDoc).join('') + '</div></article>';
+      '</div></div></article>';
   }
   function pintarLista() {
     var lista = filtrados();
@@ -315,7 +316,7 @@
   function celdaPdf(v, d) {
     var admin = PERM.admin;
     if (!PERM.documentos) {
-      return d.tiene_pdf ? '<span class="fl-t-ok"><i class="bi bi-file-earmark-check"></i> PDF guardado</span><span class="fl-sub">Solo lo ven quienes tienen el permiso de documentos</span>'
+      return d.tiene_pdf ? '<span class="fl-t-ok"><i class="bi bi-file-earmark-check"></i> PDF guardado</span><span class="fl-sub">Solo lo ve quien administra la flota</span>'
         : '<span class="fl-t-mute">Sin PDF</span>';
     }
     var a = d.archivo;

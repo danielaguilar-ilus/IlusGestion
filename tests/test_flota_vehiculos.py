@@ -729,7 +729,7 @@ class TestPantalla(unittest.TestCase):
         self.assertIn("Solicitudes de vehículo", self.html)
         self.assertIn("flota.css", self.html)
         self.assertIn("flota.js", self.html)
-        self.assertIn("Tú administras la flota", self.html)           # quien administra ve el aviso de lo que puede hacer
+        self.assertNotIn("Tú administras la flota", self.html)        # Daniel, 05-nov-2026: «sácale ese mensaje»
 
     def test_todo_id_que_usa_el_js_existe(self):
         usados = set(re.findall(r"\$\('([A-Za-z0-9_]+)'\)", self.js))

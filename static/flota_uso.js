@@ -121,11 +121,22 @@
     if (t === 'solicitudes' && S.vista === 'calendario') cargarCal();
   }
 
+  /* Contador de cada pestaña (05-nov-2026, Daniel: «las pestañas las puedes mejorar»): lo que importa de un vistazo. */
+  function ponerNTab(t, n, texto) {
+    var el = $('flTabN-' + t);
+    if (!el) return;
+    n = Number(n) || 0;
+    el.textContent = n ? String(n) : '';
+    el.hidden = !n;
+    if (n) el.setAttribute('aria-label', n + ' ' + texto); else el.removeAttribute('aria-label');
+  }
+
   /* ═══ CARGA ═══ */
   function cargarVeh() {
     return api(API + '/vehiculos').then(function (d) {
       if (!d.ok) return;
       S.veh = d.vehiculos || [];
+      ponerNTab('vehiculos', S.veh.filter(function (v) { return v.habilitado && !v.archivado; }).length, 'vehículos habilitados');
       if (d.config) S.config = d.config;
       S.hoy = S.hoy || d.hoy;
       pintarFiltroVeh();
@@ -144,6 +155,7 @@
       if (d.config) S.config = d.config;
       S.hoy = S.hoy || d.hoy;
       var r = S.resumenCh;
+      ponerNTab('choferes', r.habilitados, 'choferes habilitados');
       $('flKpiChHab').textContent = r.habilitados != null ? r.habilitados : '–';
       $('flKpiChInhab').textContent = r.inhabilitados != null ? r.inhabilitados : '–';
       $('flKpiChPorVencer').textContent = r.por_vencer != null ? r.por_vencer : '–';
@@ -165,6 +177,7 @@
       var avCorreo = $('flSolAvisoCorreo');
       if (avCorreo) avCorreo.hidden = d.gestores_avisos !== 0;
       var r = d.resumen || {};
+      ponerNTab('solicitudes', r.por_confirmar, 'por confirmar');
       $('flKpiPorConfirmar').textContent = r.por_confirmar != null ? r.por_confirmar : '–';
       $('flKpiConfirmadas').textContent = r.confirmadas != null ? r.confirmadas : '–';
       $('flKpiLlave').textContent = r.llave_entregada != null ? r.llave_entregada : '–';
