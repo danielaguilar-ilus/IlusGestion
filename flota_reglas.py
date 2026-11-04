@@ -952,7 +952,9 @@ KM_SALTO_AVISO = 1_500         # más de esto en un solo uso se avisa (no se blo
 
 def validar_devolucion(payload, km_previo=None):
     """(datos, errores, avisos) de una devolución. El kilometraje y el combustible son obligatorios; una novedad o daño exige contarla.
-    Un kilometraje MENOR al último registrado o un salto muy grande se AVISAN (no se traban): la foto del odómetro es la evidencia."""
+    Un kilometraje MENOR al último registrado NO se acepta (Daniel, 03-nov-2026: «si está declarado en 56.240, no va a poder declarar
+    45.000»); el mismo kilometraje sí. Si el registro anterior estaba mal, la gestión lo corrige en la ficha del vehículo con su motivo.
+    Un salto muy grande solo se AVISA: la foto del odómetro es la evidencia."""
     p = payload or {}
     errores, avisos, datos = {}, [], {}
     txt = re.sub(r"[.\s]", "", str(p.get("km") or ""))
@@ -967,8 +969,8 @@ def validar_devolucion(payload, km_previo=None):
     datos["km"] = km
     if km is not None and km_previo is not None:
         if km < int(km_previo):
-            avisos.append(f"El kilometraje declarado ({km:,} km) es MENOR al último registrado ({int(km_previo):,} km): revisa la foto del odómetro."
-                          .replace(",", "."))
+            errores["km"] = (f"No puede ser menor al último kilometraje registrado ({int(km_previo):,} km). Revisa el odómetro; si el "
+                             f"registro anterior está mal, pídele a la gestión que lo corrija en la ficha del vehículo.").replace(",", ".")
         elif km - int(km_previo) > KM_SALTO_AVISO:
             avisos.append(f"Este uso suma {km - int(km_previo):,} km: revisa que el kilometraje esté bien escrito.".replace(",", "."))
     nivel = str(p.get("combustible") or "").strip()
@@ -987,3 +989,34 @@ def validar_devolucion(payload, km_previo=None):
 
 def combustible_texto(nivel):
     return dict(COMBUSTIBLE_NIVELES).get(nivel or "", "")
+
+
+# ── Usos del vehículo: lo planeado contra lo real (Daniel, 03-nov-2026: «se van a poder registrar las entregas de cada uno» y
+#    «una comparación para ver qué tan fuera del plan maneja los tiempos cada quien») ─────────────────────────────────────────────
+DESVIO_TOLERANCIA_MIN = 15      # hasta 15 min antes o después de lo reservado se cuenta «a tiempo»
+
+
+def desvio(plan, real, tolerancia=DESVIO_TOLERANCIA_MIN):
+    """Cuánto se apartó lo real de lo reservado, ambos en hora Chile sin zona. {"min": + tarde / − antes, "estado", "texto"} o None."""
+    if plan is None or real is None:
+        return None
+    m = int(round((real - plan).total_seconds() / 60))
+    if abs(m) <= tolerancia:
+        return {"min": m, "estado": "a_tiempo", "texto": "A tiempo"}
+    d, resto = divmod(abs(m), 1440)
+    dur = (f"{d} d {resto // 60} h" if resto // 60 else f"{d} d") if d else _duracion(abs(m))      # «4 d 11 h», no «107 h 25 min»
+    return {"min": m, "estado": "tarde" if m > 0 else "antes", "texto": f"{dur} {'tarde' if m > 0 else 'antes'}"}
+
+
+def resumen_usos(usos):
+    """Agrega a cada uso (dicts con inicio, fin, llave_cl, devuelta_cl en hora Chile y dev_km) el desvío al retirar la llave, el
+    desvío al devolver y los km de ese uso, contados contra la devolución ANTERIOR del mismo vehículo. Devuelve el más nuevo primero."""
+    km_prev = None
+    for u in sorted(usos, key=lambda x: x["inicio"]):
+        km = u.get("dev_km")
+        u["km_uso"] = km - km_prev if km is not None and km_prev is not None and km >= km_prev else None
+        if km is not None:
+            km_prev = km
+        u["desvio_retiro"] = desvio(u.get("inicio"), u.get("llave_cl"))
+        u["desvio_devolucion"] = desvio(u.get("fin"), u.get("devuelta_cl"))
+    return sorted(usos, key=lambda x: x["inicio"], reverse=True)

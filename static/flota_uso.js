@@ -736,6 +736,18 @@
       pintarDetalle(d.solicitud, d.eventos, d.fotos_devolucion);
     });
   }
+  /* El botón de cada correo de la flota trae ?sol=<id> (Daniel, 03-nov-2026: «que el botón del correo lo lleve al link donde tiene
+     que devolver el camión»): con la llave entregada y permiso de devolver abre DIRECTO la devolución; si no, el detalle. */
+  function abrirDesdeEnlace() {
+    var id = parseInt(new URLSearchParams(location.search).get('sol') || '', 10);
+    if (!id) return;
+    try { history.replaceState(null, '', location.pathname + '#solicitudes'); } catch (e) { /* nada */ }
+    api(API + '/solicitudes/' + id).then(function (d) {
+      if (!d.ok || !d.solicitud) { toast(d.error || 'No encontré esa solicitud.', 'warning'); return; }
+      if (d.solicitud.puede && d.solicitud.puede.devolver) abrirDevolucion(d.solicitud);
+      else abrirDetalle(id);
+    });
+  }
   function abrirDetalle(id) {
     $('flSolDetCuerpo').innerHTML = '<div class="text-muted">Cargando…</div>';
     $('flSolDetAcc').innerHTML = '';
@@ -784,8 +796,8 @@
     });
   }
   /* ═══ SOLICITUDES · DEVOLUCIÓN CON EVIDENCIA (FASE 2, 03-nov-2026) ═══
-     Kilometraje, combustible y cuatro fotos obligatorias; lo raro (km menor al último, salto grande) se avisa y el servidor lo deja en
-     la bitácora. El servidor valida todo de nuevo (flota_reglas.validar_devolucion). */
+     Kilometraje, combustible y cuatro fotos obligatorias. Un km menor al último NO se acepta (03-nov-2026); un salto grande se avisa y
+     el servidor lo deja en la bitácora. El servidor valida todo de nuevo (flota_reglas.validar_devolucion). */
   var DEV_FOTOS = [
     { tipo: 'dev_odometro', nombre: 'Odómetro', ayuda: 'Que se lean los kilómetros', ic: 'bi-speedometer' },
     { tipo: 'dev_combustible', nombre: 'Indicador de combustible', ayuda: 'La aguja o las barras del tablero', ic: 'bi-fuel-pump' },
@@ -818,7 +830,10 @@
     var s = D.s, r = {}, km = kmNum($('flDevKm').value), prev = s && s.vehiculo.km_actual;
     if (!$('flDevKm').value.trim()) r.km = res('bad', 'Indica el kilometraje que marca el odómetro.');
     else if (km == null) r.km = res('bad', 'Escribe solo números (por ejemplo 56240).');
-    else if (prev != null && km < prev) r.km = res('warn', 'Es MENOR al último registrado (' + miles(prev) + ' km): revisa el odómetro. Se puede registrar igual.');
+    else if (prev != null && km < prev) {
+      r.km = res('bad', 'No puede ser menor al último registrado (' + miles(prev) + ' km). Revisa el odómetro; si el registro anterior está mal, pídele a la gestión que lo corrija.');
+      r.km.inmediato = true;          // un km menor se avisa apenas se escribe, no recién al tocar «Registrar devolución»
+    }
     else if (prev != null && km - prev > 1500) r.km = res('warn', 'Suma ' + miles(km - prev) + ' km en este uso: revisa que esté bien escrito.');
     else r.km = res('ok', prev != null ? 'Este uso suma ' + miles(km - prev) + ' km (antes: ' + miles(prev) + ' km).' : 'Primer kilometraje registrado del vehículo.');
     r.combustible = D.comb ? res('ok', '') : res('bad', 'Elige cuánto combustible le queda.');
@@ -827,7 +842,7 @@
     var faltanFotos = DEV_FOTOS.filter(function (f) { return !D.fotos[f.tipo]; });
     ['km', 'combustible', 'observaciones'].forEach(function (c) {
       var el = document.querySelector('#flFormDev .fl-campo[data-campo="' + c + '"]');
-      var visible = r[c].estado !== 'bad' || D.intento;
+      var visible = r[c].estado !== 'bad' || D.intento || r[c].inmediato;
       el.classList.remove('ok', 'bad', 'warn');
       if (visible && r[c].estado) el.classList.add(r[c].estado);
       escribir(el.querySelector('.fl-msg'), visible ? r[c].msg : '');
@@ -838,10 +853,18 @@
     var faltan = [];
     if (r.km.estado === 'bad') faltan.push('el kilometraje');
     if (r.combustible.estado === 'bad') faltan.push('el combustible');
-    faltanFotos.forEach(function (f) { faltan.push('la foto ' + f.nombre.toLowerCase()); });
+    if (faltanFotos.length) faltan.push(faltanFotos.length === 1 ? 'la foto ' + faltanFotos[0].nombre.toLowerCase()
+      : faltanFotos.length + ' fotos (' + faltanFotos.map(function (f) { return f.nombre.toLowerCase(); }).join(', ') + ')');
     if (r.observaciones.estado === 'bad') faltan.push('contar la novedad');
+    // Avance arriba: cuatro marcas que pasan a verde (la persona ve de un vistazo cuánto le falta en el celular)
+    var marcas = [['Km', r.km.estado !== 'bad'], ['Combustible', r.combustible.estado !== 'bad'],
+      ['Fotos ' + (DEV_FOTOS.length - faltanFotos.length) + '/' + DEV_FOTOS.length, !faltanFotos.length], ['Novedad', r.observaciones.estado !== 'bad']];
+    $('flDevProg').innerHTML = marcas.map(function (m) {
+      return '<li class="' + (m[1] ? 'ok' : '') + '"><i class="bi ' + (m[1] ? 'bi-check-circle-fill' : 'bi-circle') + '" aria-hidden="true"></i>' + esc(m[0]) +
+        '<span class="visually-hidden">' + (m[1] ? ': listo' : ': falta') + '</span></li>';
+    }).join('');
     var pie = $('flDevPie');
-    pie.className = 'fl-pie-form' + (faltan.length && D.intento ? ' bad' : '');
+    pie.className = 'fl-pie-form' + (faltan.length && D.intento ? ' bad' : '') + (faltan.length ? '' : ' listo');
     escribir(pie, faltan.length ? 'Falta: ' + faltan.join(', ') + '.' : 'Todo listo: ' + miles(km) + ' km · combustible ' + (DEV_COMB.filter(function (c) { return c.v === D.comb; })[0] || {}).t + (D.nov ? ' · con novedad' : '') + '.');
     return faltan;
   }
@@ -850,10 +873,13 @@
     Object.keys(D.fotos).forEach(function (k) { try { URL.revokeObjectURL(D.fotos[k].url); } catch (e) { /* nada */ } });
     D.fotos = {};
     $('flFormDev').reset();
-    $('flModalDevTitulo').textContent = 'Devolver ' + s.vehiculo.patente_fmt + ' · ' + s.numero;
+    $('flModalDevTitulo').textContent = 'Devolver ' + s.vehiculo.patente_fmt;
     $('flDevCab').innerHTML = vehFoto(vehPorId(s.vehiculo.id), 'fl-dev-cab-foto') + '<span><b>' + esc(s.vehiculo.patente_fmt + ' · ' + s.vehiculo.titulo) + '</b>' +
-      '<span>' + esc(s.rango_texto + ' · ' + s.area + ' · retiró ' + s.chofer.nombre) + '</span>' +
-      '<span>' + esc(s.vehiculo.km_actual != null ? 'Último kilometraje registrado: ' + miles(s.vehiculo.km_actual) + ' km' : 'Sin kilometraje registrado todavía') + '</span></span>';
+      '<span>' + esc(s.numero + ' · ' + s.rango_texto) + '</span>' +
+      '<span>' + esc(s.area + ' · retiró ' + s.chofer.nombre) + '</span></span>';
+    $('flDevKmRef').innerHTML = s.vehiculo.km_actual != null
+      ? '<i class="bi bi-speedometer2"></i>Último registrado: <b>' + esc(miles(s.vehiculo.km_actual)) + ' km</b> · no puede ser menor'
+      : '<i class="bi bi-speedometer2"></i>Es el primer kilometraje que se registra de este vehículo';
     Array.prototype.forEach.call(document.querySelectorAll('#flDevNov [data-nov]'), function (b) { var on = b.getAttribute('data-nov') === '0'; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
     $('flDevObsLbl').textContent = 'Observaciones (opcional)';
     pintarComb(); pintarFotosDev();
@@ -1118,6 +1144,8 @@
     return String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(function (p) { return p.charAt(0).toUpperCase(); }).join('');
   }
   function estadoChofer(c) {
+    // Daniel, 03-nov-2026: «todos tienen que pertenecer a la página. Si no está registrado, no puede retirar el camión».
+    if (c.externo) return { cls: 'off', t: 'Sin usuario de ILUS: no puede retirar el vehículo', bloq: true };
     if (!c.habilitado || !c.usuario_activo) return { cls: 'off', t: 'Inhabilitado como chofer', bloq: true };
     if (!c.licencia_vence || c.licencia_estado === 'sin_fecha') return { cls: 'off', t: 'Sin vencimiento de licencia registrado', bloq: true };
     if (c.licencia_estado === 'vencido') return { cls: 'off', t: 'Licencia vencida el ' + c.licencia_vence_fmt, bloq: true };
@@ -1803,21 +1831,15 @@
     }
     $('flChGestion').innerHTML = b.join('');
   }
-  /* Usuario de ILUS o chofer EXTERNO (Daniel, 02-nov-2026: «un chofer que no esté dentro del sistema y que se lleve el camión»). */
-  var tipoCh = 'usuario';
-  function esExternoCh() { return S.editCh ? !!S.editCh.externo : tipoCh === 'externo'; }
+  /* Todo chofer es un usuario de ILUS (Daniel, 03-nov-2026: «eliminar esa parte donde el usuario externo de chofer… si no está
+     registrado, no puede retirar el camión»). Un externo que ya estaba en el repositorio se puede editar o archivar, nada más. */
+  function esExternoCh() { return !!(S.editCh && S.editCh.externo); }
   function aplicarTipoCh() {
     var ext = esExternoCh();
-    Array.prototype.forEach.call(document.querySelectorAll('#flChTipo [data-chtipo]'), function (b) {
-      var on = b.getAttribute('data-chtipo') === (ext ? 'externo' : 'usuario');
-      b.classList.toggle('on', on); b.setAttribute('aria-checked', on ? 'true' : 'false');
-    });
-    $('flChTipo').hidden = !!S.editCh;
-    campoCh('usuario_id').hidden = !!S.editCh || ext;
+    campoCh('usuario_id').hidden = !!S.editCh;
     $('flChTelCampo').hidden = !ext;
-    $('flChAyudaTipo').textContent = S.editCh ? '' : (ext
-      ? 'Para alguien sin cuenta en ILUS: escribe sus datos como figuran en la licencia y un teléfono para coordinar la llave.'
-      : 'Al elegir al usuario te sugerimos el RUT y la dirección que ya tiene en su perfil; puedes corregirlos.');
+    $('flChAyudaTipo').textContent = S.editCh ? (ext ? 'No tiene usuario de ILUS: no puede retirar vehículos hasta que se le cree uno.' : '')
+      : 'Elige al usuario de ILUS. Te sugerimos el RUT y la dirección que ya tiene en su perfil; puedes corregirlos.';
     evaluarChLuego();
   }
   function abrirChofer(c) {
@@ -1826,7 +1848,6 @@
     $('flChGuardar').innerHTML = '<i class="bi bi-check2-circle me-1"></i>' + (c ? 'Guardar cambios' : 'Guardar chofer');
     var f = $('flFormCh');
     f.reset();
-    tipoCh = 'usuario';
     $('flChFijo').hidden = !c;
     $('flChFijo').innerHTML = c ? '<b>' + esc(c.nombre) + '</b>' + (c.externo ? '<span class="fl-sub">Chofer externo (sin usuario de ILUS)</span>' : '') +
       (c.cargo ? '<span class="fl-sub">' + esc(c.cargo) + '</span>' : '') + (c.telefono && !c.externo ? '<span class="fl-sub">' + esc(c.telefono) + '</span>' : '') : '';
@@ -1902,8 +1923,7 @@
         direccion_lat: vCh('direccion_lat'), direccion_lng: vCh('direccion_lng'), direccion_place_id: vCh('direccion_place_id'),
         licencia_clases: clasesCh(), licencia_vence: vCh('licencia_vence'), notas: vCh('notas') };
       if (esExternoCh()) body.telefono = vCh('telefono');
-      if (!editando && esExternoCh()) body.externo = true;
-      else if (!editando) body.usuario_id = vCh('usuario_id');
+      if (!editando) body.usuario_id = vCh('usuario_id');
       S.guardandoCh = true;
       $('flChGuardar').disabled = true;
       api(editando ? API + '/choferes/' + editando.id : API + '/choferes', { method: editando ? 'PUT' : 'POST', body: body }).then(function (r) {
@@ -2256,13 +2276,6 @@
     fc.addEventListener('submit', function (e) { e.preventDefault(); guardarCh(); });
     $('flChGuardar').addEventListener('click', guardarCh);
     $('flChUsuario').addEventListener('change', sugerirDesdePerfil);
-    $('flChTipo').addEventListener('click', function (ev) {
-      var b = ev.target.closest('[data-chtipo]');
-      if (!b || S.editCh) return;
-      tipoCh = b.getAttribute('data-chtipo');
-      aplicarTipoCh();
-      if (tipoCh === 'externo') $('flChNombre').focus();
-    });
     $('flChGestion').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-gcc]');
       var c = S.editCh;
@@ -2288,7 +2301,7 @@
     });
 
     var h = (location.hash || '').replace('#', '');
-    Promise.all([cargarVeh(), cargarChof(), cargarSol()]).then(function () { irTab(h || 'solicitudes'); });
+    Promise.all([cargarVeh(), cargarChof(), cargarSol()]).then(function () { irTab(h || 'solicitudes'); abrirDesdeEnlace(); });
     irTab(h || 'solicitudes');
   }
 
