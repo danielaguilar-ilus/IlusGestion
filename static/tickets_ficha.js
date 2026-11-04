@@ -1490,6 +1490,10 @@ function renderThread(mensajes, adjuntos){
   // maxId se recalcula recorriendo mensajes y queda grabado al final.
   const prevMax = _rpUltimoMsgId;
   let maxId = prevMax || 0;
+  // 03-nov (Impeccable): cada día va en su propio contenedor (.rp-dia) con su pastilla de fecha adentro. Antes las
+  // pastillas eran hermanas de los mensajes y TODAS quedaban pegadas arriba a la vez (se apilaban y tapaban el mensaje);
+  // dentro de su día, la pastilla pegajosa la empuja la del día siguiente.
+  let diaAbierto = false;
   th.innerHTML = mensajes.map(function(m, i){
     // D1: el orden real del hilo es COALESCE(message_date,created_at), pero la
     // fecha MOSTRADA es created_at -- un correo ingerido tarde puede romper la
@@ -1498,7 +1502,8 @@ function renderThread(mensajes, adjuntos){
     const prev = i > 0 ? mensajes[i-1] : null;
     const fecha = _rpFechaDe(m), fechaPrev = prev ? _rpFechaDe(prev) : null;
     const sep = (fecha && fecha !== fechaPrev)
-      ? '<div class="rp-fecha-sep"><span>'+esc(_rpEtiquetaFecha(fecha))+'</span></div>' : '';
+      ? (diaAbierto ? '</div>' : '') + '<div class="rp-dia"><div class="rp-fecha-sep"><span>'+esc(_rpEtiquetaFecha(fecha))+'</span></div>' : '';
+    if(sep) diaAbierto = true;
     if(m.id && Number(m.id) > maxId) maxId = Number(m.id);
     const esNuevo = prevMax !== null && !!m.id && Number(m.id) > prevMax;
 
@@ -1549,7 +1554,7 @@ function renderThread(mensajes, adjuntos){
       const esImg = esImagen(a.mime_type, a.archivo_nombre);
       const nom = esc(a.archivo_nombre||'archivo');
       const inner = esImg
-        ? '<img src="'+esc(url)+'" loading="lazy" decoding="async"><span class="rp-adj-nom">'+nom+'</span>'
+        ? '<img src="'+esc(url)+'" alt="" loading="lazy" decoding="async"><span class="rp-adj-nom">'+nom+'</span>'
         : '<span class="rp-adj-tile"><i class="bi '+iconoAdjunto(a.mime_type,a.archivo_nombre)+'"></i></span>'
           + '<span class="rp-adj-col"><span class="rp-adj-nom">'+nom+'</span>'
           + (_rpPesoFmt(a.file_size_kb)?'<span class="rp-adj-peso">'+_rpPesoFmt(a.file_size_kb)+'</span>':'')
@@ -1597,7 +1602,7 @@ function renderThread(mensajes, adjuntos){
       ? '<div class="rp-meta rp-meta-mini">'+esc(_rpHoraDe(m))+estadoTag+'</div>'
       : '<div class="rp-meta"><span class="rp-who">'+who+'</span>'+autoTag+' · '+fmtFechaHora(m.created_at)+estadoTag+'</div>';
     return sep + '<div class="rp-msg '+cls+(esAgrupado?' rp-agrupado':'')+(esNuevo?' rp-nuevo':'')+'">'
-      + '<div class="rp-avatar">'+(esAuto?'<i class="bi bi-robot"></i>':_rpIniciales(who))+'</div>'
+      + '<div class="rp-avatar" aria-hidden="true">'+(esAuto?'<i class="bi bi-robot"></i>':_rpIniciales(who))+'</div>'
       + '<div class="rp-bubble">'
       + metaHtml
       + (contenidoHtml ? '<div class="rp-content'+(esCliente?' rp-content-plano':'')+'">'+contenidoHtml+'</div>' : '')
@@ -1605,7 +1610,7 @@ function renderThread(mensajes, adjuntos){
       + tradHtml
       + copiarHtml
       + '</div></div>';
-  }).join('');
+  }).join('') + (diaAbierto ? '</div>' : '');
   // R3: por D1, un mensaje nuevo puede insertarse en MEDIO del hilo -- la
   // marca por id lo anima igual (correcto); si el usuario está scrolleado
   // arriba leyendo historial, el scroll no se mueve hacia él (aceptable,

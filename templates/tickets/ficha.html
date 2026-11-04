@@ -566,7 +566,9 @@
           <input type="text" class="email-chip-input" placeholder="opcional"></div>
       </div>
     </div>
-    <div class="rp-thread" id="rpThread"></div>
+    {# 03-nov (Impeccable): el visor se desplaza solo — con tabindex y nombre se puede recorrer con el teclado y un lector de pantalla lo anuncia.
+       Sin aria-live a propósito: el hilo se repinta completo cada pocos segundos y se volvería a leer todo. #}
+    <div class="rp-thread" id="rpThread" role="region" aria-label="Conversación del ticket" tabindex="0"></div>
 
     <div class="rp-composer">
       <div class="rp-mode-tabs">
@@ -597,7 +599,7 @@
             <i class="bi bi-paperclip"></i>
             <input type="file" id="rpFile" hidden multiple accept="image/*,video/*,application/pdf">
           </label>
-          <button class="btn btn-sm btn-outline-secondary" id="rpBtnDictar" type="button" title="Dictar mensaje por voz">
+          <button class="btn btn-sm btn-outline-secondary" id="rpBtnDictar" type="button" title="Dictar mensaje por voz" aria-label="Dictar mensaje por voz">
             <i class="bi bi-mic"></i></button>
           <div class="dropdown">
             <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="rpPlantillasToggle"
@@ -605,7 +607,7 @@
               <i class="bi bi-file-earmark-text me-1"></i>Plantillas</button>
             <ul class="dropdown-menu" id="rpPlantillasMenu" style="max-height:260px;overflow-y:auto;"></ul>
           </div>
-          <button class="btn btn-sm btn-outline-secondary" id="rpGuardarPlantilla" title="Guardar el texto actual como plantilla">
+          <button class="btn btn-sm btn-outline-secondary" id="rpGuardarPlantilla" title="Guardar el texto actual como plantilla" aria-label="Guardar el texto actual como plantilla">
             <i class="bi bi-bookmark-plus"></i></button>
           <div class="dropdown">
             <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
@@ -619,7 +621,7 @@
               <li><a class="dropdown-item" href="#" data-lang="de" data-nombre="Alemán">Alemán</a></li>
             </ul>
           </div>
-          <button class="btn btn-sm btn-outline-secondary" id="rpBtnTraducir" type="button" title="Traducir tu mensaje">
+          <button class="btn btn-sm btn-outline-secondary" id="rpBtnTraducir" type="button" title="Traducir tu mensaje" aria-label="Traducir tu mensaje">
             <i class="bi bi-translate"></i></button>
         </div>
         <button class="btn btn-sm btn-ilus" id="rpBtnEnviar"><i class="bi bi-send-fill me-1"></i>Enviar</button>
