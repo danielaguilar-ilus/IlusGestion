@@ -1,0 +1,20 @@
+{# 🔐 «Entrar con Face ID / huella» en el login (05-nov-2026, Daniel). Se incluye desde login.html. Nace oculto: static/ilus_passkeys.js lo muestra
+   SOLO si este teléfono o navegador puede (contexto seguro + autenticador del dispositivo). Es un modo ADICIONAL: la contraseña sigue igual. #}
+{% if passkeys_activas %}
+<button type="button" class="pk-login-btn" id="pkLoginBtn" hidden data-next="{{ next_url }}">
+  <i class="bi bi-fingerprint" aria-hidden="true"></i>Entrar con Face ID / huella
+</button>
+<div class="pk-msg" id="pkLoginMsg" role="status" aria-live="polite"></div>
+<style>
+  .pk-login-btn{width:100%;min-height:48px;margin-top:10px;display:flex;align-items:center;justify-content:center;gap:10px;border:1.5px solid #d1d5db;border-radius:12px;
+    background:#fff;color:#111827;font-weight:800;font-size:.95rem;cursor:pointer;transition:background .15s,border-color .15s}
+  .pk-login-btn[hidden]{display:none}
+  .pk-login-btn i{font-size:1.35rem;color:#dc2626}
+  .pk-login-btn:hover{background:#f9fafb;border-color:#111827}
+  .pk-login-btn:disabled{opacity:.6;cursor:wait}
+  .pk-login-btn--ya{border-color:#0a0a0a;background:#0a0a0a;color:#fff}
+  .pk-login-btn--ya:hover{background:#27272a}
+  .pk-msg{min-height:1.2em;margin-top:8px;text-align:center;font-size:.84rem;color:#4b5563}
+  .pk-msg--mal{color:#b91c1c;font-weight:700}
+</style>
+{% endif %}

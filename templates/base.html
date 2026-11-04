@@ -98,6 +98,8 @@
      reintenta la escritura — se avisa. Sin esto, una pestaña vieja podría
      ejecutar su acción bajo la identidad del usuario que entró después. #}
   <meta name="ilus-uid" content="{{ ilus_uid() if ilus_uid is defined else 0 }}">
+  {# 2026-11-05: Face ID / huella (passkeys). Solo avisa que existe; static/ilus_passkeys.js decide si este teléfono puede. #}
+  {% if passkeys_activas %}<meta name="ilus-passkeys" content="1">{% endif %}
 
   {# ── Favicons (regenerados 2026-05-17 desde Logo.png oficial) ──
      Casco espartano BLANCO sobre fondo NEGRO #0a0a0a.
@@ -1194,6 +1196,8 @@
 <script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 <script defer src="{{ url_for('static', filename='app.js') }}"></script>
 <script defer src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
+{# 2026-11-05: Face ID / huella (passkeys): botón del login, interruptor de Mi cuenta y la pregunta amable en el celular. No hace nada si el teléfono no puede. #}
+<script defer src="{{ url_for('static', filename='ilus_passkeys.js') }}"></script>
 {# 2026-10-20: salida para cancelar/reagendar una OT unida a otra (instalación ↔ desinstalación): «¿cancelar las dos?» #}
 <script defer src="{{ url_for('static', filename='ot_cancelar.js') }}"></script>
 {# 2026-10-28 (REGLA #52): aviso «este anexo firmado quedará inválido» ANTES de eliminar una OT (ficha de la OT, calendario, ficha del cliente) #}

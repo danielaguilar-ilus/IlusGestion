@@ -6387,6 +6387,7 @@ _CSRF_EXEMPT_PREFIXES: tuple = (
     "/chofer",                  # app del chofer (sesión driver_id propia)
     "/soporte",                 # formulario publico de Tickets (sin sesion)
     "/propuesta/",              # propuesta pública del plan de mantención (token URL)
+    "/passkeys/login/",         # ingreso con Face ID / huella (sin sesión todavía: lo protege la firma WebAuthn, el desafío y el origen)
 )
 
 
@@ -6733,7 +6734,8 @@ def before_request():
     load_current_user()
 
     # ── IDLE-LOGOUT: sesión expirada por inactividad ──────────────────
-    if getattr(g, '_idle_expired', False):
+    # 05-nov-2026: el ingreso con Face ID / huella corre justo cuando la sesión ya caducó: esa ruta no se corta por «sesión expirada».
+    if getattr(g, '_idle_expired', False) and not (request.path or "").startswith("/passkeys/login/"):
         _rpath = request.path or ""
         # Rutas de API / JSON → devolver 401 con JSON (no redirigir)
         # 🔴 FIX 2026-09-02 (auditoría previa al lanzamiento, hallazgo
@@ -167488,6 +167490,16 @@ try:
     print("[ILUS] Modulo Flota (Solicitudes de vehiculo) registrado.")
 except Exception as _flota_reg_err:
     print(f"[ILUS][WARN] register_flota_routes: {_flota_reg_err}")
+
+# 🔐 PASSKEYS (Face ID / huella) — Daniel 2026-11-05: «que desbloquee la aplicación con la huella o los métodos de seguridad que tenga el teléfono,
+# que le pregunte si quiere y dejarlo habilitado por el front (Mi cuenta)». Es un modo ADICIONAL de entrar: la contraseña sigue igual. La tabla
+# user_passkeys se crea dentro del register (idempotente). Interruptor: ILUS_PASSKEYS=0 lo apaga en todo el sistema.
+try:
+    from passkeys_module import register_passkey_routes
+    register_passkey_routes(app, globals())
+    print("[ILUS] Modulo Passkeys (Face ID / huella) registrado.")
+except Exception as _passkeys_reg_err:
+    print(f"[ILUS][WARN] register_passkey_routes: {_passkeys_reg_err}")
 
 
 try:
