@@ -1521,5 +1521,20 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
-_Última actualización: 2026-10-29_
+## 📱 REGLA #61 — Lo que se ve en pantalla se verifica en 3 anchos, con letra ≥ 12 px y SIN scroll de lado; una tabla se vuelve tarjeta COMPACTA, nunca gigante (Daniel, 2026-11-05; no negociable)
+
+**Pedido explícito de Daniel (2026-11-05): «siempre te he pedido que como regla dejemos la parte responsiva, es indispensable… no quiero letras muy chicas, pero tampoco me gusta darle mucho scroll, y las tarjetas grandes se ven muy feas… las cotizaciones y muchas partes responsivas de la aplicación se ven pésimas».** Complementa la REGLA #3 (mobile-first: 16 px en inputs y toques de 44 px) y la #4.3 (tablas contenidas y paginadas) con lo MEDIBLE:
+
+- **Anchos de prueba: 390 (celular), 820 (tablet), 1280, 1366 y 1440.** El ancho útil de una tabla es el de la ventana menos el menú (212 px) y los márgenes (~50 px): a 1280 quedan ~1000 px. **Sin scroll horizontal** (ni de la página ni de la tabla): `contenedor.scrollWidth <= contenedor.clientWidth`.
+- **Letra mínima 12 px (`.75rem`)** en todo texto de pantalla (botones, chips, etiquetas, ayudas, encabezados de tabla); el cuerpo, 14 px. Solo los íconos y glifos pueden ser menores. El **PDF/documento impreso** conserva su tipografía de impresión (pt): lo que se mide es la pantalla.
+- **Contraste**: texto gris sobre blanco, mínimo `#6b7280` (4,8:1). `#9ca3af` solo sobre un fondo oscuro declarado (8:1), nunca sobre blanco (2,5:1). Sobre negro, `#a1a1aa` o más claro.
+- **Tabla → tarjeta COMPACTA** bajo el ancho en que la tabla ya no cabe (la de cotizaciones, bajo 1240 px): 4 filas (número + estado / nombre + total / documentos / acciones), **sin etiquetas repetidas**, ≈ 190–270 px de alto (no ≈ 360–430), 2 columnas desde ~700 px, acciones = UN botón principal + «Más» (44 px). Nunca una tarjeta con una fila por columna.
+- **Nada se quita ni se esconde** (REGLA #4.2): lo secundario pasa a «Más» (los botones originales siguen en la página y el menú los «toca»), y los nombres van completos (REGLA #15: se parten en líneas, no se cortan).
+- **Cómo se verifica** (no «se ve bien»): abrir la pantalla a esos anchos en un navegador real (Playwright/Chromium con el CSS y el JS reales, o el iframe de 390 px de `tecnica_probar_responsive_produccion`) y MEDIR: `scrollWidth`, alto de cada tarjeta y la letra menor. Antes de desplegar y otra vez en producción, solo lectura.
+- **Referencia viva:** `.cot-lista` en `static/tickets_cotizaciones.css` + `tests/test_cotizaciones_responsivo_5nov.py` (vigila letra ≥ 12 px, contraste y que todo vaya bajo `.cot-lista`). Antes → después medido en la lista de cotizaciones: a 1280 la tabla medía 1354 px en un contenedor de 1018 (la columna Acciones quedaba fuera); en celular cada tarjeta medía 342–431 px con letra de 10–11,5 px; ahora cabe y miden 187–272 px sin letra menor a 12 px.
+- **Deuda conocida (por fases):** las otras pantallas con `.table-mobile-cards` (Usuarios y roles, Facturas de proveedor, Hallazgos, Inquietudes, Cotizaciones de transporte, Incidencias, Retiros) todavía usan la tarjeta gigante de `mobile.css`. Se llevan al patrón compacto una por una, con su prueba; no se toca `mobile.css` en bloque.
+
+---
+
+_Última actualización: 2026-11-05_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

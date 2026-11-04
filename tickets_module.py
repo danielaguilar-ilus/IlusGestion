@@ -4524,7 +4524,9 @@ def register_tickets_routes(app, ctx):
             '<div style="text-align:right;">'
             '<div style="font-size:15px;font-weight:800;color:#ffffff;letter-spacing:-.01em;">COTIZACIÓN</div>'
             f'<div style="font-size:19px;font-weight:900;color:#dc2626;line-height:1.15;">N&#176; {_footer_numero}</div>'
-            f'<div style="font-size:7.5px;color:#9ca3af;margin-top:1px;">FECHA EMISIÓN: {_header_fecha}</div>'
+            # 2026-11-05: la fecha de emisión pasa de 7,5 a 10 px (auditoría de diseño: ilegible). Es la columna derecha del banner (≈ 12 mm de
+            # alto frente a los 20 mm de la caja del logo SPHS), así que el alto del header, calibrado abajo, no cambia.
+            f'<div style="font-size:10px;color:#9ca3af;margin-top:1px;">FECHA EMISIÓN: {_header_fecha}</div>'
             '</div></div>'
             '<div style="height:2mm;background:linear-gradient(90deg,#dc2626 0 25%,#0a0a0a 25% 100%);'
             '-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>'

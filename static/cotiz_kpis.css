@@ -30,8 +30,8 @@
 
 .ck-head{display:flex;align-items:center;justify-content:space-between;
   gap:14px;flex-wrap:wrap;margin-bottom:15px}
-.ck-title{display:flex;align-items:center;gap:8px;font-size:.6rem;font-weight:800;
-  letter-spacing:.18em;text-transform:uppercase;color:#8b8b93}
+.ck-title{display:flex;align-items:center;gap:8px;font-size:.75rem;font-weight:800;
+  letter-spacing:.12em;text-transform:uppercase;color:#8b8b93}
 .ck-title i{color:var(--ilus-red,#dc2626);font-size:.8rem;letter-spacing:0}
 .ck-title b{color:#fff;font-weight:800;letter-spacing:.14em}
 
@@ -39,7 +39,7 @@
 .ck-per{display:flex;gap:5px;flex-wrap:wrap}
 .ck-p{display:inline-flex;align-items:center;min-height:30px;padding:5px 13px;
   border-radius:99px;border:1px solid rgba(255,255,255,.16);background:transparent;
-  color:#a1a1aa;font-weight:700;font-size:.71rem;text-decoration:none;
+  color:#a1a1aa;font-weight:700;font-size:.78rem;text-decoration:none;
   letter-spacing:.03em;transition:all .18s;white-space:nowrap}
 .ck-p:hover{color:#fff;border-color:rgba(255,255,255,.42)}
 .ck-p.on{background:#fff;border-color:#fff;color:#0a0a0a;font-weight:800}
@@ -50,9 +50,8 @@
 .ck-c{--c:transparent;position:relative;display:flex;flex-direction:column;gap:4px;
   padding:2px 18px;border-left:1px solid rgba(255,255,255,.09)}
 .ck-c:first-child{border-left:0;padding-left:0}
-.ck-c .k{display:flex;align-items:center;gap:7px;font-size:.58rem;font-weight:800;
-  letter-spacing:.15em;text-transform:uppercase;color:#8b8b93;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis}
+.ck-c .k{display:flex;align-items:center;gap:7px;font-size:.75rem;font-weight:800;line-height:1.2;
+  letter-spacing:.08em;text-transform:uppercase;color:#8b8b93}
 /* el "color" es un punto de 5px, no un fondo ni una barra */
 .ck-c .k::before{content:"";width:5px;height:5px;border-radius:50%;
   background:var(--c);flex:none}
@@ -60,8 +59,8 @@
 .ck-c .v{font-family:'Barlow Condensed',system-ui,-apple-system,sans-serif;
   font-size:2.05rem;font-weight:800;line-height:.98;color:#fff;
   letter-spacing:.005em;font-variant-numeric:tabular-nums}
-.ck-c .v.na{color:#52525b}
-.ck-c .s{font-size:.7rem;color:#8b8b93;font-weight:500;
+.ck-c .v.na{color:#a1a1aa}
+.ck-c .s{font-size:.75rem;color:#8b8b93;font-weight:500;
   display:flex;align-items:center;gap:5px;letter-spacing:.01em}
 .ck-c .s i{font-size:.68rem}
 
@@ -76,7 +75,7 @@
 
 /* Margen 0: es la política vigente, no una alarma. Se dice en gris. */
 .c-mar.is-cero .v{color:#a1a1aa}
-.c-mar.is-cero .s{color:#71717a}
+.c-mar.is-cero .s{color:#a1a1aa}
 
 @media (max-width:900px){
   .ck-c{padding:10px 0;border-left:0;border-top:1px solid rgba(255,255,255,.09)}
