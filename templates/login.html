@@ -285,6 +285,9 @@ body{background:#0a0a0a;}
         </button>
       </form>
 
+      {# 2026-11-05: Face ID / huella (modo adicional; la contraseña sigue igual) #}
+      {% include '_passkeys_login.html' ignore missing %}
+
       <div class="text-center mt-2 mb-1">
         <a href="{{ url_for('forgot_password') }}"
            style="color:#777;font-size:.8rem;text-decoration:none;transition:color .2s"

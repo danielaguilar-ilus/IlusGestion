@@ -1,0 +1,56 @@
+{# 🔐 Face ID / huella en Mi cuenta (05-nov-2026, Daniel: «allí, donde salen mis datos, necesito controlar lo del Face ID»).
+   Se incluye desde mi_cuenta.html. Lo maneja static/ilus_passkeys.js (iniciarMiCuenta). Es un modo ADICIONAL: la contraseña sigue igual. #}
+{% if passkeys_activas %}
+<div class="mc-card" id="faceid">
+  <div class="mc-card-h">
+    <i class="bi bi-fingerprint" style="color:#dc2626;font-size:1.2rem"></i>
+    <div>
+      <h6>Entrar con Face ID / huella</h6>
+      <div class="small">Desbloquea ILUS con la seguridad de tu teléfono, sin escribir la contraseña</div>
+    </div>
+  </div>
+  <div class="mc-card-b" id="pkCard" data-estado="cargando">
+    <div class="pk-ctrl">
+      <div class="form-check form-switch pk-switch">
+        <input class="form-check-input" type="checkbox" role="switch" id="pkSwitch" disabled aria-describedby="pkEstado">
+        <label class="form-check-label" for="pkSwitch">Usar Face ID / huella en este dispositivo</label>
+      </div>
+      <div class="pk-estado" id="pkEstado" aria-live="polite">Comprobando tu dispositivo…</div>
+    </div>
+    <p class="pk-aviso" id="pkAviso" hidden><i class="bi bi-info-circle"></i> Para activarlo, abre ILUS desde tu celular (en Safari o Chrome) o desde la app instalada. Este navegador no lo permite.</p>
+    <h6 class="pk-sub">Tus dispositivos con Face ID / huella</h6>
+    <ul class="pk-lista" id="pkLista"><li class="pk-vacio">Cargando…</li></ul>
+    <p class="pk-nota"><i class="bi bi-shield-check"></i> Tu contraseña sigue funcionando siempre. ILUS guarda solo una llave pública: tu cara y tu huella nunca salen del teléfono.</p>
+  </div>
+</div>
+<style>
+  #pkCard .pk-ctrl{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;padding:14px 16px;border:1.5px solid #e5e7eb;border-radius:14px;background:#fff}
+  #pkCard[data-estado="si"] .pk-ctrl{border-color:#86efac;background:#f0fdf4}
+  #pkCard .pk-switch{display:flex;align-items:center;gap:12px;margin:0;padding:0;min-height:44px}
+  /* mobile.css fuerza 22 px a TODA casilla en el celular (!important) y eso deforma el interruptor: acá se pide el tamaño del interruptor. */
+  #pkCard .pk-switch .form-check-input{float:none;margin:0 !important;width:3.1rem !important;height:1.7rem !important;cursor:pointer;flex:0 0 auto}
+  #pkCard .pk-switch .form-check-label{padding:0 !important;line-height:1.3 !important}
+  #pkCard .pk-switch .form-check-input:checked{background-color:#16a34a;border-color:#16a34a}
+  #pkCard .pk-switch .form-check-label{font-weight:800;font-size:.95rem;color:#111827;cursor:pointer}
+  #pkCard .pk-estado{font-size:.84rem;color:#4b5563;font-weight:600}
+  #pkCard[data-estado="si"] .pk-estado{color:#166534}
+  #pkCard .pk-aviso{margin:12px 0 0;padding:10px 14px;border-radius:12px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:.84rem;line-height:1.35}
+  #pkCard .pk-sub{margin:18px 0 8px;font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#6b7280}
+  #pkCard .pk-lista{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  #pkCard .pk-disp{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #e5e7eb;border-radius:12px;background:#fff}
+  #pkCard .pk-disp > i{font-size:1.3rem;color:#374151;flex:0 0 auto}
+  #pkCard .pk-disp-t{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
+  #pkCard .pk-disp-t b{font-size:.92rem;color:#111827}
+  #pkCard .pk-disp-t span{font-size:.78rem;color:#6b7280}
+  #pkCard .pk-este{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:#dcfce7;color:#166534;font-size:.68rem;font-weight:800;vertical-align:middle}
+  #pkCard .pk-quitar{flex:0 0 auto;min-height:44px;padding:0 14px;border:1.5px solid #fecaca;border-radius:10px;background:#fff;color:#b91c1c;font-weight:700;font-size:.84rem;display:inline-flex;align-items:center;gap:6px}
+  #pkCard .pk-quitar:hover{background:#fef2f2}
+  #pkCard .pk-vacio{padding:12px 14px;border:1px dashed #d1d5db;border-radius:12px;color:#6b7280;font-size:.86rem}
+  #pkCard .pk-nota{margin:14px 0 0;font-size:.78rem;color:#6b7280;line-height:1.4}
+  #pkCard .pk-nota i{color:#16a34a}
+  @media (max-width: 575px){
+    #pkCard .pk-disp{flex-wrap:wrap}
+    #pkCard .pk-quitar{width:100%;justify-content:center}
+  }
+</style>
+{% endif %}
