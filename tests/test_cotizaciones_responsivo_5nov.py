@@ -127,6 +127,13 @@ class TestLetraYContraste(unittest.TestCase):
         self.assertEqual(malos, [], "letra en línea de menos de 12 px en cotizaciones.html: %r" % (malos,))
         self.assertIn("padding:3px 12px;font-size:.8rem;font-weight:800;margin-left:8px", HTML, "el chip de la UF quedó en .8rem como en celular")
 
+    def test_las_ayudas_del_asistente_no_se_encogen_bajo_12_px(self):
+        """«(automática)», «(auto, editable)» y «(opcional)» del asistente medían 10,8 px en producción: `.9em` dentro de una etiqueta de 12 px. Un tamaño
+        en `em` hereda del padre y la prueba de `rem` no lo veía. Ahora `1em` (la misma letra de su etiqueta) y no queda ningún `em` menor a 1 en la hoja."""
+        por_sel = {sel: props for sel, props in _reglas(CSS)}
+        self.assertEqual(por_sel[".cot-wiz-auto"]["font-size"], "1em")
+        self.assertEqual(re.findall(r"font-size:\s*0?\.\d+em", CSS), [], "tamaños en em menores a 1: heredan del padre y pueden bajar de 12 px")
+
     def test_los_grises_de_texto_sobre_blanco_ya_no_son_9ca3af(self):
         por_sel = {sel: props for sel, props in _reglas(CSS)}
         self.assertEqual(por_sel[".tk-row-uf"]["color"], "#6b7280", "las UF bajo el total: 2,5:1 antes, 4,8:1 ahora")
