@@ -22,7 +22,7 @@ def _tarea(tid, titulo, tipo, valor, maquina=None, opciones=None):
 
 
 def _razones(filas, excluir=None):
-    amb = FA.cargar(["_ot_hallazgos_sin_foto_razones"], extra={
+    amb = FA.cargar(["_ot_hallazgos_sin_foto_tareas", "_ot_hallazgos_sin_foto_razones"], extra={
         "mysql_fetchall": lambda *a, **k: filas, "_oh": OH, "_ot_tarea_no_trabajable_sql": lambda p: ""})
     return amb["_ot_hallazgos_sin_foto_razones"](7, excluir)
 

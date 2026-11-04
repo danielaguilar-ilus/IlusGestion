@@ -85342,24 +85342,39 @@ def _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas=None):
     return razones
 
 
-def _ot_hallazgos_sin_foto_razones(vid, excluir_maquinas=None):
-    """Razones (lista de textos) por los hallazgos de la OT que no tienen NINGUNA foto en su tarea. Usa la MISMA definición de hallazgo que la
-    tarjeta «Hallazgos de esta OT» (ot_hallazgos.evaluar_tarea: Falla/Alerta de verificación y opción de resultado distinta de «Apto»;
-    «No aplica» no cuenta). Las tareas de equipos excluidos del cierre (fuera de servicio, de baja, saltados) no se exigen."""
+def _ot_hallazgos_sin_foto_tareas(vid, excluir_maquinas=None):
+    """Los hallazgos de la OT que no tienen NINGUNA foto en su tarea, con el equipo al que pertenecen:
+    [{id, titulo, maquina_id, maquina_nombre, ...}]. Usa la MISMA definición de hallazgo que la tarjeta «Hallazgos de esta OT»
+    (ot_hallazgos.evaluar_tarea: Falla/Alerta de verificación y opción de resultado distinta de «Apto»; «No aplica» no cuenta). Las tareas
+    de equipos excluidos del cierre (fuera de servicio, de baja, saltados) no se exigen.
+    Fuente única de lo que exige la firma (_ot_hallazgos_sin_foto_razones) y de lo que el aviso previo le muestra al técnico
+    (/puede-firmar: en qué equipo y en qué tarea falta, para llevarlo allí)."""
     filas = mysql_fetchall(
-        "SELECT t.id, t.titulo, t.maquina_id, t.tipo_respuesta, t.valor_json, t.opciones_lista_json "
+        "SELECT t.id, t.titulo, t.maquina_id, MAX(m.nombre) AS maquina_nombre, t.tipo_respuesta, t.valor_json, t.opciones_lista_json "
         "  FROM mant_visita_tareas t LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
+        "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
         " WHERE t.visita_id=%s AND t.tipo_respuesta IN ('verificacion','lista') AND t.valor_json IS NOT NULL "
         + _ot_tarea_no_trabajable_sql("t.") +
         " GROUP BY t.id HAVING COUNT(f.id) = 0", (vid,)) or []
     excl = {int(x) for x in (excluir_maquinas or []) if x}
-    sin = [t for t in filas
-           if not (t.get("maquina_id") and int(t["maquina_id"]) in excl) and _oh.evaluar_tarea(t)]
+    return [t for t in filas
+            if not (t.get("maquina_id") and int(t["maquina_id"]) in excl) and _oh.evaluar_tarea(t)]
+
+
+def _ot_hallazgos_sin_foto_razones(vid, excluir_maquinas=None):
+    """Razones (lista de textos) por los hallazgos de la OT que no tienen NINGUNA foto en su tarea (ver _ot_hallazgos_sin_foto_tareas).
+    📸 2026-11-04 (OT-2026-00359: «dice que está completo pero también incompleto»): el texto dice EN QUÉ EQUIPO está cada tarea; antes solo
+    traía los títulos y con 15 equipos de plantillas parecidas nadie sabía dónde buscar."""
+    sin = _ot_hallazgos_sin_foto_tareas(vid, excluir_maquinas)
     if not sin:
         return []
-    nombres = [str(t.get("titulo") or f"#{t['id']}")[:80] for t in sin[:5]]
+    nombres = []
+    for t in sin[:5]:
+        tit = str(t.get("titulo") or f"#{t['id']}")[:80]
+        eq = str(t.get("maquina_nombre") or "").strip()[:80]
+        nombres.append(f"{eq} — {tit}" if eq else tit)
     suf = "" if len(sin) <= 5 else f" y {len(sin)-5} más"
-    return [f"Falta la foto de evidencia en {len(sin)} hallazgo(s) (falla o alerta del checklist): {', '.join(nombres)}{suf}. "
+    return [f"Falta la foto de evidencia en {len(sin)} hallazgo(s) (falla o alerta del checklist): {'; '.join(nombres)}{suf}. "
             "Sube al menos una foto en cada tarea marcada."]
 
 
@@ -139335,6 +139350,15 @@ def mant_ot_puede_firmar(vid):
         if _razones:
             _diag_efec, _origen = _ot_diagnostico_efectivo(vid)
             _falta_diag = len(_diag_efec) < _OT_DIAG_MIN_CHARS
+            # 📸 2026-11-04 (OT-2026-00359): dónde está cada hallazgo sin foto (equipo y tarea), para que la pantalla lleve al técnico
+            # hasta allí en vez de dejarlo con una lista de títulos sueltos. Fail-open: si no se puede armar, queda el texto de siempre.
+            _pend_foto = []
+            try:
+                _pend_foto = [{"tarea_id": t.get("id"), "maquina_id": t.get("maquina_id"),
+                               "equipo": str(t.get("maquina_nombre") or "").strip(), "titulo": str(t.get("titulo") or "")}
+                              for t in _ot_hallazgos_sin_foto_tareas(vid, excluir_maquinas)]
+            except Exception as _e_pf:
+                print(f"[puede_firmar] hallazgos sin foto vid={vid}: {_e_pf}", flush=True)
             return jsonify({
                 "ok": True, "puede_firmar": False,
                 "error_codigo": "DIAGNOSTICO_O_FOTOS_FALTANTES",
@@ -139344,6 +139368,8 @@ def mant_ot_puede_firmar(vid):
                             if _falta_diag else
                             "Hay tareas que piden foto y todavía no la tienen."),
                 "faltantes": _razones,
+                "pendientes": _pend_foto,
+                "primer_equipo_id": (_pend_foto[0]["maquina_id"] if _pend_foto else None),
                 "falta_diagnostico": _falta_diag,
                 "diagnostico_largo": len(_diag_efec),
                 "diagnostico_min": _OT_DIAG_MIN_CHARS,
