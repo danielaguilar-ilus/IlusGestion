@@ -113,7 +113,7 @@
       p.hidden = p.getAttribute('data-panel') !== t;
     });
     $('flBtnSolicitud').hidden = t !== 'solicitudes';
-    $('flBtnNuevo').hidden = t !== 'vehiculos' || !PERM.admin;        // agregar vehículos y choferes: solo el superadministrador
+    $('flBtnNuevo').hidden = t !== 'vehiculos' || !PERM.admin;        // agregar vehículos y choferes: superadministrador o llave «administrar»
     $('flBtnChofer').hidden = t !== 'choferes' || !PERM.admin;
     try { history.replaceState(null, '', '#' + t); } catch (e) { /* sin historial: no importa */ }
     if (t === 'solicitudes' && S.vista === 'calendario') cargarCal();
@@ -186,10 +186,13 @@
   function pill(s) {
     return '<span class="fl-est fl-est--' + esc(s.estado) + '"><i class="bi ' + (ICONOS[s.estado] || 'bi-circle') + '"></i>' + esc(s.estado_texto) + '</span>';
   }
+  /* «Llaves de hoy»: confirmadas cuya llave se entrega hoy (la llave solo se entrega el día de la reserva, 03-nov-2026). */
+  function esLlaveHoy(s) { return s.estado === 'confirmada' && !!(s.llave_dia && s.llave_dia.ok); }
   function solFiltradas() {
     var q = norm(S.solQ);
     return S.sol.filter(function (s) {
-      if (S.solEstado !== 'todas' && s.estado !== S.solEstado) return false;
+      if (S.solEstado === 'llave_hoy') { if (!esLlaveHoy(s)) return false; }
+      else if (S.solEstado !== 'todas' && s.estado !== S.solEstado) return false;
       if (S.solVeh && String(s.vehiculo.id) !== S.solVeh) return false;
       if (!q) return true;
       return norm([s.numero, s.vehiculo.patente_fmt, s.vehiculo.titulo, s.area, s.solicitante, s.chofer.nombre, s.motivo].join(' ')).indexOf(q) >= 0;
@@ -210,15 +213,26 @@
     if (p.cancelar) b.push('<button type="button" class="fl-btn fl-btn--peligro" data-acc="cancelar"><i class="bi bi-x-circle"></i>Cancelar</button>');
     return b.join('');
   }
+  /* SLA de respuesta (03-nov-2026): cuánto tarda la gestión en confirmar o cancelar, contando solo el horario de llaves. */
+  function chipResp(s) {
+    var r = s.sla_respuesta;
+    if (!r || (s.estado !== 'solicitada' && r.estado === 'a_tiempo')) return '';
+    return '<span class="fl-resp fl-resp--' + esc(r.estado) + '"><i class="bi bi-stopwatch"></i>' + esc(r.texto) + '</span>';
+  }
+  function semaforoFila(s) {      // franja de color a la izquierda, como el Monitor de Retiros
+    if (s.sla && (s.sla.estado === 'critica' || s.sla.estado === 'atrasada')) return 'fl-sem--alerta';
+    if (s.sla_respuesta && s.sla_respuesta.estado === 'atrasada') return 'fl-sem--alerta';
+    return 'fl-sem--' + s.estado;
+  }
   function filaSol(s) {
-    return '<tr class="' + (s.estado === 'cancelada' ? 'inhab' : '') + '" data-id="' + s.id + '">' +
+    return '<tr class="' + semaforoFila(s) + (s.estado === 'cancelada' ? ' inhab' : '') + '" data-id="' + s.id + '">' +
       '<td class="fl-td-veh"><span class="fl-num">' + esc(s.numero) + '</span><span class="fl-sub">Sellada el ' + esc(s.sello_fmt) + '</span></td>' +
       '<td data-label="Vehículo"><span class="fl-pat">' + esc(s.vehiculo.patente_fmt) + '</span><span class="fl-tit">' + esc(s.vehiculo.titulo) + '</span></td>' +
       '<td data-label="Cuándo"><b class="fl-cuando">' + esc(s.rango_texto) + '</b></td>' +
       '<td data-label="Área y quién pidió"><b>' + esc(s.area) + '</b><span class="fl-sub">Pidió ' + esc(s.solicitante || '—') + '</span>' +
       '<span class="fl-sub">' + esc(s.motivo) + '</span></td>' +
       '<td data-label="Chofer">' + esc(s.chofer.nombre) + (s.chofer.telefono ? '<span class="fl-sub">' + esc(s.chofer.telefono) + '</span>' : '') + '</td>' +
-      '<td data-label="Estado">' + pill(s) + estadoExtra(s) + chipSla(s) + '</td>' +
+      '<td data-label="Estado">' + pill(s) + estadoExtra(s) + chipSla(s) + chipResp(s) + chipPlanReal(s) + '</td>' +
       '<td data-label="Acciones"><div class="fl-acc">' + botonesFila(s) + '</div></td></tr>';
   }
   /* SLA de la llave (Daniel, 02-nov-2026): lo calcula el servidor contando solo el horario de entrega. */
@@ -236,6 +250,8 @@
   }
   function pintarSolLista() {
     var lista = solFiltradas();
+    var nHoy = S.sol.filter(esLlaveHoy).length;
+    escribir($('flChipLlaveHoyN'), nHoy ? String(nHoy) : '');
     if (!S.sol.length) {
       pintarSolVacio(S.solVista === 'pasadas' ? 'No hay solicitudes pasadas' : 'Aún no hay solicitudes por delante',
         S.veh.length ? 'Crea la primera con «Nueva solicitud».' : 'Primero agrega un vehículo y un chofer; después podrás reservar.');
@@ -340,6 +356,13 @@
     if (iso === s.fecha_hasta) return 'hasta ' + s.hora_hasta;
     return 'todo el día';
   }
+  /* La hora dentro del bloque de la semana: «08:00», «–» y «13:00» por separado, para que en una pista angosta quede
+     «08:00» arriba y «13:00» abajo, enteras (nunca «08:» / «13:0» cortadas). */
+  function horaBloque(s, iso) {
+    var t = horaEnDia(s, iso), i = t.indexOf('–');
+    if (i < 0) return '<span class="fla-b-h">' + esc(t) + '</span>';
+    return '<span class="fla-b-h">' + esc(t.slice(0, i)) + '</span><span class="fla-b-sep">–</span><span class="fla-b-h">' + esc(t.slice(i + 1)) + '</span>';
+  }
   function tramo(s, iso) {        // minutos [a, b) que la reserva ocupa ese día
     return [s.fecha === iso ? minutos(s.hora_desde) : 0, s.fecha_hasta === iso ? minutos(s.hora_hasta) : 1440];
   }
@@ -381,7 +404,7 @@
     for (var i = 0; i < 15; i++) {
       var iso = sumarDias(ahora.iso, i), d = diaInfo(iso);
       if (d.no_laboral) continue;
-      var desde = i === 0 ? Math.ceil(minutos(ahora.hm) / 30) * 30 : 0;
+      var desde = Math.max(i === 0 ? Math.ceil(minutos(ahora.hm) / 30) * 30 : 0, cierre24(iso));
       var h = huecosDia(vid, iso, desde);
       if (h.length) return { iso: iso, a: h[0][0], b: h[0][1] };
     }
@@ -518,6 +541,8 @@
       html += '<div class="fla-col' + (d.no_laboral ? ' nolab' : '') + (iso === ahora.iso ? ' hoy' : '') + '">';
       vehs.forEach(function (v) {
         html += '<div class="fla-pista" data-dia="' + iso + '" data-veh="' + v.id + '" data-ini="' + R[0] + '" title="Toca para pedir ' + esc(v.patente_fmt) + ' a esa hora">';
+        var c24 = iso >= ahora.iso ? Math.min(cierre24(iso), R[1]) : 0;
+        if (c24 > R[0]) html += '<span class="fla-c24" style="height:' + ((c24 - R[0]) / 60 * PX_HORA) + 'px" title="Se pide con al menos ' + antelacionH() + ' horas de anticipación"><b><i class="bi bi-hourglass-split"></i>' + antelacionH() + ' h</b></span>';
         if (iso < ahora.iso || (iso === ahora.iso)) {
           var pasadoHasta = iso < ahora.iso ? R[1] : Math.min(R[1], Math.max(R[0], minutos(ahora.hm)));
           if (pasadoHasta > R[0]) html += '<span class="fla-pasado" style="height:' + ((pasadoHasta - R[0]) / 60 * PX_HORA) + 'px"></span>';
@@ -531,8 +556,8 @@
           html += '<button type="button" class="fla-b fla-a--' + k + ' fla-e--' + esc(s.estado) + slaCls + (atenuada ? ' tenue' : '') + (h < 34 ? ' corta' : '') + '" data-id="' + s.id + '" ' +
             'style="top:' + ((a - R[0]) / 60 * PX_HORA) + 'px;height:' + Math.max(h, 16) + 'px" ' +
             'title="' + esc(s.numero + ' · ' + s.vehiculo.patente_fmt + ' · ' + horaEnDia(s, iso) + ' · ' + s.area + ' · chofer ' + s.chofer.nombre + ' · ' + s.estado_texto + (s.sla ? ' · ' + s.sla.texto : '')) + '" ' +
-            'aria-label="' + esc(s.numero + ', ' + s.vehiculo.patente_fmt + ', ' + horaEnDia(s, iso) + ', ' + s.area) + '">' +
-            '<span class="fla-b-t">' + (s.estado === 'llave_entregada' ? '<i class="bi bi-key-fill"></i>' : (s.estado === 'solicitada' ? '<i class="bi bi-hourglass-split"></i>' : '')) + esc(horaEnDia(s, iso)) + '</span>' +
+            'aria-label="' + esc(s.numero + ', ' + s.vehiculo.patente_fmt + ', ' + horaEnDia(s, iso) + ', ' + s.area + ', chofer ' + s.chofer.nombre + ', ' + s.estado_texto) + '">' +
+            '<span class="fla-b-t">' + (s.estado === 'llave_entregada' ? '<i class="bi bi-key-fill"></i>' : (s.estado === 'solicitada' ? '<i class="bi bi-hourglass-split"></i>' : '')) + horaBloque(s, iso) + '</span>' +
             '<span class="fla-b-a">' + esc(s.area) + '</span><span class="fla-b-c">' + esc(s.chofer.nombre) + '</span></button>';
         });
         html += '<span class="fla-fantasma" aria-hidden="true"></span></div>';
@@ -552,7 +577,7 @@
       var d = diaInfo(iso), items = solDelDia(iso).filter(pasaFiltro).sort(function (p, q) { return p.inicio < q.inicio ? -1 : 1; });
       html += '<div class="fla-ld' + (d.no_laboral ? ' nolab' : '') + (iso === ahora.iso ? ' hoy' : '') + '"><div class="fla-ld-cab"><span><b>' + DIAS_LARGO[i] + (iso === ahora.iso ? ' · hoy' : '') + '</b>' +
         '<span>' + esc(fechaCorta(iso)) + (d.nombre ? ' · Feriado: ' + esc(d.nombre) : (d.no_laboral ? ' · No laboral' : '')) + '</span></span>' +
-        (iso >= ahora.iso ? '<button type="button" class="fl-btn fl-btn--chico" data-pedir="' + iso + '"><i class="bi bi-calendar-plus"></i>Pedir</button>' : '') + '</div>';
+        (iso >= ahora.iso ? (diaCerrado24(iso) ? '<span class="fla-ld-24" title="Se pide con al menos ' + antelacionH() + ' horas de anticipación"><i class="bi bi-hourglass-split"></i>' + antelacionH() + ' h de aviso</span>' : '<button type="button" class="fl-btn fl-btn--chico" data-pedir="' + iso + '"><i class="bi bi-calendar-plus"></i>Pedir</button>') : '') + '</div>';
       html += items.length ? items.map(function (s) {
         var v = vehPorId(s.vehiculo.id), k = areaKey(s.area);
         return '<button type="button" class="fla-lr fla-a--' + k + '" data-id="' + s.id + '">' + vehFoto(v, 'fla-lr-foto') +
@@ -638,6 +663,8 @@
   function pedirEnPista(pista, clientY) {
     var iso = pista.getAttribute('data-dia'), vid = pista.getAttribute('data-veh'), a = minutoEnPista(pista, clientY), ahora = ahoraCL();
     if (iso < ahora.iso || (iso === ahora.iso && a + 30 <= minutos(ahora.hm))) { toast('Ese horario ya pasó. Elige uno desde ahora en adelante.', 'warning'); return; }
+    var l24 = limite24Base();
+    if (l24 && (iso + 'T' + hhmm(a)) < l24) { toast('Se pide con al menos ' + antelacionH() + ' horas de anticipación: el primer horario disponible es ' + limiteTexto(l24) + '.', 'warning'); return; }
     var siguiente = 1440;
     solDelDia(iso).forEach(function (s) {
       if (String(s.vehiculo.id) !== String(vid)) return;
@@ -687,6 +714,52 @@
 
   /* ═══ SOLICITUDES · DETALLE Y ACCIONES DE LA GESTIÓN ═══ */
   function bloqueDet(titulo, cuerpo) { return '<div class="fl-det-b"><span class="fl-det-t">' + esc(titulo) + '</span><div>' + cuerpo + '</div></div>'; }
+  /* Lo planeado contra lo real al retirar y al devolver (Daniel, 03-nov-2026: «qué tan fuera del plan maneja los tiempos cada quien»). */
+  function chipPlanReal(s) {
+    var pr = s.plan_real || {}, out = '';
+    if (pr.retiro) out += '<span class="fl-dsv fl-dsv--' + esc(pr.retiro.estado) + '">Retiró: ' + esc(pr.retiro.texto.toLowerCase()) + '</span>';
+    if (pr.devolucion) out += '<span class="fl-dsv fl-dsv--' + esc(pr.devolucion.estado) + '">Devolvió: ' + esc(pr.devolucion.texto.toLowerCase()) + '</span>';
+    return out;
+  }
+  /* Guía de la solicitud (Daniel, 03-nov-2026: «quiero como un proceso completo, acompáñame a gestionarlo»): los cuatro pasos con su
+     semáforo (verde hecho, rojo el que toca, gris lo que viene), quién y cuándo, y el botón del paso que toca. Mismo lenguaje que la
+     guía de Retiros (REGLA #15). Confirmar no es obligatorio en el acto: la reserva queda pedida y ocupa su horario hasta que alguien
+     la confirme o la cancele. */
+  function guiaSolicitud(s) {
+    var p = s.puede || {}, est = s.estado, cancel = est === 'cancelada';
+    var hecho = { pedida: true, confirmada: !!s.confirmada_por, llave: !!s.llave_por || est === 'devuelta', devuelta: est === 'devuelta' };
+    var actual = cancel ? '' : (!hecho.confirmada ? 'confirmada' : (!hecho.llave ? 'llave' : (!hecho.devuelta ? 'devuelta' : '')));
+    function paso(n, clave, titulo, cuerpo, boton) {
+      var cls = hecho[clave] ? 'ok' : (clave === actual ? 'actual' : (cancel ? 'off' : 'pend'));
+      return '<li class="fl-guia-p ' + cls + '"><span class="fl-guia-n" aria-hidden="true">' + (hecho[clave] ? '<i class="bi bi-check-lg"></i>' : n) + '</span>' +
+        '<div class="fl-guia-c"><b>' + esc(titulo) + '</b>' + cuerpo + (boton && clave === actual ? '<div class="fl-guia-acc">' + boton + '</div>' : '') + '</div></li>';
+    }
+    var sub = function (t) { return t ? '<span class="fl-sub">' + esc(t) + '</span>' : ''; };
+    var r = s.sla_respuesta, dia = s.llave_dia || {};
+    var h = '<ol class="fl-guia" aria-label="Pasos de la solicitud">';
+    h += paso(1, 'pedida', 'Pedida', sub('Pidió ' + (s.solicitante || '—') + ' · ' + s.sello_fmt) +
+      (r ? '<span class="fl-resp fl-resp--' + esc(r.estado) + '"><i class="bi bi-stopwatch"></i>' + esc(r.texto) + '</span>' : ''));
+    h += paso(2, 'confirmada', 'Confirmar la reserva',
+      hecho.confirmada ? sub(s.confirmada_por + ' · ' + s.confirmada_fmt)
+        : sub('El vehículo y el chofer quedaron libres en ese horario: no hay choques. Puedes confirmarla ahora o dejarla pendiente; ' +
+              'mientras esté pedida, nadie más toma ese horario.'),
+      p.confirmar ? '<button type="button" class="fl-btn fl-btn--ok" data-dacc="confirmar"><i class="bi bi-check-circle"></i>Confirmar</button>' : '');
+    var cuerpoLlave = hecho.llave ? sub((s.llave_por || '') + ' · ' + (s.llave_fmt || '')) + (s.plan_real && s.plan_real.retiro
+        ? '<span class="fl-dsv fl-dsv--' + esc(s.plan_real.retiro.estado) + '">Retiró: ' + esc(s.plan_real.retiro.texto.toLowerCase()) + '</span>' : '')
+      : sub(dia.texto || '') + sub('Horario de llaves: lunes a viernes de 08:00 a 13:00 y de 14:00 a 17:00.') + chipSla(s);
+    h += paso(3, 'llave', 'Entregar la llave a ' + s.chofer.nombre, cuerpoLlave,
+      p.llave ? '<button type="button" class="fl-btn fl-btn--llave" data-dacc="llave"><i class="bi bi-key"></i>Llave entregada</button>' : '');
+    var dv = s.devolucion;
+    h += paso(4, 'devuelta', 'Devolución con evidencia',
+      dv ? sub(miles(dv.km) + ' km · combustible ' + (dv.combustible_texto || '—') + (dv.novedad ? ' · con novedad' : ' · sin novedad')) + sub((dv.por || '') + ' · ' + (dv.fmt || '')) +
+          (s.plan_real && s.plan_real.devolucion ? '<span class="fl-dsv fl-dsv--' + esc(s.plan_real.devolucion.estado) + '">Devolvió: ' + esc(s.plan_real.devolucion.texto.toLowerCase()) + '</span>' : '')
+        : sub('Kilometraje (no puede ser menor al último), combustible y cuatro fotos. Se puede hacer desde el celular.'),
+      p.devolver ? '<button type="button" class="fl-btn fl-btn--dev" data-dacc="devolver"><i class="bi bi-box-arrow-in-down"></i>Registrar devolución</button>' : '');
+    h += '</ol>';
+    if (cancel) h += '<div class="fl-guia-cancel"><i class="bi bi-x-octagon"></i>Cancelada por ' + esc(s.cancelada_por || '—') + ' · ' + esc(s.cancelada_fmt || '') +
+      (s.cancelada_motivo ? '<span>' + esc(s.cancelada_motivo) + '</span>' : '') + '</div>';
+    return h;
+  }
   function pintarDetalle(s, eventos, fotos) {
     $('flModalSolDetTitulo').textContent = 'Solicitud ' + s.numero;
     var ex = '';
@@ -698,6 +771,7 @@
     if (s.modificada_por) ex += bloqueDet('Última modificación', esc(s.modificada_por) + '<span class="fl-sub">' + esc(s.modificada_fmt) + '</span>');
     $('flSolDetCuerpo').innerHTML =
       '<div class="fl-det-cab"><span class="fl-num">' + esc(s.numero) + '</span>' + pill(s) + '</div>' +
+      guiaSolicitud(s) +
       '<div class="fl-det-grid">' +
       bloqueDet('Vehículo', '<span class="fl-pat">' + esc(s.vehiculo.patente_fmt) + '</span><span class="fl-tit">' + esc(s.vehiculo.titulo) + '</span>') +
       bloqueDet('Cuándo', '<b class="fl-cuando">' + esc(s.rango_texto) + '</b><span class="fl-sub">' + esc(duracionTexto(s.inicio, s.fin)) + '</span>') +
@@ -723,6 +797,18 @@
       if (!d.ok) { $('flSolDetCuerpo').innerHTML = '<div class="text-danger">' + esc(d.error || 'No se pudo leer la solicitud.') + '</div>'; $('flSolDetAcc').innerHTML = ''; return; }
       S.det = d.solicitud;
       pintarDetalle(d.solicitud, d.eventos, d.fotos_devolucion);
+    });
+  }
+  /* El botón de cada correo de la flota trae ?sol=<id> (Daniel, 03-nov-2026: «que el botón del correo lo lleve al link donde tiene
+     que devolver el camión»): con la llave entregada y permiso de devolver abre DIRECTO la devolución; si no, el detalle. */
+  function abrirDesdeEnlace() {
+    var id = parseInt(new URLSearchParams(location.search).get('sol') || '', 10);
+    if (!id) return;
+    try { history.replaceState(null, '', location.pathname + '#solicitudes'); } catch (e) { /* nada */ }
+    api(API + '/solicitudes/' + id).then(function (d) {
+      if (!d.ok || !d.solicitud) { toast(d.error || 'No encontré esa solicitud.', 'warning'); return; }
+      if (d.solicitud.puede && d.solicitud.puede.devolver) abrirDevolucion(d.solicitud);
+      else abrirDetalle(id);
     });
   }
   function abrirDetalle(id) {
@@ -773,8 +859,8 @@
     });
   }
   /* ═══ SOLICITUDES · DEVOLUCIÓN CON EVIDENCIA (FASE 2, 03-nov-2026) ═══
-     Kilometraje, combustible y cuatro fotos obligatorias; lo raro (km menor al último, salto grande) se avisa y el servidor lo deja en
-     la bitácora. El servidor valida todo de nuevo (flota_reglas.validar_devolucion). */
+     Kilometraje, combustible y cuatro fotos obligatorias. Un km menor al último NO se acepta (03-nov-2026); un salto grande se avisa y
+     el servidor lo deja en la bitácora. El servidor valida todo de nuevo (flota_reglas.validar_devolucion). */
   var DEV_FOTOS = [
     { tipo: 'dev_odometro', nombre: 'Odómetro', ayuda: 'Que se lean los kilómetros', ic: 'bi-speedometer' },
     { tipo: 'dev_combustible', nombre: 'Indicador de combustible', ayuda: 'La aguja o las barras del tablero', ic: 'bi-fuel-pump' },
@@ -807,7 +893,10 @@
     var s = D.s, r = {}, km = kmNum($('flDevKm').value), prev = s && s.vehiculo.km_actual;
     if (!$('flDevKm').value.trim()) r.km = res('bad', 'Indica el kilometraje que marca el odómetro.');
     else if (km == null) r.km = res('bad', 'Escribe solo números (por ejemplo 56240).');
-    else if (prev != null && km < prev) r.km = res('warn', 'Es MENOR al último registrado (' + miles(prev) + ' km): revisa el odómetro. Se puede registrar igual.');
+    else if (prev != null && km < prev) {
+      r.km = res('bad', 'No puede ser menor al último registrado (' + miles(prev) + ' km). Revisa el odómetro; si el registro anterior está mal, pídele a la gestión que lo corrija.');
+      r.km.inmediato = true;          // un km menor se avisa apenas se escribe, no recién al tocar «Registrar devolución»
+    }
     else if (prev != null && km - prev > 1500) r.km = res('warn', 'Suma ' + miles(km - prev) + ' km en este uso: revisa que esté bien escrito.');
     else r.km = res('ok', prev != null ? 'Este uso suma ' + miles(km - prev) + ' km (antes: ' + miles(prev) + ' km).' : 'Primer kilometraje registrado del vehículo.');
     r.combustible = D.comb ? res('ok', '') : res('bad', 'Elige cuánto combustible le queda.');
@@ -816,7 +905,7 @@
     var faltanFotos = DEV_FOTOS.filter(function (f) { return !D.fotos[f.tipo]; });
     ['km', 'combustible', 'observaciones'].forEach(function (c) {
       var el = document.querySelector('#flFormDev .fl-campo[data-campo="' + c + '"]');
-      var visible = r[c].estado !== 'bad' || D.intento;
+      var visible = r[c].estado !== 'bad' || D.intento || r[c].inmediato;
       el.classList.remove('ok', 'bad', 'warn');
       if (visible && r[c].estado) el.classList.add(r[c].estado);
       escribir(el.querySelector('.fl-msg'), visible ? r[c].msg : '');
@@ -827,10 +916,18 @@
     var faltan = [];
     if (r.km.estado === 'bad') faltan.push('el kilometraje');
     if (r.combustible.estado === 'bad') faltan.push('el combustible');
-    faltanFotos.forEach(function (f) { faltan.push('la foto ' + f.nombre.toLowerCase()); });
+    if (faltanFotos.length) faltan.push(faltanFotos.length === 1 ? 'la foto ' + faltanFotos[0].nombre.toLowerCase()
+      : faltanFotos.length + ' fotos (' + faltanFotos.map(function (f) { return f.nombre.toLowerCase(); }).join(', ') + ')');
     if (r.observaciones.estado === 'bad') faltan.push('contar la novedad');
+    // Avance arriba: cuatro marcas que pasan a verde (la persona ve de un vistazo cuánto le falta en el celular)
+    var marcas = [['Km', r.km.estado !== 'bad'], ['Combustible', r.combustible.estado !== 'bad'],
+      ['Fotos ' + (DEV_FOTOS.length - faltanFotos.length) + '/' + DEV_FOTOS.length, !faltanFotos.length], ['Novedad', r.observaciones.estado !== 'bad']];
+    $('flDevProg').innerHTML = marcas.map(function (m) {
+      return '<li class="' + (m[1] ? 'ok' : '') + '"><i class="bi ' + (m[1] ? 'bi-check-circle-fill' : 'bi-circle') + '" aria-hidden="true"></i>' + esc(m[0]) +
+        '<span class="visually-hidden">' + (m[1] ? ': listo' : ': falta') + '</span></li>';
+    }).join('');
     var pie = $('flDevPie');
-    pie.className = 'fl-pie-form' + (faltan.length && D.intento ? ' bad' : '');
+    pie.className = 'fl-pie-form' + (faltan.length && D.intento ? ' bad' : '') + (faltan.length ? '' : ' listo');
     escribir(pie, faltan.length ? 'Falta: ' + faltan.join(', ') + '.' : 'Todo listo: ' + miles(km) + ' km · combustible ' + (DEV_COMB.filter(function (c) { return c.v === D.comb; })[0] || {}).t + (D.nov ? ' · con novedad' : '') + '.');
     return faltan;
   }
@@ -839,10 +936,13 @@
     Object.keys(D.fotos).forEach(function (k) { try { URL.revokeObjectURL(D.fotos[k].url); } catch (e) { /* nada */ } });
     D.fotos = {};
     $('flFormDev').reset();
-    $('flModalDevTitulo').textContent = 'Devolver ' + s.vehiculo.patente_fmt + ' · ' + s.numero;
+    $('flModalDevTitulo').textContent = 'Devolver ' + s.vehiculo.patente_fmt;
     $('flDevCab').innerHTML = vehFoto(vehPorId(s.vehiculo.id), 'fl-dev-cab-foto') + '<span><b>' + esc(s.vehiculo.patente_fmt + ' · ' + s.vehiculo.titulo) + '</b>' +
-      '<span>' + esc(s.rango_texto + ' · ' + s.area + ' · retiró ' + s.chofer.nombre) + '</span>' +
-      '<span>' + esc(s.vehiculo.km_actual != null ? 'Último kilometraje registrado: ' + miles(s.vehiculo.km_actual) + ' km' : 'Sin kilometraje registrado todavía') + '</span></span>';
+      '<span>' + esc(s.numero + ' · ' + s.rango_texto) + '</span>' +
+      '<span>' + esc(s.area + ' · retiró ' + s.chofer.nombre) + '</span></span>';
+    $('flDevKmRef').innerHTML = s.vehiculo.km_actual != null
+      ? '<i class="bi bi-speedometer2"></i>Último registrado: <b>' + esc(miles(s.vehiculo.km_actual)) + ' km</b> · no puede ser menor'
+      : '<i class="bi bi-speedometer2"></i>Es el primer kilometraje que se registra de este vehículo';
     Array.prototype.forEach.call(document.querySelectorAll('#flDevNov [data-nov]'), function (b) { var on = b.getAttribute('data-nov') === '0'; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
     $('flDevObsLbl').textContent = 'Observaciones (opcional)';
     pintarComb(); pintarFotosDev();
@@ -1107,6 +1207,8 @@
     return String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(function (p) { return p.charAt(0).toUpperCase(); }).join('');
   }
   function estadoChofer(c) {
+    // Daniel, 03-nov-2026: «todos tienen que pertenecer a la página. Si no está registrado, no puede retirar el camión».
+    if (c.externo) return { cls: 'off', t: 'Sin usuario de ILUS: no puede retirar el vehículo', bloq: true };
     if (!c.habilitado || !c.usuario_activo) return { cls: 'off', t: 'Inhabilitado como chofer', bloq: true };
     if (!c.licencia_vence || c.licencia_estado === 'sin_fecha') return { cls: 'off', t: 'Sin vencimiento de licencia registrado', bloq: true };
     if (c.licencia_estado === 'vencido') return { cls: 'off', t: 'Licencia vencida el ' + c.licencia_vence_fmt, bloq: true };
@@ -1135,8 +1237,8 @@
     }).join('');
     html += PERM.admin
       ? '<button type="button" class="fl-ccard fl-ccard--nuevo" id="flSolNuevoChofer"><span class="fl-ccard-av" aria-hidden="true"><i class="bi bi-person-plus"></i></span><span class="fl-ccard-c"><b>Agregar chofer</b><span class="fl-ccard-s">Lo sumas al repositorio y vuelves acá</span></span></button>'
-      : '<div class="fl-ccard-nota"><i class="bi bi-info-circle"></i>¿Falta alguien? Pídeselo al superadministrador: él agrega los choferes.</div>';
-    cont.innerHTML = lista.length || PERM.admin ? html : '<div class="fl-vacio"><b>Aún no hay choferes</b>El superadministrador los agrega en la pestaña Choferes.</div>';
+      : '<div class="fl-ccard-nota"><i class="bi bi-info-circle"></i>¿Falta alguien? Pídeselo a quien administra la flota: él agrega los choferes.</div>';
+    cont.innerHTML = lista.length || PERM.admin ? html : '<div class="fl-vacio"><b>Aún no hay choferes</b>Quien administra la flota los agrega en la pestaña Choferes.</div>';
   }
   function disponibilidadChoferes() {
     Array.prototype.forEach.call(document.querySelectorAll('#flSolChoferes .fl-ccard-e'), function (el) {
@@ -1197,10 +1299,17 @@
     return isoDe(d) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
   /* Quien PIDE no puede reservar con menos de 24 h de anticipación; la gestión (y quien mueve una reserva) sí. */
-  function pkLimite24() {
-    if (S.editSol || PERM.gestionar || PERM.admin) return null;
-    return sumarMin(ahoraCL().dt, antelacionH() * 60);
+  function limite24Base() { return PERM.gestionar ? null : sumarMin(ahoraCL().dt, antelacionH() * 60); }
+  function pkLimite24() { return S.editSol ? null : limite24Base(); }
+  /* Hasta qué minuto de ese día rige la regla de 24 h en la AGENDA (0 = nada; 1440 = el día completo). */
+  function cierre24(iso) {
+    var l = limite24Base();
+    if (!l) return 0;
+    var li = l.slice(0, 10);
+    if (iso < li) return 1440;
+    return iso > li ? 0 : Math.ceil(minutos(l.slice(11, 16)) / 30) * 30;
   }
+  function diaCerrado24(iso) { var l = limite24Base(); return !!l && pkSlots().every(function (x) { return (iso + 'T' + hhmm(x)) < l; }); }
   function limiteTexto(l) {
     var iso = l.slice(0, 10), m = Math.ceil(minutos(l.slice(11, 16)) / 30) * 30;
     if (m >= 1440) { iso = sumarDias(iso, 1); m = 0; }
@@ -1505,6 +1614,10 @@
     tarjetasChoferes(s ? s.chofer.id : '');
     $('flSolAreasList').innerHTML = (S.config.areas || []).map(function (a) { return '<option value="' + esc(a) + '">'; }).join('');
     var l24 = pkLimite24();
+    if (!s && pref.fecha && (diaCerrado24(pref.fecha) || (pref.hora_desde && l24 && (pref.fecha + 'T' + pref.hora_desde) < l24))) {
+      toast('Ese horario se pide con al menos ' + antelacionH() + ' horas de anticipación. Te dejé el primer día disponible.', 'warning');
+      pref = { vehiculo_id: pref.vehiculo_id };
+    }
     f.elements.fecha.value = s ? s.fecha : (pref.fecha || (l24 ? l24.slice(0, 10) : (S.hoy || ahoraCL().iso)));
     f.elements.hora_desde.value = s ? s.hora_desde : (pref.hora_desde || '');
     f.elements.hora_hasta.value = s ? s.hora_hasta : (pref.hora_hasta || '');
@@ -1781,21 +1894,15 @@
     }
     $('flChGestion').innerHTML = b.join('');
   }
-  /* Usuario de ILUS o chofer EXTERNO (Daniel, 02-nov-2026: «un chofer que no esté dentro del sistema y que se lleve el camión»). */
-  var tipoCh = 'usuario';
-  function esExternoCh() { return S.editCh ? !!S.editCh.externo : tipoCh === 'externo'; }
+  /* Todo chofer es un usuario de ILUS (Daniel, 03-nov-2026: «eliminar esa parte donde el usuario externo de chofer… si no está
+     registrado, no puede retirar el camión»). Un externo que ya estaba en el repositorio se puede editar o archivar, nada más. */
+  function esExternoCh() { return !!(S.editCh && S.editCh.externo); }
   function aplicarTipoCh() {
     var ext = esExternoCh();
-    Array.prototype.forEach.call(document.querySelectorAll('#flChTipo [data-chtipo]'), function (b) {
-      var on = b.getAttribute('data-chtipo') === (ext ? 'externo' : 'usuario');
-      b.classList.toggle('on', on); b.setAttribute('aria-checked', on ? 'true' : 'false');
-    });
-    $('flChTipo').hidden = !!S.editCh;
-    campoCh('usuario_id').hidden = !!S.editCh || ext;
+    campoCh('usuario_id').hidden = !!S.editCh;
     $('flChTelCampo').hidden = !ext;
-    $('flChAyudaTipo').textContent = S.editCh ? '' : (ext
-      ? 'Para alguien sin cuenta en ILUS: escribe sus datos como figuran en la licencia y un teléfono para coordinar la llave.'
-      : 'Al elegir al usuario te sugerimos el RUT y la dirección que ya tiene en su perfil; puedes corregirlos.');
+    $('flChAyudaTipo').textContent = S.editCh ? (ext ? 'No tiene usuario de ILUS: no puede retirar vehículos hasta que se le cree uno.' : '')
+      : 'Elige al usuario de ILUS. Te sugerimos el RUT y la dirección que ya tiene en su perfil; puedes corregirlos.';
     evaluarChLuego();
   }
   function abrirChofer(c) {
@@ -1804,7 +1911,6 @@
     $('flChGuardar').innerHTML = '<i class="bi bi-check2-circle me-1"></i>' + (c ? 'Guardar cambios' : 'Guardar chofer');
     var f = $('flFormCh');
     f.reset();
-    tipoCh = 'usuario';
     $('flChFijo').hidden = !c;
     $('flChFijo').innerHTML = c ? '<b>' + esc(c.nombre) + '</b>' + (c.externo ? '<span class="fl-sub">Chofer externo (sin usuario de ILUS)</span>' : '') +
       (c.cargo ? '<span class="fl-sub">' + esc(c.cargo) + '</span>' : '') + (c.telefono && !c.externo ? '<span class="fl-sub">' + esc(c.telefono) + '</span>' : '') : '';
@@ -1880,8 +1986,7 @@
         direccion_lat: vCh('direccion_lat'), direccion_lng: vCh('direccion_lng'), direccion_place_id: vCh('direccion_place_id'),
         licencia_clases: clasesCh(), licencia_vence: vCh('licencia_vence'), notas: vCh('notas') };
       if (esExternoCh()) body.telefono = vCh('telefono');
-      if (!editando && esExternoCh()) body.externo = true;
-      else if (!editando) body.usuario_id = vCh('usuario_id');
+      if (!editando) body.usuario_id = vCh('usuario_id');
       S.guardandoCh = true;
       $('flChGuardar').disabled = true;
       api(editando ? API + '/choferes/' + editando.id : API + '/choferes', { method: editando ? 'PUT' : 'POST', body: body }).then(function (r) {
@@ -2078,6 +2183,10 @@
       var b = ev.target.closest('[data-dacc]');
       if (b && S.det) accion(b.getAttribute('data-dacc'), S.det);
     });
+    $('flSolDetCuerpo').addEventListener('click', function (ev) {       // los botones de la guía de la solicitud
+      var b = ev.target.closest('[data-dacc]');
+      if (b && S.det) accion(b.getAttribute('data-dacc'), S.det);
+    });
 
     /* Agenda de la flota */
     $('flCalPrev').addEventListener('click', function () { mesMas(-1); });
@@ -2113,7 +2222,8 @@
     $('flaSemana').addEventListener('mousemove', function (ev) {      // muestra dónde partiría la reserva antes de tocar
       var p = ev.target.closest('.fla-pista');
       if (!p || ev.target.closest('.fla-b')) return;
-      var g = p.querySelector('.fla-fantasma'), ini = parseInt(p.getAttribute('data-ini'), 10) || 0, m = minutoEnPista(p, ev.clientY);
+      var g = p.querySelector('.fla-fantasma'), ini = parseInt(p.getAttribute('data-ini'), 10) || 0, m = minutoEnPista(p, ev.clientY), l24 = limite24Base();
+      g.style.display = l24 && (p.getAttribute('data-dia') + 'T' + hhmm(m)) < l24 ? 'none' : '';
       g.style.top = ((m - ini) / 60 * PX_HORA) + 'px';
       escribir(g, '+ ' + hhmm(m));
     });
@@ -2233,13 +2343,6 @@
     fc.addEventListener('submit', function (e) { e.preventDefault(); guardarCh(); });
     $('flChGuardar').addEventListener('click', guardarCh);
     $('flChUsuario').addEventListener('change', sugerirDesdePerfil);
-    $('flChTipo').addEventListener('click', function (ev) {
-      var b = ev.target.closest('[data-chtipo]');
-      if (!b || S.editCh) return;
-      tipoCh = b.getAttribute('data-chtipo');
-      aplicarTipoCh();
-      if (tipoCh === 'externo') $('flChNombre').focus();
-    });
     $('flChGestion').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-gcc]');
       var c = S.editCh;
@@ -2265,7 +2368,7 @@
     });
 
     var h = (location.hash || '').replace('#', '');
-    Promise.all([cargarVeh(), cargarChof(), cargarSol()]).then(function () { irTab(h || 'solicitudes'); });
+    Promise.all([cargarVeh(), cargarChof(), cargarSol()]).then(function () { irTab(h || 'solicitudes'); abrirDesdeEnlace(); });
     irTab(h || 'solicitudes');
   }
 

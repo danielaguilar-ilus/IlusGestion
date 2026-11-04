@@ -13865,6 +13865,33 @@ def register_tickets_routes(app, ctx):
             "horas_desde_correo": None if h_correo is None else round(h_correo, 2),
         }
 
+    def _tk_mail_reclamar(message_id, ticket_id, from_email, subject):
+        """Reclama un correo por su Message-ID de forma ATÓMICA: devuelve True solo
+        al primer barrido que lo reclama y False si ya estaba reclamado.
+
+        Por qué no basta el «SELECT ... ¿ya está?» de antes (04-nov-2026, Daniel:
+        «se siguen repitiendo las imágenes»): cada petición usa una conexión con
+        REPEATABLE READ y autocommit apagado, así que un barrido que empezó antes
+        de que otro marcara el correo sigue leyendo su foto vieja de la base y
+        no lo ve. Resultado medido en producción: el mismo correo (mismo
+        Message-ID, mismo texto) guardado dos veces con sus fotos, en 17 de 26
+        tickets con movimiento reciente. El INSERT IGNORE sobre la PRIMARY KEY
+        no mira esa foto sino lo último comprometido (y espera a quien esté
+        insertando la misma clave), así que entre varios barridos simultáneos
+        solo uno recibe rowcount 1. El SELECT previo se conserva: sirve para
+        no bajar el cuerpo de correos que ya se saben.
+
+        Si la base falla, la excepción sube al try/except del correo: no se
+        guardó nada y el próximo barrido lo reintenta."""
+        sql = ("INSERT IGNORE INTO tk_mail_ingeridos "
+               "(message_id, ticket_id, from_email, subject) VALUES (%s,%s,%s,%s)")
+        params = (message_id, ticket_id, (from_email or "")[:190], (subject or "")[:300])
+        _rc = ctx.get("mysql_execute_returning_rowcount")
+        if not callable(_rc):
+            mysql_execute(sql, params)   # sin contador de filas: comportamiento anterior
+            return True
+        return int(_rc(sql, params) or 0) >= 1
+
     def _tk_leer_correo_entrante(dias=60, max_correos=50, dry_run=False,
                                  detalle=False, notificar="cada",
                                  max_segundos=None, incluir_taa=False,
@@ -14315,25 +14342,26 @@ def register_tickets_routes(app, ctx):
                     # manda otro mensaje ANTES del siguiente barrido, sin
                     # esto el mensaje del cliente queda despues en el hilo
                     # (Daniel 2026-07-12: orden tipo WhatsApp).
+                    # Reclamo ATÓMICO del correo ANTES de guardarlo (ver
+                    # _tk_mail_reclamar): con la marca al final, dos barridos que
+                    # se pisaban ingresaban el mismo correo dos veces. Va justo
+                    # antes del INSERT del mensaje (después de bajar el cuerpo y
+                    # sacar los adjuntos, que es lo lento) para que la ventana en
+                    # que un correo quede reclamado sin guardar sea de un solo
+                    # statement. Queda antes de subir los adjuntos: si el proceso
+                    # muere subiendo (Cloud Run bajando una instancia), lo peor
+                    # es perder un adjunto (el correo sigue en el buzón), nunca
+                    # duplicar la conversación.
+                    if not _tk_mail_reclamar(message_id, ticket["id"], from_email, subject):
+                        resumen["duplicados"] += 1
+                        _fila("ya_ingerido", numero,
+                              "Ya está en el ticket: otro barrido lo ingresó justo antes.")
+                        continue
                     msg_id_db = _tk_log(
                         ticket["id"], "client_message", cuerpo[:20000],
                         usuario=remitente, es_interno=False, message_date=msg_date,
                         metadata={"via": "email", "message_id": message_id,
                                   "from": from_email, "subject": subject[:300]})
-                    # Marca de ingerido INMEDIATAMENTE despues de guardar el
-                    # mensaje y ANTES de subir adjuntos (2026-08-05): la subida
-                    # a GCS es la parte lenta y la unica que puede tardar
-                    # segundos por archivo. Si el proceso muere ahi (Cloud Run
-                    # bajando una instancia), con el orden anterior el correo
-                    # quedaba SIN marcar y el siguiente barrido lo volvia a
-                    # ingresar entero -> mensaje duplicado en el hilo del
-                    # cliente. Marcando antes, lo peor que pasa es perder un
-                    # adjunto (recuperable: el correo sigue en el buzon), no
-                    # duplicar la conversacion.
-                    mysql_execute(
-                        "INSERT IGNORE INTO tk_mail_ingeridos "
-                        "(message_id, ticket_id, from_email, subject) VALUES (%s,%s,%s,%s)",
-                        (message_id, ticket["id"], from_email[:190], subject[:300]))
                     # Adjuntos que SI pasaron el filtro -> GCS -> tk_adjuntos
                     for fn_dec, contenido_adj, ctype_adj in adjuntos_ok:
                         try:
@@ -14816,14 +14844,15 @@ def register_tickets_routes(app, ctx):
                               "respaldo de respuesta saliente.")
                         continue
                     remitente = (from_nombre or from_email or "ILUS")[:190]
+                    # Mismo reclamo atómico que el Inbox (ver _tk_mail_reclamar).
+                    if not _tk_mail_reclamar(message_id, ticket["id"], from_email, subject):
+                        resumen["duplicados"] += 1
+                        _fila("ya_ingerido", "Ya esta registrado (otro barrido lo agrego justo antes).")
+                        continue
                     _tk_log(ticket["id"], "mensaje", cuerpo[:20000], usuario=remitente,
                             es_interno=False, message_date=msg_date,
                             metadata={"via": "email_enviados", "message_id": message_id,
                                       "from": from_email, "subject": subject[:300]})
-                    mysql_execute(
-                        "INSERT IGNORE INTO tk_mail_ingeridos "
-                        "(message_id, ticket_id, from_email, subject) VALUES (%s,%s,%s,%s)",
-                        (message_id, ticket["id"], from_email[:190], subject[:300]))
                     resumen["capturados"] += 1
                     _fila("nuevo", f"Agregado al hilo de {numero} como respaldo "
                           "de respuesta saliente.")

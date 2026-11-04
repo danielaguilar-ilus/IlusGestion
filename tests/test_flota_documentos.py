@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -59,9 +60,20 @@ class TestNiveles(unittest.TestCase):
         self.assertEqual(R.niveles({"flota_gestionar": True}), {"admin": False, "gestionar": True, "documentos": False, "solicitar": True})
         self.assertEqual(R.niveles({"flota_documentos": True}), {"admin": False, "gestionar": False, "documentos": True, "solicitar": False})
 
-    def test_solo_el_superadmin_es_admin(self):
+    def test_solo_el_superadmin_o_la_llave_administrar_es_admin(self):
         self.assertTrue(R.niveles({"superadmin": True}) == {"admin": True, "gestionar": True, "documentos": True, "solicitar": True})
+        # las otras tres llaves, juntas, NO administran
         self.assertFalse(R.niveles({"flota_solicitar": True, "flota_gestionar": True, "flota_documentos": True})["admin"])
+        # la llave nueva administra y entra, pero NO gestiona (no confirma ni entrega la llave)
+        self.assertEqual(R.niveles({"flota_administrar": True}), {"admin": True, "gestionar": False, "documentos": True, "solicitar": True})
+
+
+def _llave_cualquier_dia(caso):
+    """Estas pruebas reservan días adelante y entregan la llave para probar OTROS pasos: la regla «la llave solo el día de la
+    reserva» (Daniel, 03-nov-2026) se prueba aparte en TestLlaveDelDia, así que aquí se deja pasar."""
+    p = mock.patch.object(TS.R, "llave_dia", return_value={"ok": True, "texto": "Hoy se entrega la llave."})
+    p.start()
+    caso.addCleanup(p.stop)
 
 
 class TestPatenteYRut(unittest.TestCase):
@@ -202,6 +214,10 @@ class Base2(TS.Base):
 
 
 class TestPermisosPorNivel(Base2):
+    def setUp(self):
+        super().setUp()
+        _llave_cualquier_dia(self)
+
     def test_sin_llaves_no_entra_a_nada(self):
         self.assertEqual(self.c.get("/flota", headers=SIN_LLAVES).status_code, 302)
         for url in ("/flota/api/vehiculos", "/flota/api/choferes", "/flota/api/solicitudes", "/flota/api/calendario"):
@@ -296,10 +312,10 @@ class TestPermisosPorNivel(Base2):
         html = self.c.get("/flota", headers=SOLO_PEDIR).get_data(as_text=True)
         self.assertIn("window.FLOTA_PERMISOS", html)
         self.assertRegex(html, r'FLOTA_PERMISOS = \{[^}]*"admin": false')
-        self.assertNotIn("Solo tú administras esto", html)                    # el aviso del superadmin no se le muestra a los demás
+        self.assertNotIn("Tú administras la flota", html)                     # el aviso de quien administra no se le muestra a los demás
         html = self.c.get("/flota", headers=SUPER).get_data(as_text=True)
         self.assertRegex(html, r'FLOTA_PERMISOS = \{[^}]*"admin": true')
-        self.assertIn("Solo tú administras esto", html)
+        self.assertIn("Tú administras la flota", html)
 
 
 TS_VEH = {"patente": "ZZZZ99", "tipo": "Furgón", "licencia_clases": ["B"]}
@@ -577,7 +593,7 @@ class TestCableadoPermisos(unittest.TestCase):
     def test_las_tres_llaves_estan_en_perms_keys_y_apagadas(self):
         i = self.APP.index("PERMS_KEYS = (")
         bloque = self.APP[i:self.APP.index("\n)\n", i)]
-        for k in ("flota_solicitar", "flota_gestionar", "flota_documentos"):
+        for k in ("flota_solicitar", "flota_gestionar", "flota_documentos", "flota_administrar"):
             self.assertIn(f'"{k}"', bloque, k)
         # no son de tipo «bloqueo» (concedidas por omisión): nacen apagadas para todos
         j = self.APP.index("_PERMS_CONCEDIDOS_POR_OMISION = {")
@@ -586,26 +602,27 @@ class TestCableadoPermisos(unittest.TestCase):
 
     def test_la_matriz_de_roles_las_muestra_y_las_compila(self):
         self.assertIn('"flota":          {"label":"Solicitudes de vehículo"', self.APP)
-        self.assertIn('"acciones":["solicitar", "gestionar", "documentos"]', self.APP)
-        for k, a in (("flota_solicitar", "solicitar"), ("flota_gestionar", "gestionar"), ("flota_documentos", "documentos")):
+        self.assertIn('"acciones":["solicitar", "gestionar", "documentos", "administrar"]', self.APP)
+        for k, a in (("flota_solicitar", "solicitar"), ("flota_gestionar", "gestionar"), ("flota_documentos", "documentos"),
+                     ("flota_administrar", "administrar")):
             self.assertIn(f'base["{k}"] = bool(flo.get("{a}"))', self.APP)
         self.assertIn('flo = matrix.get("flota", {})', self.APP)
         j = self.APP.index('    "flota": {\n        "solicitar":')
         meta = self.APP[j:j + 900]
-        for a in ("solicitar", "gestionar", "documentos"):
+        for a in ("solicitar", "gestionar", "documentos", "administrar"):
             self.assertIn(f'"{a}":', meta)
 
     def test_el_menu_lo_ve_quien_tiene_una_de_las_dos_llaves(self):
         base = _leer("templates", "base.html")
         i = base.index('href="/flota"')
         previo = base[max(0, i - 200):i]
-        self.assertIn("permissions.superadmin or permissions.flota_solicitar or permissions.flota_gestionar", previo)
+        self.assertIn("permissions.superadmin or permissions.flota_solicitar or permissions.flota_gestionar or permissions.flota_administrar", previo)
         self.assertEqual(base.count('href="/flota"'), 1)
         self.assertNotIn("url_for('flota", base)
 
     def test_las_llaves_de_la_flota_no_dan_acceso_a_nada_mas(self):
         # son llaves propias: ninguna reutiliza «superadmin», «admin» ni «mantenciones»
-        for k in ("flota_solicitar", "flota_gestionar", "flota_documentos"):
+        for k in ("flota_solicitar", "flota_gestionar", "flota_documentos", "flota_administrar"):
             for m in re.finditer(rf'base\["{k}"\]\s*=\s*([^\n]+)', self.APP):
                 self.assertNotRegex(m.group(1), r"adm\.|man\.|eti\.|tra\.")
 
@@ -664,62 +681,70 @@ if __name__ == "__main__":
 
 
 class TestChoferExternoYRepositorio(unittest.TestCase):
-    """02-nov-2026 (Daniel): «un chofer que no esté dentro del sistema y que se lleve el camión» y «necesito un repositorio con los
-    documentos». El externo no tiene usuario de ILUS: su nombre y teléfono son propios; reserva con las mismas reglas de licencia."""
+    """02-nov-2026 se abrió un chofer externo (sin usuario de ILUS). 03-nov-2026 (Daniel): «eliminaras esa parte donde el usuario externo
+    de chofer todos tienen que pertenecer a la página. Si no está registrado, no puede retirar el camión». Ya no se crean; uno que quedó
+    de antes se puede editar o archivar, pero no se elige en una reserva ni recibe la llave."""
 
     def setUp(self):
+        _llave_cualquier_dia(self)
         self.bucket = BucketFalso()
         self.base = TS.Falsa()
         self.app = TS._app(self.base, self.bucket)
         self.c = self.app.test_client()
 
-    def _externo(self, **extra):
+    def _externo_antiguo(self):
+        """Un externo que quedó en el repositorio de antes: se inserta directo, porque la API ya no los crea."""
+        self.base.execute(
+            "INSERT INTO flota_choferes (usuario_id, telefono, rut, nombre_completo, direccion, direccion_lat, direccion_lng, "
+            "direccion_place_id, licencia_clases, licencia_vence, notas, created_by, updated_by) VALUES (NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            ("+56987654321", "111111111", "Pedro Ignacio Lagos Fuentes", "Av. Siempre Viva 742, Providencia", None, None, None, "B",
+             dt.date.fromisoformat(TS.FUTURO), None, "prueba", "prueba"))
+        return max(self.base.cho)
+
+    def test_ya_no_se_crea_un_chofer_externo(self):
         d = dict(TS._datos_chofer(9), externo=True, nombre_completo="Pedro Ignacio Lagos Fuentes", rut="11.111.111-1",
                  telefono="+56 9 8765 4321")
         d.pop("usuario_id", None)
-        d.update(extra)
-        return self.c.post("/flota/api/choferes", json=d, headers=SUPER)
-
-    def test_alta_de_un_chofer_externo(self):
-        r = self._externo()
-        self.assertEqual(r.status_code, 200, r.get_json())
-        ch = r.get_json()["chofer"]
-        self.assertTrue(ch["externo"])
-        self.assertIsNone(ch["usuario_id"])
-        self.assertEqual(ch["nombre"], "Pedro Ignacio Lagos Fuentes")
-        self.assertEqual(ch["telefono"], "+56987654321")
-        self.assertTrue(ch["usuario_activo"])
-        self.assertTrue(ch["disponible"])
-
-    def test_externo_exige_telefono_y_no_repite_rut(self):
-        r = self._externo(telefono="")
+        r = self.c.post("/flota/api/choferes", json=d, headers=SUPER)
         self.assertEqual(r.status_code, 400)
-        self.assertIn("telefono", r.get_json()["errores"])
-        self.assertEqual(self._externo().status_code, 200)
-        r = self._externo(nombre_completo="Otra Persona Distinta")
-        self.assertEqual(r.status_code, 409)
-        self.assertIn("rut", r.get_json()["errores"])
+        self.assertEqual(r.get_json()["error_codigo"], "CHOFER_SIN_USUARIO")
+        self.assertFalse(self.base.cho)                                                # no se guardó nada
+        self.assertEqual(self.c.post("/flota/api/choferes", json={k: v for k, v in d.items() if k != "externo"},
+                                     headers=SUPER).status_code, 400)                  # sin usuario, tampoco
 
-    def test_un_externo_puede_retirar_la_llave(self):
-        cid = self._externo().get_json()["chofer"]["id"]
+    def test_un_externo_antiguo_no_reserva_ni_recibe_la_llave(self):
+        cid = self._externo_antiguo()
+        ch = self.c.get("/flota/api/choferes", headers=SUPER).get_json()["choferes"][0]
+        self.assertTrue(ch["externo"])
         vid = self.c.post("/flota/api/vehiculos", json={"patente": "PHVD21-7", "tipo": "Camión", "licencia_clases": ["B"]},
                           headers=SUPER).get_json()["vehiculo"]["id"]
         dia = (dt.date.today() + dt.timedelta(days=3)).isoformat()
         r = self.c.post("/flota/api/solicitudes", json={"vehiculo_id": vid, "chofer_id": cid, "area": "Logística", "motivo": "Reparto zona sur",
                         "fecha": dia, "hora_desde": "09:00", "hora_hasta": "12:00"}, headers=SUPER)
-        self.assertEqual(r.status_code, 200, r.get_json())
-        self.assertEqual(r.get_json()["solicitud"]["chofer"]["nombre"], "Pedro Ignacio Lagos Fuentes")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.get_json()["error_codigo"], "CHOFER_SIN_USUARIO")
+        self.assertFalse(self.base.sol)
+        # Una reserva antigua que ya lo tenía: la llave no se entrega hasta cambiarle el chofer por uno registrado
+        bueno = self.c.post("/flota/api/choferes", json=dict(TS._datos_chofer(1), usuario_id=1), headers=SUPER).get_json()["chofer"]["id"]
+        sid = self.c.post("/flota/api/solicitudes", json={"vehiculo_id": vid, "chofer_id": bueno, "area": "Logística", "motivo": "Reparto zona sur",
+                          "fecha": dia, "hora_desde": "09:00", "hora_hasta": "12:00"}, headers=SUPER).get_json()["solicitud"]["id"]
+        self.c.post(f"/flota/api/solicitudes/{sid}/confirmar", json={}, headers=SUPER)
+        self.base.sol[sid]["chofer_id"] = cid                                         # como quedó de antes del 03-nov
+        r = self.c.post(f"/flota/api/solicitudes/{sid}/llave", json={"nota": ""}, headers=SUPER)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.get_json()["error_codigo"], "CHOFER_SIN_USUARIO")
+        self.assertEqual(self.base.sol[sid]["estado"], "confirmada")
 
-    def test_editar_el_telefono_de_un_externo(self):
-        ch = self._externo().get_json()["chofer"]
-        d = dict(TS._datos_chofer(9), nombre_completo=ch["nombre_completo"], rut="11.111.111-1", telefono="+56 2 2345 6789")
+    def test_editar_el_telefono_de_un_externo_antiguo(self):
+        cid = self._externo_antiguo()
+        d = dict(TS._datos_chofer(9), nombre_completo="Pedro Ignacio Lagos Fuentes", rut="11.111.111-1", telefono="+56 2 2345 6789")
         d.pop("usuario_id", None)
-        r = self.c.put(f"/flota/api/choferes/{ch['id']}", json=d, headers=SUPER)
+        r = self.c.put(f"/flota/api/choferes/{cid}", json=d, headers=SUPER)
         self.assertEqual(r.status_code, 200, r.get_json())
         self.assertEqual(r.get_json()["chofer"]["telefono"], "+56223456789")
 
     def test_un_usuario_que_ya_es_chofer_no_vacia_la_lista_por_un_externo(self):
-        self._externo()
+        self._externo_antiguo()
         r = self.c.get("/flota/api/choferes/usuarios", headers=SUPER)
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.get_json()["usuarios"])
@@ -739,3 +764,44 @@ class TestChoferExternoYRepositorio(unittest.TestCase):
         self.assertEqual(a[0]["etiqueta"], "SOAP")
         r = self.c.get(f"/flota/api/vehiculos/{vid}/archivos", headers=SOLO_PEDIR)
         self.assertEqual(r.status_code, 403)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  D. La llave «administrar» (03-nov-2026): Aarón agrega vehículos y choferes sin ser superadministrador
+# ═══════════════════════════════════════════════════════════════════════════
+ADMINISTRA = {"X-Rol": "ejecutivo", "X-Flota": "flota_administrar"}
+
+
+class TestLlaveAdministrar(Base2):
+    def test_quien_administra_agrega_edita_archiva_y_sube_archivos(self):
+        r = self.c.post("/flota/api/vehiculos", json=TS_VEH, headers=ADMINISTRA)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        vid = r.get_json()["vehiculo"]["id"]
+        self.assertEqual(self.c.put(f"/flota/api/vehiculos/{vid}", json=dict(TS_VEH, color="Rojo"), headers=ADMINISTRA).status_code, 200)
+        self.assertEqual(self.c.post(f"/flota/api/vehiculos/{vid}/archivar", json={"motivo": "Vendido hoy"}, headers=ADMINISTRA).status_code, 200)
+        r = self.c.post("/flota/api/choferes", json=dict(TS._datos_chofer(4), usuario_id=4), headers=ADMINISTRA)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(self.subir("vehiculo", self.furgon, "soap", PDF, headers=ADMINISTRA).status_code, 200)
+
+    def test_entra_a_la_pantalla_y_ve_lo_que_mantiene(self):
+        self.assertEqual(self.c.get("/flota", headers=ADMINISTRA).status_code, 200)
+        d = self.c.get("/flota/api/vehiculos", headers=ADMINISTRA).get_json()
+        self.assertEqual(d["permisos"], {"admin": True, "gestionar": False, "documentos": True, "solicitar": True})
+        self.assertIsNotNone(self.veh_json(ADMINISTRA)["vin"])      # lo que mantiene, lo ve
+
+    def test_administrar_no_es_gestionar(self):
+        r = self.c.post("/flota/api/solicitudes", json=TS._sol(vehiculo_id=self.furgon, chofer_id=self.ana), headers=SOLO_PEDIR)
+        sid = r.get_json()["solicitud"]["id"]
+        for ruta in ("confirmar", "llave"):
+            self.assertEqual(self.c.post(f"/flota/api/solicitudes/{sid}/{ruta}", json={}, headers=ADMINISTRA).status_code, 403, ruta)
+        self.assertEqual(self.c.get(f"/flota/api/vehiculos/{self.furgon}/historial", headers=ADMINISTRA).status_code, 403)
+
+    def test_gestionar_solo_sigue_sin_poder_agregar(self):
+        self.assertEqual(self.c.post("/flota/api/vehiculos", json=TS_VEH, headers=GESTOR).status_code, 403)
+        self.assertEqual(self.c.post("/flota/api/choferes", json=dict(TS._datos_chofer(4), usuario_id=4), headers=GESTOR).status_code, 403)
+
+    def test_el_front_no_lo_exime_de_las_24_horas(self):
+        js = _leer("static", "flota_uso.js")
+        i = js.index("function limite24Base()")
+        self.assertIn("PERM.gestionar ? null", js[i:i + 140])
+        self.assertNotIn("PERM.admin) ? null", js[i:i + 140])

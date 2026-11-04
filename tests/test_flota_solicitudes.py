@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -121,6 +122,14 @@ def _sol(**k):
          "hora_desde": "08:00", "hora_hasta": "12:30"}
     d.update(k)
     return d
+
+
+def _llave_cualquier_dia(caso):
+    """Estas pruebas reservan días adelante y entregan la llave para probar OTROS pasos: la regla «la llave solo el día de la
+    reserva» (Daniel, 03-nov-2026) se prueba aparte en TestLlaveDelDia, así que aquí se deja pasar."""
+    p = mock.patch.object(R, "llave_dia", return_value={"ok": True, "texto": "Hoy se entrega la llave."})
+    p.start()
+    caso.addCleanup(p.stop)
 
 
 class TestValidarSolicitud(unittest.TestCase):
@@ -326,6 +335,9 @@ class Falsa(BaseFalsa):
             filas = list(self.sol.values())
             if s.endswith("WHERE s.id=%s"):
                 return [self._sol_row(self.sol[p[0]])] if p[0] in self.sol else []
+            if s.endswith("WHERE s.vehiculo_id=%s AND s.estado IN ('llave_entregada','devuelta') ORDER BY s.inicio DESC LIMIT 200"):
+                return [self._sol_row(x) for x in sorted(filas, key=lambda x: x["inicio"], reverse=True)
+                        if x["vehiculo_id"] == p[0] and x["estado"] in ("llave_entregada", "devuelta")]
             if s.endswith("WHERE s.fin < %s ORDER BY s.inicio DESC, s.id DESC LIMIT 500"):
                 return [self._sol_row(x) for x in sorted(filas, key=lambda x: (x["inicio"], x["id"]), reverse=True) if x["fin"] < p[0]]
             if s.endswith("WHERE s.fin >= %s ORDER BY s.inicio, s.id LIMIT 500"):
@@ -355,6 +367,9 @@ class Falsa(BaseFalsa):
             return [dict(x) for x in sorted(self.slog, key=lambda x: -x["id"]) if x["solicitud_id"] == p[0]]
         if s.startswith("SELECT id, accion, detalle, usuario, created_at FROM flota_chofer_log WHERE chofer_id=%s"):
             return [dict(x) for x in sorted(self.clog, key=lambda x: -x["id"]) if x["chofer_id"] == p[0]]
+        if s == "SELECT id, usuario_id FROM flota_choferes WHERE id=%s":
+            c = self.cho.get(p[0])
+            return [{"id": c["id"], "usuario_id": c["usuario_id"]}] if c else []
         return None
 
     def fetchone(self, q, p=None):
@@ -866,6 +881,7 @@ class TestSolicitudes(Base):
 
 class TestFlujo(Base):
     def setUp(self):
+        _llave_cualquier_dia(self)
         super().setUp()
         _r, d = self.pedir()
         self.sid = d["solicitud"]["id"]
@@ -1252,6 +1268,7 @@ class TestDevolucion(unittest.TestCase):
     JPG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 
     def setUp(self):
+        _llave_cualquier_dia(self)
         from test_flota_vehiculos import BucketFalso
         self.enviados = []
         self.base = Falsa()
@@ -1306,11 +1323,37 @@ class TestDevolucion(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("con novedad", self.enviados[0][1])
 
-    def test_km_menor_se_avisa_y_no_pisa_el_vehiculo(self):
+    def test_km_menor_no_se_acepta_y_el_mismo_si(self):
+        # Daniel, 03-nov-2026: «si el kilometraje está declarado en 56.240, no va a poder declarar 45.000»
         r = self.devolver(km="50000")
-        self.assertEqual(r.status_code, 200)
-        self.assertTrue(any("MENOR" in a for a in r.get_json()["avisos"]))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("menor al último kilometraje", r.get_json()["errores"]["km"])
         self.assertEqual(self.base.veh[self.vid]["km_actual"], 56000)
+        self.assertEqual(self.base.sol[self.sid]["estado"], "llave_entregada")          # no quedó devuelta a medias
+        self.assertEqual(self.devolver(km="56.000").status_code, 200)                     # el mismo km sí
+
+    def test_usos_en_la_ficha_del_vehiculo(self):
+        # Daniel, 03-nov-2026: «se van a guardar en la ficha del camión y se van a poder registrar las entregas de cada uno»
+        self.assertEqual(self.devolver().status_code, 200)
+        d = self.c.get(f"/flota/api/vehiculos/{self.vid}/usos", headers=SUPER).get_json()
+        self.assertTrue(d["ok"])
+        u = d["usos"][0]
+        self.assertEqual((u["estado"], u["dev_km"]), ("devuelta", 56240))
+        self.assertIn("desvio_retiro", u)
+        self.assertNotIn("inicio", u)                                                  # al navegador va el texto, no la hora cruda
+
+    def test_reglas_de_usos_plan_contra_real(self):
+        D = dt.datetime
+        r = R.resumen_usos([
+            {"inicio": D(2026, 11, 3, 8), "fin": D(2026, 11, 3, 12), "llave_cl": D(2026, 11, 3, 8, 40), "devuelta_cl": D(2026, 11, 3, 12, 5), "dev_km": 56240},
+            {"inicio": D(2026, 11, 4, 8), "fin": D(2026, 11, 4, 12), "llave_cl": D(2026, 11, 4, 7, 30), "devuelta_cl": None, "dev_km": None},
+            {"inicio": D(2026, 11, 2, 8), "fin": D(2026, 11, 2, 12), "llave_cl": None, "devuelta_cl": None, "dev_km": 56000}])
+        self.assertEqual([u["inicio"].day for u in r], [4, 3, 2])                     # el más nuevo primero
+        self.assertEqual((r[1]["km_uso"], r[2]["km_uso"]), (240, None))               # contra la devolución anterior
+        self.assertEqual((r[1]["desvio_retiro"]["estado"], r[1]["desvio_retiro"]["texto"]), ("tarde", "40 min tarde"))
+        self.assertEqual(r[1]["desvio_devolucion"]["estado"], "a_tiempo")             # 5 min: dentro de la tolerancia
+        self.assertEqual(r[0]["desvio_retiro"]["estado"], "antes")
+        self.assertIsNone(r[0]["desvio_devolucion"])                                   # todavía en uso
 
     def test_no_se_devuelve_dos_veces(self):
         self.assertEqual(self.devolver().status_code, 200)
@@ -1385,3 +1428,92 @@ class TestAntelacion24(unittest.TestCase):
             "fecha": (dia + dt.timedelta(days=1)).isoformat(), "hora_desde": "09:00", "hora_hasta": "10:00"}, headers=SUPER)
         self.assertEqual(otro.status_code, 409)                  # el día del medio el vehículo está afuera
         self.assertEqual(otro.get_json()["error_codigo"], "CHOQUE_VEHICULO")
+
+
+class TestAgenda24hEnElFrente(unittest.TestCase):
+    """03-nov-2026 (Daniel: «la restricción de 24 es para agenda»): la regla de 24 h no vive solo en el calendario del modal; la agenda
+    principal (pista semanal, lista, próximo hueco y la entrada desde un día) usa la MISMA fuente del límite."""
+    JS = _leer("static", "flota_uso.js")
+
+    def test_hay_una_sola_fuente_del_limite(self):
+        self.assertEqual(self.JS.count("function limite24Base()"), 1)
+        self.assertIn("function cierre24(iso)", self.JS)
+        self.assertIn("function diaCerrado24(iso)", self.JS)
+        self.assertIn("function pkLimite24() { return S.editSol ? null : limite24Base(); }", self.JS)
+
+    def test_la_gestion_no_queda_limitada(self):
+        i = self.JS.index("function limite24Base()")
+        self.assertIn("PERM.gestionar ? null", self.JS[i:i + 140])
+
+    def test_la_pista_la_lista_el_hueco_y_la_entrada_la_respetan(self):
+        for marca in ("cierre24(iso), R[1]",                                    # franja ámbar en la pista
+                      "diaCerrado24(iso) ? '<span class=\"fla-ld-24\"",       # lista de la semana: sin «Pedir»
+                      "(iso + 'T' + hhmm(a)) < l24",                            # tocar un hueco de la pista
+                      "Math.max(i === 0 ? Math.ceil(minutos(ahora.hm) / 30) * 30 : 0, cierre24(iso))",   # próximo hueco libre
+                      "Te dejé el primer día disponible"):                      # entrar a la solicitud desde un día cerrado
+            self.assertIn(marca, self.JS, marca)
+
+    def test_estilos_de_la_franja(self):
+        css = _leer("static", "flota.css")
+        self.assertIn(".fla-c24{", css)
+        self.assertIn(".fla-ld-24{", css)
+
+
+class TestLlaveDelDiaYSlaRespuesta(unittest.TestCase):
+    """03-nov-2026 (Daniel): «hoy es que puedo entregar llaves, no puedo entregar las llaves otro día» y «también los tiempos de
+    respuesta… meterle todo SLA»."""
+
+    def test_llave_solo_desde_el_dia_de_la_reserva_hasta_que_termina(self):
+        D = dt.datetime
+        ini, fin = D(2026, 11, 5, 9), D(2026, 11, 5, 12)
+        self.assertFalse(R.llave_dia(ini, fin, dt.date(2026, 11, 4))["ok"])               # antes: no
+        self.assertIn("jue 05/11/2026", R.llave_dia(ini, fin, dt.date(2026, 11, 4))["texto"])
+        self.assertTrue(R.llave_dia(ini, fin, dt.date(2026, 11, 5))["ok"])                # el día: sí
+        self.assertFalse(R.llave_dia(ini, fin, dt.date(2026, 11, 6))["ok"])               # después: no
+        self.assertTrue(R.llave_dia(D(2026, 11, 5, 9), D(2026, 11, 7, 12), dt.date(2026, 11, 6))["ok"])   # varios días: mientras dure
+
+    def test_la_ruta_no_entrega_la_llave_otro_dia(self):
+        base = Falsa()
+        c = _app(base).test_client()
+        vid = c.post("/flota/api/vehiculos", json={"patente": "PHVD21-7", "tipo": "Camión", "licencia_clases": ["B"]}, headers=SUPER).get_json()["vehiculo"]["id"]
+        cid = c.post("/flota/api/choferes", json=dict(_datos_chofer(1), usuario_id=1), headers=SUPER).get_json()["chofer"]["id"]
+        dia = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+        sid = c.post("/flota/api/solicitudes", json={"vehiculo_id": vid, "chofer_id": cid, "area": "Logística", "motivo": "Reparto zona sur",
+                     "fecha": dia, "hora_desde": "09:00", "hora_hasta": "11:00"}, headers=SUPER).get_json()["solicitud"]["id"]
+        c.post(f"/flota/api/solicitudes/{sid}/confirmar", json={}, headers=SUPER)
+        s = c.get(f"/flota/api/solicitudes/{sid}", headers=SUPER).get_json()["solicitud"]
+        self.assertFalse(s["puede"]["llave"])                                              # el botón no aparece
+        self.assertFalse(s["llave_dia"]["ok"])
+        r = c.post(f"/flota/api/solicitudes/{sid}/llave", json={"nota": ""}, headers=SUPER)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.get_json()["error_codigo"], "LLAVE_OTRO_DIA")
+        self.assertEqual(base.sol[sid]["estado"], "confirmada")
+
+    def test_sla_de_respuesta_cuenta_solo_el_horario_de_llaves(self):
+        D = dt.datetime
+        sello = D(2026, 11, 3, 9, 0)                                                       # martes 09:00
+        self.assertEqual(R.sla_respuesta(sello, None, D(2026, 11, 3, 9, 40))["estado"], "sin_responder")
+        r = R.sla_respuesta(sello, None, D(2026, 11, 3, 15, 0))                            # 4 h de reloj, 5 h - colación = 5 h hábiles
+        self.assertEqual((r["estado"], r["minutos"]), ("atrasada", 300))
+        self.assertEqual(R.sla_respuesta(sello, D(2026, 11, 3, 9, 25), None)["texto"], "Respondida en 25 min")
+        r = R.sla_respuesta(D(2026, 11, 3, 16, 30), D(2026, 11, 4, 8, 30), None)        # pedida al cierre, respondida a primera hora
+        self.assertEqual((r["estado"], r["minutos"]), ("a_tiempo", 60))
+        self.assertIsNone(R.sla_respuesta(None, None, D(2026, 11, 3, 9)))
+    def test_graficos_de_la_ficha(self):
+        D = dt.datetime
+        usos = R.resumen_usos([
+            {"inicio": D(2026, 9, 2, 8), "fin": D(2026, 9, 2, 12), "llave_cl": D(2026, 9, 2, 8, 5), "devuelta_cl": D(2026, 9, 2, 12), "dev_km": 55000,
+             "area": "Logística", "chofer": "Beto Soto"},
+            {"inicio": D(2026, 10, 7, 8), "fin": D(2026, 10, 7, 18), "llave_cl": D(2026, 10, 7, 9, 30), "devuelta_cl": D(2026, 10, 7, 18), "dev_km": 55600,
+             "area": "Logística", "chofer": "Beto Soto"},
+            {"inicio": D(2026, 11, 2, 9), "fin": D(2026, 11, 2, 11), "llave_cl": D(2026, 11, 2, 9), "devuelta_cl": D(2026, 11, 2, 11), "dev_km": 55800,
+             "area": "Servicio Técnico", "chofer": "Ana Pérez"}])
+        g = R.graficos_usos(usos, dt.date(2026, 11, 3))
+        self.assertEqual(len(g["km_mes"]), 12)
+        self.assertEqual(g["km_mes"][-1], {"mes": "2026-11", "texto": "nov 2026", "km": 200})
+        self.assertEqual(g["km_mes"][-2]["km"], 600)
+        self.assertEqual(g["km_mes"][-3]["km"], 0)                                    # el primero no tiene contra qué medirse
+        self.assertEqual([(a["area"], a["horas"], a["usos"]) for a in g["areas"]], [("Logística", 14.0, 2), ("Servicio Técnico", 2.0, 1)])
+        beto = next(p for p in g["puntualidad"] if p["chofer"] == "Beto Soto")
+        self.assertEqual((beto["medidos"], beto["a_tiempo"], beto["pct"]), (4, 3, 75))  # una vez retiró 1 h 30 min tarde
+        self.assertEqual(g["puntualidad"][0]["chofer"], "Beto Soto")                   # primero quien más se atrasa

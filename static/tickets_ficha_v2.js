@@ -284,15 +284,30 @@
       }).join('');
   }
 
+  // «Estado y avance» vive DENTRO de la barra de la guía (Daniel 03-nov-2026: «sí,
+  // fusiónalo», para no tener que bajar tanto). Es el MISMO nodo #tkEstadoAvance con
+  // sus ids (pintarEstadoAvance no cambia): se saca antes de redibujar la guía —el
+  // innerHTML lo borraría— y se devuelve a su hueco. Sin guía, vuelve a ser la
+  // tarjeta propia de siempre, en su lugar.
+  function sacarEstadoAvance(panel){
+    var ea = $('tkEstadoAvance');
+    if (ea && panel.contains(ea)) { panel.parentNode.insertBefore(ea, panel); ea.classList.remove('is-en-guia'); }
+  }
+  function ponerEstadoAvance(panel){
+    var ea = $('tkEstadoAvance'), hueco = panel.querySelector('[data-ea-hueco]');
+    if (ea && hueco) { hueco.appendChild(ea); ea.classList.add('is-en-guia'); }
+  }
+
   var _guiaDibujada = '';
   function pintarGuia(g, t){
     var panel = $('tkGuia');
     if (!panel) return;
-    if (!g || !g.pasos) { panel.innerHTML = ''; panel.style.display = 'none'; return; }
+    if (!g || !g.pasos) { sacarEstadoAvance(panel); panel.innerHTML = ''; panel.style.display = 'none'; return; }
     panel.style.display = '';
     var firma = JSON.stringify(g);
     if (firma === _guiaDibujada) return;   // el latido no redibuja si nada cambió
     _guiaDibujada = firma;
+    sacarEstadoAvance(panel);
     var pr = g.progreso || {hechos: 0, total: 0, pct: 0};
     var sig = g.siguiente || {};
     var chips = g.pasos.map(function(p, i){
@@ -309,6 +324,8 @@
       + '<div class="tk-gbar-t"><i class="bi bi-signpost-split-fill"></i><b>Guía del ticket</b></div>'
       + '<div class="tk-gbar-prog"><span>' + pr.hechos + ' de ' + pr.total + ' pasos listos</span>'
       + '<div class="tk-gprog"><i style="width:' + Math.max(0, Math.min(100, pr.pct)) + '%"></i></div><b>' + pr.pct + '%</b></div>'
+      // Hueco para «Estado» y «Plazo de respuesta» (ver ponerEstadoAvance)
+      + '<div class="tk-gbar-ea" data-ea-hueco></div>'
       // Versión compacta cuando la barra queda fija arriba al hacer scroll (como la guía de Retiros)
       + '<button type="button" class="tk-gbar-sig" data-accion-sig="' + e((sig.acciones || [])[0] || '') + '" title="Ir a lo que toca">'
       + '<i class="bi bi-arrow-right-circle-fill"></i><span>' + (tono === 'fin' ? 'Listo' : 'Siguiente') + ': <b>' + e(sig.titulo || '') + '</b></span></button>'
@@ -321,6 +338,7 @@
       + (sig.texto ? '<p>' + e(sig.texto) + '</p>' : '')
       + (sig.acciones && sig.acciones.length ? '<div class="tk-gacc">' + botonesHtml(sig.acciones) + '</div>' : '')
       + '</div>';
+    ponerEstadoAvance(panel);
     panel.querySelectorAll('.tk-gchip').forEach(function(b){
       b.addEventListener('click', function(){ irAPaso(b.dataset.paso); });
     });
@@ -601,7 +619,7 @@
     var partes = [];
     if (fotos) partes.push(plural(fotos, 'foto', 'fotos'));
     if (otros) partes.push(plural(otros, 'documento', 'documentos'));
-    if (rep.n) partes.push(rep.n + ' repetidas de firma plegadas');
+    if (rep.n) partes.push(rep.n + ' repetidas plegadas');
     pintarPaso('pasoAdjuntos', adjTodos.length ? 'ok' : 'opt',
       adjTodos.length ? partes.join(' · ') : 'Opcional: fotos o documentos del caso');
 

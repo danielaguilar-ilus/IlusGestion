@@ -5042,9 +5042,10 @@ PERMS_KEYS = (
     # asignaciones a cada uno… nadie puede agregar vehículos y nadie puede agregar choferes, solamente puede gestionar solicitudes».
     # Nacen APAGADAS para todos los roles y personas (el módulo solo lo ve el superadministrador hasta que él las encienda, por rol en
     # Roles → Solicitudes de vehículo o por persona en «Permisos individuales»). Agregar, editar, archivar y borrar vehículos y
-    # choferes NO tiene llave: es solo del superadministrador. flota_documentos es aparte a propósito: ver los PDF y el RUT y la
-    # dirección de los choferes no va con pedir ni con gestionar solicitudes.
-    "flota_solicitar", "flota_gestionar", "flota_documentos",
+    # choferes era solo del superadministrador; desde 2026-11-03 (Daniel: «Aarón no puede crear chofer ni vehículos… arréglalo por el
+    # front») tiene su propia llave, flota_administrar, que también nace APAGADA. flota_documentos es aparte a propósito: ver los PDF
+    # y el RUT y la dirección de los choferes no va con pedir ni con gestionar solicitudes (quien administra sí los ve).
+    "flota_solicitar", "flota_gestionar", "flota_documentos", "flota_administrar",
     # mant_ot_autoriza_aviso — «Recibe avisos de autorizaciones de OT» (aditivo 2026-10-23). Daniel: «a Felipe, al ser superadmin, le
     # llegan esos mensajes; si él tiene mis mismas credenciales no va a autorizar: sácale eso por el front». Tipo BLOQUEO: nace
     # concedido (los superadmins siguen recibiéndolos) y se apaga por persona en «Permisos individuales». Solo decide a quién llega la
@@ -5292,6 +5293,7 @@ def _build_perms_from_matrix(role):
     base["flota_solicitar"] = bool(flo.get("solicitar"))
     base["flota_gestionar"] = bool(flo.get("gestionar"))
     base["flota_documentos"] = bool(flo.get("documentos"))
+    base["flota_administrar"] = bool(flo.get("administrar"))
 
     base["superadmin"] = False
     return base
@@ -14421,9 +14423,9 @@ PERMISSIONS_MATRIX = {
     "catalogo":       {"label":"Catálogo de Productos", "icon":"bi-box-seam",
                        "acciones":["eliminar", "descargar_manual", "clasificacion"]},
     # Solicitudes de vehículo (flota propia): aditivo 2026-11-02. Ningún rol tiene filas → nace en False para TODOS salvo superadmin.
-    # Agregar, editar y borrar vehículos y choferes NO está acá: es solo del superadministrador.
+    # Agregar, editar y borrar vehículos y choferes: «administrar» (03-nov-2026); sin ella, solo el superadministrador.
     "flota":          {"label":"Solicitudes de vehículo", "icon":"bi-truck-front",
-                       "acciones":["solicitar", "gestionar", "documentos"]},
+                       "acciones":["solicitar", "gestionar", "documentos", "administrar"]},
 }
 
 # Metadata UI de cada acción — Daniel 2026-06-03: la matriz se reorganiza en
@@ -14561,6 +14563,8 @@ PERMISSIONS_META = {
                        "tipo": "submodulo", "icon": "bi-key"},
         "documentos": {"label": "Ver los PDF de los documentos y el RUT y la dirección de los choferes",
                        "tipo": "bloqueo", "icon": "bi-file-earmark-lock"},
+        "administrar": {"label": "Agregar, editar, archivar y borrar vehículos y choferes (incluye ver sus documentos, RUT y dirección)",
+                        "tipo": "bloqueo", "icon": "bi-plus-square"},
     },
 }
 

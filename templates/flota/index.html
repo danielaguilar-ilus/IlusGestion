@@ -25,7 +25,7 @@
 {% if flota_permisos and flota_permisos.admin %}
 <div class="fl-preview" role="note">
   <i class="bi bi-shield-lock"></i>
-  <span><b>Solo tú administras esto.</b> Agregar, editar, archivar y borrar vehículos y choferes es solo del superadministrador. Los demás entran únicamente si les das un permiso en Roles → «Solicitudes de vehículo»: pedir, gestionar solicitudes o ver documentos.</span>
+  <span><b>Tú administras la flota.</b> Agregas, editas, archivas y borras vehículos y choferes. Los demás entran únicamente con un permiso en Roles → «Solicitudes de vehículo»: pedir, gestionar solicitudes, ver documentos o administrar.</span>
 </div>
 {% endif %}
 
@@ -60,6 +60,8 @@
     <div class="fl-toolbar" id="flSolFiltros">
       <div class="fl-chips" role="group" aria-label="Filtrar por estado">
         <button type="button" class="fl-fchip on" data-sest="todas">Todas</button>
+        {# Daniel, 03-nov-2026: «filtrar por la fecha de hoy, las que están gestionadas para entrega de llave hoy» #}
+        <button type="button" class="fl-fchip fl-fchip--hoy" data-sest="llave_hoy"><i class="bi bi-key"></i>Llaves de hoy <span class="fl-fchip-n" id="flChipLlaveHoyN"></span></button>
         <button type="button" class="fl-fchip" data-sest="solicitada">Por confirmar</button>
         <button type="button" class="fl-fchip" data-sest="confirmada">Confirmadas</button>
         <button type="button" class="fl-fchip" data-sest="llave_entregada">Llave entregada</button>
@@ -654,15 +656,22 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
       <div class="modal-body">
+        {# Avance de la devolución (03-nov-2026, Daniel: «que se viera bien profesional en responsivo… lo va a hacer una persona en el
+           celular»): cuatro marcas que pasan a verde a medida que se completa; queda fija arriba mientras se baja. #}
+        <ol class="fl-dev-prog" id="flDevProg" aria-label="Avance de la devolución"></ol>
         <div class="fl-dev-cab" id="flDevCab"></div>
         <form id="flFormDev" novalidate autocomplete="off">
 
           <section class="fl-paso" data-paso="1">
             <div class="fl-paso-n" aria-hidden="true">1</div>
             <div class="fl-paso-cont">
-              <h6>¿Cuántos kilómetros marca el odómetro? <span class="fl-req">*</span></h6>
+              <h6 id="flDevKmLbl">¿Cuántos kilómetros marca el odómetro? <span class="fl-req">*</span></h6>
               <div class="fl-campo fl-campo--corto" data-campo="km">
-                <input type="text" id="flDevKm" name="km" inputmode="numeric" placeholder="Por ejemplo 56.240" autocomplete="off" class="fl-dev-km">
+                <div class="fl-dev-km-wrap">
+                  <input type="text" id="flDevKm" name="km" inputmode="numeric" placeholder="Ej: 56.240" autocomplete="off" class="fl-dev-km" aria-labelledby="flDevKmLbl" aria-describedby="flDevKmRef">
+                  <span class="fl-dev-km-suf" aria-hidden="true">km</span>
+                </div>
+                <div class="fl-dev-km-ref" id="flDevKmRef"></div>
                 <div class="fl-msg" aria-live="polite"></div>
               </div>
             </div>
@@ -747,11 +756,8 @@
             <div class="fl-paso-n" aria-hidden="true">1</div>
             <div class="fl-paso-cont">
               <h6>¿Quién es? <span class="fl-req">*</span></h6>
-              <div class="fl-chtipo" id="flChTipo" role="radiogroup" aria-label="Tipo de chofer">
-                <button type="button" class="fl-chtipo-b on" data-chtipo="usuario" role="radio" aria-checked="true"><i class="bi bi-person-badge"></i><span><b>Usuario de ILUS</b><span>Tiene cuenta en el sistema</span></span></button>
-                <button type="button" class="fl-chtipo-b" data-chtipo="externo" role="radio" aria-checked="false"><i class="bi bi-person-walking"></i><span><b>Chofer externo</b><span>No tiene usuario: se registra aquí</span></span></button>
-              </div>
-              <p class="fl-ayuda" id="flChAyudaTipo">Al elegir al usuario te sugerimos el RUT y la dirección que ya tiene en su perfil; puedes corregirlos.</p>
+              {# Solo usuarios de ILUS (Daniel, 03-nov-2026: «si no está registrado, no puede retirar el camión»): se quitó «Chofer externo». #}
+              <p class="fl-ayuda" id="flChAyudaTipo">Elige al usuario de ILUS. Te sugerimos el RUT y la dirección que ya tiene en su perfil; puedes corregirlos.</p>
               <div class="fl-campo" data-campo="usuario_id">
                 <select id="flChUsuario" name="usuario_id" class="fl-select fl-select--lleno" aria-label="Usuario de ILUS"></select>
                 <div class="fl-msg" aria-live="polite"></div>

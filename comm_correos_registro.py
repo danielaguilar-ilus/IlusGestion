@@ -499,6 +499,11 @@ REGISTRO = (
        "solo dentro del horario de llaves (L–V 08:00–13:00 y 14:00–17:00).",
        modo="automatico", avisa_a="A quienes tienen «Gestionar solicitudes» en Roles (de respaldo, los superadministradores)",
        nota="Una vez por nivel y por reserva: no repite."),
+    _c("flota_llave_atrasada_solicitante", "Llave sin retirar: aviso a quien pidió el vehículo", "flota", "comunicacion_interna", "usuario",
+       "Cuando la reserva llega al atraso crítico (60 minutos hábiles) y la llave sigue sin entregarse. Lo revisa el barrido de cada "
+       "10 min, solo dentro del horario de llaves. El botón «Ver mi reserva» abre esa solicitud.",
+       modo="automatico", avisa_a="A quien pidió el vehículo y al chofer que retira la llave (técnicos incluidos: es su reserva y no lleva montos)",
+       nota="Daniel, 03-nov-2026: «gestionar el envío de un correo a la persona que solicite… ya que estaría fuera de tiempo». Una vez por reserva."),
     _c("flota_devolucion", "Vehículo devuelto: aviso a la gestión de la flota", "flota", "comunicacion_interna", "interno",
        "Cuando se registra la devolución (kilometraje, combustible y las cuatro fotos). Si viene con novedad o daño, lo dice en el asunto.",
        modo="automatico", avisa_a="A quienes tienen «Gestionar solicitudes» en Roles (de respaldo, los superadministradores)",

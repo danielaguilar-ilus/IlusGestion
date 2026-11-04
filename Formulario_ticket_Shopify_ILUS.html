@@ -163,9 +163,18 @@
 #ilus-tk .itk-ok-btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px}
 #ilus-tk .itk-btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 24px;border-radius:45px;font:inherit;font-weight:500;font-size:13px;text-decoration:none;cursor:pointer;border:1.5px solid var(--k);background:#fff;color:var(--k);text-transform:uppercase}
 #ilus-tk .itk-btn.is-dark{background:var(--k);border-color:var(--k);color:#fff}
+/* Documentos de la compra: hasta 5 (mismo patrón que «Agendar retiro») */
+#ilus-tk .itk-docrow{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:10px;margin:0 0 10px}
+#ilus-tk .itk-docrow.is-extra{grid-template-columns:minmax(0,5fr) minmax(0,7fr) 46px}
+#ilus-tk .itk-docdel{min-height:46px;width:46px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#4b5563;font:inherit;font-size:16px;line-height:1;cursor:pointer}
+#ilus-tk .itk-docdel:hover{border-color:var(--rojo);color:var(--rojo)}
+#ilus-tk .itk-docadd-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:4px 0 0}
+#ilus-tk .itk-docadd-row .itk-help{margin:0;flex:1 1 220px}
+#ilus-tk .itk-btn[disabled]{opacity:.45;cursor:not-allowed}
 #ilus-tk button:focus-visible,#ilus-tk a:focus-visible,#ilus-tk input[type=checkbox]:focus-visible{outline:2px solid #1C1C1C;outline-offset:2px}
 .pac-container{z-index:99999!important;font-family:Inter,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
 @media (prefers-reduced-motion:reduce){ #ilus-tk *,#ilus-tk *::before,#ilus-tk *::after{transition-duration:.01s!important;animation-duration:.01s!important;scroll-behavior:auto!important}}
+@media(max-width:560px){#ilus-tk .itk-docrow,#ilus-tk .itk-docrow.is-extra{grid-template-columns:minmax(0,1fr) 46px}#ilus-tk .itk-docrow:not(.is-extra){grid-template-columns:minmax(0,1fr)}#ilus-tk .itk-docrow.is-extra .itk-doc-tipo{grid-column:1 / -1}#ilus-tk .itk-docrow.is-extra .itk-doc-num{grid-column:1}}
 @media(max-width:720px){#ilus-tk .itk-head{padding:22px 18px 18px}#ilus-tk .itk-title{font-size:28px}#ilus-tk .itk-body{padding:14px}#ilus-tk .itk-step{padding:14px 14px 16px}#ilus-tk .itk-c4,#ilus-tk .itk-c6,#ilus-tk .itk-c8{grid-column:span 12}#ilus-tk .itk-tipos{grid-template-columns:repeat(2,minmax(0,1fr))}#ilus-tk .itk-tipo{gap:8px;padding:8px 10px}#ilus-tk .itk-tipo .tt{font-size:13px}#ilus-tk .itk-tipo .tl{font-size:11.5px}#ilus-tk .itk-files{grid-template-columns:minmax(0,1fr)}#ilus-tk .itk-in{font-size:16px}#ilus-tk .itk-code{font-size:24px}}
 /* Solo cuando el archivo se abre suelto, fuera de Shopify: mismo fondo gris y ancho que la sección de la tienda. */
 html.itk-solo body{margin:0;background:#efefef;padding:15px 16px}
@@ -295,10 +304,22 @@ html.itk-solo #ilus-tk{max-width:947px}
           <p class="itk-step-s">Mientras más detalle, más rápido lo resolvemos. Puedes adjuntar fotos, videos o documentos.</p></div>
         </div>
         <div class="itk-grid">
-          <div class="itk-f itk-c12">
-            <label class="itk-lbl" for="itk_doc">N° de boleta, factura o pedido <span class="itk-tag">Opcional</span></label>
-            <input class="itk-in" id="itk_doc" name="numero_documento" maxlength="60" inputmode="numeric" placeholder="Ej: 10683 o #1136" autocomplete="off">
-            <p class="itk-help">Aparece en la parte superior de tu documento o en el correo de tu pedido. Nos ayuda a ubicar tu compra.</p>
+          <div class="itk-f itk-c12" id="itk_docs">
+            <label class="itk-lbl" for="itk_doc">Documento de tu compra <span class="itk-tag">Opcional</span></label>
+            <div class="itk-docrow" data-docrow>
+              <select class="itk-in itk-doc-tipo" id="itk_doc_tipo" data-doc-tipo aria-label="Tipo de documento">
+                <option value="WEB">Pedido web (ilusfitness.com)</option>
+                <option value="FCV">Factura electrónica</option>
+                <option value="BLV">Boleta electrónica</option>
+              </select>
+              <input class="itk-in itk-doc-num" id="itk_doc" name="numero_documento" data-doc-num maxlength="20" inputmode="numeric" placeholder="Ej: 1136" autocomplete="off" aria-label="N° del documento">
+            </div>
+            <div id="itk_docs_extra"></div>
+            <div class="itk-docadd-row">
+              <button type="button" class="itk-btn" id="itk_docadd">+ Agregar documento</button>
+              <p class="itk-help" id="itk_docadd_help">¿Es por más de una compra? Agrega hasta 5 documentos en esta misma solicitud.</p>
+            </div>
+            <p class="itk-help">El N° aparece en la parte superior de tu factura o boleta, o en el correo de tu pedido (ej: #1136 → escribe 1136). Nos ayuda a ubicar tu compra.</p>
           </div>
           <div class="itk-f itk-c12">
             <label class="itk-lbl" for="itk_desc" id="itk_desc_lbl">¿Qué está pasando? <span class="itk-req">*</span></label>
@@ -726,13 +747,70 @@ html.itk-solo #ilus-tk{max-width:947px}
   form.addEventListener('input', alEditar);
   form.addEventListener('change', alEditar);
 
+  /* ── Documentos de la compra: hasta 5 (pedido web, factura o boleta) ─
+     Viajan al ticket como «WEB-1136, FCV-10683»: el mismo texto que ILUS ya
+     sabe leer para cruzar cada documento con su compra. */
+  var DOC_MAX = 5;
+  function filasDoc() { return [].slice.call($('itk_docs').querySelectorAll('[data-docrow]')); }
+  function soloDigitos(v) { return String(v || '').replace(/\D/g, '').slice(0, 20); }
+  function actualizarDocAdd() {
+    var lleno = filasDoc().length >= DOC_MAX;
+    $('itk_docadd').disabled = lleno;
+    $('itk_docadd_help').textContent = lleno
+      ? 'Llegaste al máximo de ' + DOC_MAX + ' documentos por solicitud.'
+      : '¿Es por más de una compra? Agrega hasta ' + DOC_MAX + ' documentos en esta misma solicitud.';
+  }
+  function agregarFilaDoc(tipo, num) {
+    if (filasDoc().length >= DOC_MAX) return null;
+    var f = document.createElement('div');
+    f.className = 'itk-docrow is-extra'; f.setAttribute('data-docrow', '');
+    f.innerHTML = '<select class="itk-in itk-doc-tipo" data-doc-tipo aria-label="Tipo de documento">' +
+      '<option value="WEB">Pedido web (ilusfitness.com)</option><option value="FCV">Factura electrónica</option><option value="BLV">Boleta electrónica</option></select>' +
+      '<input class="itk-in itk-doc-num" data-doc-num maxlength="20" inputmode="numeric" placeholder="Ej: 10683" autocomplete="off" aria-label="N° del documento">' +
+      '<button type="button" class="itk-docdel" data-doc-del aria-label="Quitar este documento" title="Quitar este documento">✕</button>';
+    if (tipo) f.querySelector('[data-doc-tipo]').value = tipo;
+    if (num) f.querySelector('[data-doc-num]').value = num;
+    $('itk_docs_extra').appendChild(f);
+    actualizarDocAdd();
+    return f;
+  }
+  function limpiarDocs() { $('itk_docs_extra').innerHTML = ''; actualizarDocAdd(); }
+  /* → { texto: 'WEB-1136, FCV-10683', malos: [inputs sin número válido] } */
+  function documentosDelFormulario() {
+    var vistos = {}, partes = [], malos = [];
+    filasDoc().forEach(function (f) {
+      var inp = f.querySelector('[data-doc-num]'), crudo = String(inp.value || '').trim();
+      if (!crudo) return;                                  // fila vacía: se ignora (el campo es opcional)
+      var n = soloDigitos(crudo).replace(/^0+(?=\d)/, '');
+      if (!n) { malos.push(inp); return; }
+      var cod = f.querySelector('[data-doc-tipo]').value + '-' + n;
+      if (!vistos[cod]) { vistos[cod] = 1; partes.push(cod); }
+    });
+    return { texto: partes.join(', '), malos: malos };
+  }
+  $('itk_docadd').addEventListener('click', function () {
+    var f = agregarFilaDoc();
+    if (f) f.querySelector('[data-doc-num]').focus();
+  });
+  $('itk_docs').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-doc-del]') : null;
+    if (!b) return;
+    var fila = b.closest('[data-docrow]');
+    if (fila && fila.parentNode) fila.parentNode.removeChild(fila);
+    actualizarDocAdd();
+  });
+  actualizarDocAdd();
+
   /* ── Datos que vienen en el link de la página ─────────── */
   try {
     var qs = new URLSearchParams(window.location.search);
     var pon = function (id, v) { if (v && !$(id).value) $(id).value = String(v).trim().slice(0, 150); };
     pon('itk_contacto', qs.get('nombre')); pon('itk_email', qs.get('email'));
     pon('itk_tel', qs.get('telefono')); pon('itk_rut', qs.get('rut')); pon('itk_empresa', qs.get('empresa'));
-    pon('itk_doc', (qs.get('documento') || qs.get('numero') || qs.get('pedido') || '').replace(/^#/, ''));
+    // El tipo solo se rellena si el link lo dice («pedido=1136» o «documento=FCV-10683»): nunca se adivina.
+    var qDoc = /^\s*(FCV|BLV|WEB)\s*[-\s]?\s*#?\s*(\d{1,20})\s*$/i.exec(qs.get('documento') || qs.get('numero') || '');
+    if (qs.get('pedido') && soloDigitos(qs.get('pedido'))) { $('itk_doc_tipo').value = 'WEB'; $('itk_doc').value = soloDigitos(qs.get('pedido')); }
+    else if (qDoc) { $('itk_doc_tipo').value = qDoc[1].toUpperCase(); $('itk_doc').value = qDoc[2]; }
     var tipoQs = (qs.get('tipo') || '').toLowerCase().replace(/[^a-z_]/g, '');
     var btnTipo = tipoQs ? $('itk_tipos').querySelector('.itk-tipo[data-tipo="' + tipoQs + '"]') : null;
     if (btnTipo) btnTipo.click();
@@ -759,6 +837,8 @@ html.itk-solo #ilus-tk{max-width:947px}
         : 'No pudimos cargar el buscador de direcciones de Google: recarga la página para validar tu dirección.', $('itk_dir'), 3);
       marcar($('itk_dir'), false, 'itk_dir_err');
     }
+    var docs = documentosDelFormulario();
+    if (docs.malos.length) { falta('Escribe solo el número del documento (ej: 1136).', docs.malos[0], 5); docs.malos.forEach(function (i) { i.classList.add('is-bad'); }); }
     if (!$('itk_desc').value.trim()) { falta(conEquipo() ? 'Cuéntanos qué está pasando.' : 'Cuéntanos qué necesitas.', $('itk_desc'), 5); marcar($('itk_desc'), false); }
     return { errores: errores, primero: primero };
   }
@@ -788,7 +868,7 @@ html.itk-solo #ilus-tk{max-width:947px}
       es_garantia: $('itk_garantia').checked ? 1 : 0,
       sucursal: eq ? $('itk_sucursal').value.trim() : '',
       productos: eq ? productos.map(function (p) { return { sku: p.sku || '', nombre: p.nombre, motivo: ($('itk_multi').checked ? (p.motivo || '') : '') }; }) : [],
-      numero_documento: $('itk_doc').value.trim(),
+      numero_documento: documentosDelFormulario().texto,
       descripcion: $('itk_desc').value.trim(),
       hp_ilus_extra: $('itk_hp').value,
       ilus_t0: T0
@@ -844,7 +924,7 @@ html.itk-solo #ilus-tk{max-width:947px}
     archivos.forEach(function (a) { if (a.thumb) { try { URL.revokeObjectURL(a.thumb); } catch (x) { } } });
     tipoSel = ''; productos = []; archivos = []; ticketId = null; uploadToken = null;
     T0 = Math.floor(Date.now() / 1000);
-    form.reset(); limpiarDir();
+    form.reset(); limpiarDir(); limpiarDocs();
     [].forEach.call(form.querySelectorAll('.itk-in'), function (i) { i.classList.remove('is-bad', 'is-good'); });
     [].forEach.call(form.querySelectorAll('.itk-err'), function (p) { p.hidden = true; });
     [].forEach.call($('itk_tipos').querySelectorAll('.itk-tipo'), function (x) { x.classList.remove('is-sel'); x.setAttribute('aria-pressed', 'false'); });

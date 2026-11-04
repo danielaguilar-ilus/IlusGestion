@@ -711,16 +711,20 @@ ETIQUETAS_ARCHIVO = {"foto": "Foto", "licencia": "Licencia de conducir", **{c: n
 
 def niveles(permisos):
     """Qué puede hacer quien mira la pantalla, a partir de g.permissions. UNA sola función decide los cuatro niveles:
-    admin = agregar, editar, archivar y borrar vehículos y choferes y subir sus archivos (solo el superadministrador: sin llave);
+    admin = agregar, editar, archivar y borrar vehículos y choferes y subir sus archivos (el superadministrador, o quien tenga la llave
+    flota_administrar: Daniel la enciende por rol o por persona en el front);
     gestionar = confirmar, entregar la llave, mover y cancelar solicitudes de cualquiera (flota_gestionar);
-    documentos = ver los PDF y el RUT y la dirección de los choferes (flota_documentos, aparte de pedir y de gestionar);
-    solicitar = entrar, ver la flota y pedir un vehículo (flota_solicitar; quien gestiona también entra)."""
+    documentos = ver los PDF y el RUT y la dirección de los choferes (flota_documentos; quien administra también los ve: no se puede
+    mantener lo que no se ve);
+    solicitar = entrar, ver la flota y pedir un vehículo (flota_solicitar; quien gestiona o administra también entra).
+    Administrar NO da gestionar: no confirma ni entrega la llave, y sigue pidiendo con las 24 horas de aviso."""
     p = permisos or {}
-    admin = bool(p.get("superadmin"))
-    gestionar = admin or bool(p.get("flota_gestionar"))
+    superadmin = bool(p.get("superadmin"))
+    admin = superadmin or bool(p.get("flota_administrar"))
+    gestionar = superadmin or bool(p.get("flota_gestionar"))
     return {"admin": admin, "gestionar": gestionar,
             "documentos": admin or bool(p.get("flota_documentos")),
-            "solicitar": gestionar or bool(p.get("flota_solicitar"))}
+            "solicitar": gestionar or admin or bool(p.get("flota_solicitar"))}
 
 
 # ── Patente con dígito verificador (TVDZ88-5) ──────────────────────────────
@@ -939,6 +943,43 @@ def sla_llave(estado, inicio, fin, ahora, feriados=()):
     return {"estado": "critica", "minutos": m, "texto": f"Atraso crítico · {_duracion(m)} hábiles" + extra}
 
 
+# ── La llave se entrega el día de la reserva y la gestión responde a tiempo (Daniel, 03-nov-2026) ──────────────────────────────
+# «Hoy es que puedo entregar llaves, no puedo entregar las llaves otro día» y «también los tiempos de respuesta… meterle todo SLA».
+SLA_RESPUESTA_MIN = 120      # la gestión confirma o cancela una solicitud dentro de 2 h hábiles (horario de llaves)
+
+
+def llave_dia(inicio, fin, hoy):
+    """¿Se puede entregar HOY la llave de esta reserva? Solo desde el día en que empieza hasta el día en que termina.
+    {"ok", "texto"}: el texto se muestra tal cual en la guía de la solicitud."""
+    if inicio is None or fin is None or hoy is None:
+        return {"ok": False, "texto": ""}
+    if hoy < inicio.date():
+        return {"ok": False, "texto": f"La llave se entrega el día de la reserva: {fecha_dia_texto(inicio.date())}, desde las {hora_texto(inicio)}."}
+    if hoy > fin.date():
+        return {"ok": False, "texto": "La reserva ya terminó: la llave no se entrega otro día. Cancélala o pide una nueva."}
+    return {"ok": True, "texto": "Hoy se entrega la llave" + (f", desde las {hora_texto(inicio)}." if hoy == inicio.date() else ".")}
+
+
+def sla_respuesta(sello, respondida, ahora, feriados=(), objetivo=SLA_RESPUESTA_MIN):
+    """Cuánto tardó (o lleva) la gestión en responder una solicitud: de que se pidió a que se confirmó o canceló, contando solo el
+    horario de llaves de los días hábiles (como el «Sin responder» de Retiros). Todo en hora Chile sin zona. None si falta el sello.
+    Estados: sin_responder (en plazo) · atrasada (pasó el objetivo sin respuesta) · a_tiempo · tarde (se respondió fuera de plazo)."""
+    if sello is None:
+        return None
+    if respondida is not None:
+        m = minutos_habiles(sello, respondida, feriados)
+        ok = m <= objetivo
+        return {"estado": "a_tiempo" if ok else "tarde", "minutos": m, "objetivo": objetivo,
+                "texto": ("Respondida en " + (_duracion(m) if m else "menos de 1 min")) + ("" if ok else " · fuera de plazo")}
+    if ahora is None:
+        return None
+    m = minutos_habiles(sello, ahora, feriados)
+    if m <= objetivo:
+        return {"estado": "sin_responder", "minutos": m, "objetivo": objetivo,
+                "texto": "Sin responder · " + (_duracion(m) + " hábiles" if m else "recién pedida") + f" (plazo {_duracion(objetivo)})"}
+    return {"estado": "atrasada", "minutos": m, "objetivo": objetivo, "texto": f"Respuesta atrasada · {_duracion(m)} hábiles sin responder"}
+
+
 # ── Devolución de la llave (FASE 2, 03-nov-2026) ───────────────────────────
 COMBUSTIBLE_NIVELES = (("lleno", "Lleno"), ("3_4", "3/4"), ("1_2", "1/2"), ("1_4", "1/4"), ("reserva", "Reserva"))
 KM_MAX = 2_000_000
@@ -948,7 +989,9 @@ KM_SALTO_AVISO = 1_500         # más de esto en un solo uso se avisa (no se blo
 
 def validar_devolucion(payload, km_previo=None):
     """(datos, errores, avisos) de una devolución. El kilometraje y el combustible son obligatorios; una novedad o daño exige contarla.
-    Un kilometraje MENOR al último registrado o un salto muy grande se AVISAN (no se traban): la foto del odómetro es la evidencia."""
+    Un kilometraje MENOR al último registrado NO se acepta (Daniel, 03-nov-2026: «si está declarado en 56.240, no va a poder declarar
+    45.000»); el mismo kilometraje sí. Si el registro anterior estaba mal, la gestión lo corrige en la ficha del vehículo con su motivo.
+    Un salto muy grande solo se AVISA: la foto del odómetro es la evidencia."""
     p = payload or {}
     errores, avisos, datos = {}, [], {}
     txt = re.sub(r"[.\s]", "", str(p.get("km") or ""))
@@ -963,8 +1006,8 @@ def validar_devolucion(payload, km_previo=None):
     datos["km"] = km
     if km is not None and km_previo is not None:
         if km < int(km_previo):
-            avisos.append(f"El kilometraje declarado ({km:,} km) es MENOR al último registrado ({int(km_previo):,} km): revisa la foto del odómetro."
-                          .replace(",", "."))
+            errores["km"] = (f"No puede ser menor al último kilometraje registrado ({int(km_previo):,} km). Revisa el odómetro; si el "
+                             f"registro anterior está mal, pídele a la gestión que lo corrija en la ficha del vehículo.").replace(",", ".")
         elif km - int(km_previo) > KM_SALTO_AVISO:
             avisos.append(f"Este uso suma {km - int(km_previo):,} km: revisa que el kilometraje esté bien escrito.".replace(",", "."))
     nivel = str(p.get("combustible") or "").strip()
@@ -983,3 +1026,86 @@ def validar_devolucion(payload, km_previo=None):
 
 def combustible_texto(nivel):
     return dict(COMBUSTIBLE_NIVELES).get(nivel or "", "")
+
+
+# ── Usos del vehículo: lo planeado contra lo real (Daniel, 03-nov-2026: «se van a poder registrar las entregas de cada uno» y
+#    «una comparación para ver qué tan fuera del plan maneja los tiempos cada quien») ─────────────────────────────────────────────
+DESVIO_TOLERANCIA_MIN = 15      # hasta 15 min antes o después de lo reservado se cuenta «a tiempo»
+
+
+def desvio(plan, real, tolerancia=DESVIO_TOLERANCIA_MIN):
+    """Cuánto se apartó lo real de lo reservado, ambos en hora Chile sin zona. {"min": + tarde / − antes, "estado", "texto"} o None."""
+    if plan is None or real is None:
+        return None
+    m = int(round((real - plan).total_seconds() / 60))
+    if abs(m) <= tolerancia:
+        return {"min": m, "estado": "a_tiempo", "texto": "A tiempo"}
+    d, resto = divmod(abs(m), 1440)
+    dur = (f"{d} d {resto // 60} h" if resto // 60 else f"{d} d") if d else _duracion(abs(m))      # «4 d 11 h», no «107 h 25 min»
+    return {"min": m, "estado": "tarde" if m > 0 else "antes", "texto": f"{dur} {'tarde' if m > 0 else 'antes'}"}
+
+
+def resumen_usos(usos):
+    """Agrega a cada uso (dicts con inicio, fin, llave_cl, devuelta_cl en hora Chile y dev_km) el desvío al retirar la llave, el
+    desvío al devolver y los km de ese uso, contados contra la devolución ANTERIOR del mismo vehículo. Devuelve el más nuevo primero."""
+    km_prev = None
+    for u in sorted(usos, key=lambda x: x["inicio"]):
+        km = u.get("dev_km")
+        u["km_uso"] = km - km_prev if km is not None and km_prev is not None and km >= km_prev else None
+        if km is not None:
+            km_prev = km
+        u["desvio_retiro"] = desvio(u.get("inicio"), u.get("llave_cl"))
+        u["desvio_devolucion"] = desvio(u.get("fin"), u.get("devuelta_cl"))
+    return sorted(usos, key=lambda x: x["inicio"], reverse=True)
+
+
+MESES_CORTOS = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def graficos_usos(usos, hoy, meses=12):
+    """Lo que dibujan los gráficos de la ficha del vehículo (Daniel, 03-nov-2026: «podemos tener gráficos»), sacado de los usos YA
+    pasados por resumen_usos (cada uno con inicio, fin, area, chofer, km_uso y sus desvíos):
+    - km_mes: km recorridos en cada uno de los últimos `meses` meses (por el mes en que empezó el uso; los meses sin uso van en 0).
+    - areas: horas RESERVADAS por área, de mayor a menor.
+    - puntualidad: por chofer, cuántas veces retiró y devolvió a tiempo (±15 min) de las que se pudieron medir y su desvío promedio."""
+    claves = []
+    a, m = hoy.year, hoy.month
+    for _ in range(meses):
+        claves.append((a, m))
+        a, m = (a, m - 1) if m > 1 else (a - 1, 12)
+    claves.reverse()
+    km = {k: 0 for k in claves}
+    areas, pers = {}, {}
+    for u in usos:
+        ini, fin = u.get("inicio"), u.get("fin")
+        if ini is None:
+            continue
+        k = (ini.year, ini.month)
+        if k in km and u.get("km_uso"):
+            km[k] += int(u["km_uso"])
+        if fin is not None and fin > ini:
+            nombre = u.get("area") or "Otra área"
+            ar = areas.setdefault(nombre, {"area": nombre, "horas": 0.0, "usos": 0})
+            ar["horas"] += (fin - ini).total_seconds() / 3600
+            ar["usos"] += 1
+        p = pers.setdefault(u.get("chofer") or "(sin nombre)", {"chofer": u.get("chofer") or "(sin nombre)", "usos": 0, "medidos": 0,
+                                                                 "a_tiempo": 0, "tarde": 0, "suma_min": 0})
+        p["usos"] += 1
+        for d in (u.get("desvio_retiro"), u.get("desvio_devolucion")):
+            if d:
+                p["medidos"] += 1
+                p["a_tiempo"] += d["estado"] != "tarde"           # llegar antes también es cumplir
+                p["tarde"] += d["estado"] == "tarde"
+                p["suma_min"] += d["min"]
+    puntualidad = []
+    for p in pers.values():
+        prom = round(p.pop("suma_min") / p["medidos"]) if p["medidos"] else None
+        p["promedio_min"] = prom
+        p["pct"] = round(100 * p["a_tiempo"] / p["medidos"]) if p["medidos"] else None
+        puntualidad.append(p)
+    puntualidad.sort(key=lambda p: (p["pct"] is None, p["pct"] if p["pct"] is not None else 0, -p["usos"]))
+    return {
+        "km_mes": [{"mes": f"{y}-{mm:02d}", "texto": f"{MESES_CORTOS[mm - 1]} {y}", "km": km[(y, mm)]} for (y, mm) in claves],
+        "areas": sorted(({**x, "horas": round(x["horas"], 1)} for x in areas.values()), key=lambda x: -x["horas"]),
+        "puntualidad": puntualidad,
+    }

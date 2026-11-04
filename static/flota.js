@@ -1,5 +1,5 @@
 /* Solicitudes de vehículo · Flota — pestaña VEHÍCULOS: tabla inteligente con foto y calidad de la ficha, ficha con los documentos y su PDF,
-   alta y edición, habilitar / inhabilitar, archivar y borrar (esto último, solo el superadministrador).
+   alta y edición, habilitar / inhabilitar, archivar y borrar (el superadministrador o quien tenga la llave «administrar»).
    Reglas del proyecto que cumple: sin alert/confirm/prompt nativos (REGLA #1: ilusConfirm / ilusPrompt / ilusToast), tabla paginada con pie
    «Mostrando A–B de N» (REGLA #4.3), campos que pasan de rojo a verde mientras se escribe y al guardar se alerta, no se traba (REGLA #42),
    datos completos sin cortar (REGLA #15) y celular primero (REGLA #3).
@@ -360,8 +360,10 @@
         (c.faltan.length ? '<ul class="fl-faltan">' + c.faltan.map(function (f) { return '<li>' + esc(f) + '</li>'; }).join('') + '</ul>' : '<p class="fl-t-ok">La ficha está completa y al día.</p>');
     }
     var repo = PERM.documentos ? '<h6 class="fl-ficha-h">Repositorio de documentos</h6><div class="fl-repo" id="flRepo"><span class="fl-t-mute">Cargando…</span></div>' : '';
-    $('flFichaCuerpo').innerHTML = cab + datos + docs + repo + cal;
+    var usos = '<h6 class="fl-ficha-h">Gráficos, usos y devoluciones</h6><div class="fl-usos" id="flUsos"><span class="fl-t-mute">Cargando…</span></div>';
+    $('flFichaCuerpo').innerHTML = cab + datos + usos + docs + repo + cal;
     if (PERM.documentos) pintarRepositorio(v.id);
+    USOS.pag = 1; cargarUsos(v.id);
     var b = [];
     if (admin) {
       b.push('<button type="button" class="btn btn-outline-secondary" data-facc="editar"><i class="bi bi-pencil me-1"></i>Editar datos</button>');
@@ -375,6 +377,125 @@
     }
     b.push('<button type="button" class="btn btn-dark" data-bs-dismiss="modal">Cerrar</button>');
     $('flFichaAcc').innerHTML = b.join('');
+  }
+  /* Usos y devoluciones (Daniel, 03-nov-2026: «se van a poder registrar las entregas de cada uno… ver qué tan fuera del plan maneja
+     los tiempos cada quien»): cada retiro con lo reservado contra lo real y los km de ese uso. Paginado como Etiquetas (REGLA #4.3). */
+  var USOS = { lista: [], pag: 1, por: 10, vid: null };
+  function chipDesvio(d, vacio) {
+    if (!d) return '<span class="fl-dsv fl-dsv--nada">' + esc(vacio) + '</span>';
+    return '<span class="fl-dsv fl-dsv--' + esc(d.estado) + '">' + esc(d.texto) + '</span>';
+  }
+  function cargarUsos(vid) {
+    USOS.vid = vid;
+    api(API + '/' + vid + '/usos').then(function (d) {
+      if (S.fichaId !== vid) return;
+      USOS.lista = d.ok ? (d.usos || []) : null;
+      USOS.graficos = d.ok ? (d.graficos || null) : null;
+      pintarUsos(d.ok ? '' : (d.error || 'No se pudieron leer los usos.'));
+    });
+  }
+  /* ═══ Gráficos de la ficha (Daniel, 03-nov-2026: «podemos tener gráficos»: km por mes, uso por área, puntualidad por persona y
+     vencimientos). HTML simple, sin librerías. Un solo color por serie; el área lleva su color de la agenda y su nombre al lado
+     (nunca solo el color); la puntualidad usa el semáforo con su texto. El detalle exacto queda en la tabla de usos de abajo. */
+  var AREA_COLOR = { log: '#2563eb', sst: '#dc2626', ger: '#0a0a0a', mkt: '#7c3aed', otra: '#6b7280' };
+  function areaClave(a) {
+    var n = String(a || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    if (n.indexOf('logist') >= 0) return 'log';
+    if (n.indexOf('servicio') >= 0 || n.indexOf('tecnic') >= 0 || n === 'sstt') return 'sst';
+    if (n.indexOf('gerenc') >= 0) return 'ger';
+    if (n.indexOf('market') >= 0) return 'mkt';
+    return 'otra';
+  }
+  function horas(h) { return (Math.round(h * 10) / 10).toLocaleString('es-CL') + ' h'; }
+  function minTexto(m) {
+    var a = Math.abs(m), d = Math.floor(a / 1440), h = Math.floor((a % 1440) / 60);
+    var t = d ? d + ' d' + (h ? ' ' + h + ' h' : '') : (a >= 60 ? Math.floor(a / 60) + ' h' + (a % 60 ? ' ' + (a % 60) + ' min' : '') : a + ' min');
+    return m === 0 ? 'justo a la hora' : t + (m > 0 ? ' tarde' : ' antes');
+  }
+  function grafKmMes(g) {
+    var datos = g.km_mes || [], max = Math.max.apply(null, datos.map(function (x) { return x.km; }).concat([0]));
+    if (!max) return '<p class="fl-graf-vacio">Todavía no hay kilómetros medidos: se cuentan desde la segunda devolución.</p>';
+    var ultimo = -1;
+    datos.forEach(function (x, i) { if (x.km) ultimo = i; });
+    var total = datos.reduce(function (t, x) { return t + x.km; }, 0);
+    return '<div class="fl-graf-col" role="img" aria-label="' + esc('Kilómetros por mes, últimos 12 meses: ' + num(total) + ' km en total') + '">' +
+      datos.map(function (x, i) {
+        var etq = x.km && (x.km === max || i === ultimo) ? '<span class="fl-graf-val">' + num(x.km) + '</span>' : '';
+        return '<div class="fl-graf-c" title="' + esc(x.texto + ': ' + num(x.km) + ' km') + '">' + etq +
+          '<i style="height:' + (x.km ? Math.max(3, Math.round(x.km * 82 / max)) : 0) + '%"></i><span class="fl-graf-x">' + esc(x.texto.slice(0, 3)) + '</span></div>';
+      }).join('') + '</div><p class="fl-graf-nota">' + num(total) + ' km en los últimos 12 meses</p>';
+  }
+  function grafAreas(g) {
+    var datos = g.areas || [], max = Math.max.apply(null, datos.map(function (x) { return x.horas; }).concat([0]));
+    if (!max) return '<p class="fl-graf-vacio">Todavía no tiene usos registrados.</p>';
+    return '<div class="fl-graf-filas">' + datos.map(function (x) {
+      return '<div class="fl-graf-fila" title="' + esc(x.area + ': ' + horas(x.horas) + ' en ' + x.usos + (x.usos === 1 ? ' uso' : ' usos')) + '">' +
+        '<span class="fl-graf-et"><i class="fl-graf-sw" style="background:' + AREA_COLOR[areaClave(x.area)] + '"></i>' + esc(x.area) + '</span>' +
+        '<span class="fl-graf-barra"><i style="width:' + Math.max(2, Math.round(x.horas * 100 / max)) + '%;background:' + AREA_COLOR[areaClave(x.area)] + '"></i></span>' +
+        '<span class="fl-graf-v">' + esc(horas(x.horas)) + ' · ' + x.usos + (x.usos === 1 ? ' uso' : ' usos') + '</span></div>';
+    }).join('') + '</div><p class="fl-graf-nota">Horas reservadas por cada área</p>';
+  }
+  function grafPuntualidad(g) {
+    var datos = (g.puntualidad || []).filter(function (p) { return p.medidos; });
+    if (!datos.length) return '<p class="fl-graf-vacio">Todavía no hay retiros ni devoluciones para medir.</p>';
+    return '<div class="fl-graf-filas">' + datos.map(function (p) {
+      var cls = p.pct >= 80 ? 'ok' : (p.pct >= 50 ? 'warn' : 'bad');
+      return '<div class="fl-graf-fila" title="' + esc(p.chofer + ': ' + p.a_tiempo + ' de ' + p.medidos + ' a tiempo') + '">' +
+        '<span class="fl-graf-et">' + esc(p.chofer) + '</span>' +
+        '<span class="fl-graf-barra"><i class="fl-graf-sem--' + cls + '" style="width:' + Math.max(2, p.pct) + '%"></i></span>' +
+        '<span class="fl-graf-v"><span class="fl-graf-v1"><b>' + p.pct + '%</b> a tiempo · ' + p.a_tiempo + ' de ' + p.medidos + '</span>' +
+        (p.promedio_min != null ? '<span>Promedio: ' + esc(minTexto(p.promedio_min)) + '</span>' : '') + '</span></div>';
+    }).join('') + '</div><p class="fl-graf-nota">Retiro y devolución contra lo reservado (a tiempo: ±15 min o antes). Primero quien más se atrasa.</p>';
+  }
+  function grafVencimientos(v) {
+    var docs = (v && v.documentos) || [];
+    if (!docs.length) return '<p class="fl-graf-vacio">Sin documentos registrados.</p>';
+    var EST = { vencido: 'bad', por_vencer: 'warn', vigente: 'ok' };
+    return '<div class="fl-graf-linea"><div class="fl-graf-ejes" aria-hidden="true"><span></span><span class="fl-graf-ejes-c"><span>Hoy</span><span>6 meses</span><span>1 año</span></span><span></span></div>' + docs.map(function (d) {
+      var dias = d.dias, pos = dias == null ? null : Math.min(100, Math.max(0, dias * 100 / 365));
+      return '<div class="fl-graf-fila fl-graf-fila--doc" title="' + esc(d.nombre + ': ' + (d.vence_fmt ? 'vence el ' + d.vence_fmt + ' · ' + d.texto : 'sin fecha')) + '">' +
+        '<span class="fl-graf-et">' + esc(d.nombre) + '</span>' +
+        '<span class="fl-graf-pista">' + (pos == null ? '' : '<i class="fl-graf-hito fl-graf-sem--' + (EST[d.estado] || 'ok') + '" style="left:' + pos + '%"></i>') + '</span>' +
+        '<span class="fl-graf-v">' + (d.vence_fmt ? esc(d.vence_fmt) + '<span>' + esc(d.texto) + '</span>' : '<span>Sin fecha registrada</span>') + '</span></div>';
+    }).join('') + '</div><p class="fl-graf-nota">Cuándo vence cada documento en el próximo año (rojo vencido, ámbar por vencer, verde al día).</p>';
+  }
+  function graficosHtml(g, v) {
+    if (!g) return '';
+    function tarjeta(t, ic, cuerpo) { return '<section class="fl-graf"><h6><i class="bi ' + ic + '"></i>' + esc(t) + '</h6>' + cuerpo + '</section>'; }
+    return '<div class="fl-grafs">' + tarjeta('Kilómetros por mes', 'bi-speedometer2', grafKmMes(g)) + tarjeta('Uso por área', 'bi-diagram-3', grafAreas(g)) +
+      tarjeta('Puntualidad por persona', 'bi-stopwatch', grafPuntualidad(g)) + tarjeta('Vencimientos', 'bi-calendar-event', grafVencimientos(v)) + '</div>';
+  }
+  function pintarUsos(error) {
+    var el = document.querySelector('#flFichaCuerpo .fl-usos');
+    if (!el) return;
+    if (error) { el.innerHTML = '<span class="fl-t-mute">' + esc(error) + '</span>'; return; }
+    var L = USOS.lista || [];
+    var graf = graficosHtml(USOS.graficos, buscar(S.fichaId));
+    if (!L.length) { el.innerHTML = graf + '<span class="fl-t-mute">Todavía no tiene usos: aquí aparece cada retiro de llave y su devolución.</span>'; return; }
+    var tarde = L.filter(function (u) { return (u.desvio_retiro && u.desvio_retiro.estado === 'tarde') || (u.desvio_devolucion && u.desvio_devolucion.estado === 'tarde'); }).length;
+    var conKm = L.filter(function (u) { return u.km_uso != null; });
+    var km = conKm.reduce(function (t, u) { return t + u.km_uso; }, 0);
+    var paginas = Math.max(1, Math.ceil(L.length / USOS.por)), p = Math.min(USOS.pag, paginas), desde = (p - 1) * USOS.por;
+    var filas = L.slice(desde, desde + USOS.por).map(function (u) {
+      return '<tr><td data-label="Uso"><b>' + esc(u.numero) + '</b><span class="fl-sub">' + esc(u.rango_texto) + '</span></td>' +
+        '<td data-label="Chofer"><b>' + esc(u.chofer) + '</b><span class="fl-sub">' + esc((u.area || '') + (u.solicitante ? ' · pidió ' + u.solicitante : '')) + '</span></td>' +
+        '<td data-label="Retiró la llave">' + esc(u.llave_fmt || '—') + chipDesvio(u.desvio_retiro, 'Sin registro') + '</td>' +
+        '<td data-label="Devolvió">' + (u.estado === 'devuelta' ? esc(u.devuelta_fmt || '—') + chipDesvio(u.desvio_devolucion, 'Sin registro')
+          : '<span class="fl-dsv fl-dsv--uso">En uso</span>') + '</td>' +
+        '<td data-label="Kilometraje">' + (u.dev_km != null ? '<b>' + num(u.dev_km) + ' km</b>' : '—') +
+          (u.km_uso != null ? '<span class="fl-sub">+' + num(u.km_uso) + ' km en este uso</span>' : '') + '</td>' +
+        '<td data-label="Combustible y estado">' + esc(u.combustible_texto || '—') +
+          (u.estado === 'devuelta' ? '<span class="fl-sub' + (u.novedad ? ' fl-t-warn' : '') + '">' + (u.novedad ? 'Con novedad' : 'Sin novedad') + '</span>' : '') + '</td></tr>';
+    }).join('');
+    el.innerHTML = graf + '<div class="fl-usos-res"><span><b>' + L.length + '</b> ' + (L.length === 1 ? 'uso' : 'usos') + '</span>' +
+      (conKm.length ? '<span><b>' + num(km) + ' km</b> recorridos</span>' : '<span>Los km de cada uso se cuentan desde la segunda devolución</span>') +
+      '<span class="' + (tarde ? 'fl-t-warn' : 'fl-t-ok') + '"><b>' + tarde + '</b> fuera de horario (más de 15 min)</span></div>' +
+      '<div class="fl-ftabla-wrap"><table class="fl-ftabla fl-ftabla--usos"><thead><tr><th>Uso</th><th>Chofer</th><th>Retiró la llave</th><th>Devolvió</th><th>Kilometraje</th><th>Combustible y estado</th></tr></thead><tbody>' +
+      filas + '</tbody></table></div>' +
+      '<div class="fl-pie fl-pie--usos"><div class="fl-pie-info">Mostrando ' + (desde + 1) + '–' + Math.min(desde + USOS.por, L.length) + ' de ' + L.length + '</div>' +
+      '<div class="fl-pie-ctrl"><button type="button" class="fl-pg" data-upag="-1"' + (p <= 1 ? ' disabled' : '') + '>Anterior</button>' +
+      '<span class="fl-pg-n">Página ' + p + ' de ' + paginas + '</span>' +
+      '<button type="button" class="fl-pg" data-upag="1"' + (p >= paginas ? ' disabled' : '') + '>Siguiente</button></div></div>';
   }
   /* Repositorio: TODO lo que se le ha subido al vehículo, el vigente y los anteriores (Daniel, 02-nov-2026). Nada se borra. */
   function pintarRepositorio(vid) {
@@ -792,6 +913,8 @@
       if (im && im.tagName === 'IMG') { var d = document.createElement('i'); d.className = 'bi bi-truck-front'; im.replaceWith(d); }
     }, true);
     $('flFichaCuerpo').addEventListener('click', function (ev) {
+      var pg = ev.target.closest('[data-upag]');
+      if (pg) { USOS.pag = Math.max(1, USOS.pag + parseInt(pg.getAttribute('data-upag'), 10)); pintarUsos(''); return; }
       var b = ev.target.closest('[data-farch]');
       if (!b) return;
       if (b.getAttribute('data-farch') === 'subir') elegirArchivo(b.getAttribute('data-tipo'));

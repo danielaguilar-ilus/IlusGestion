@@ -95,5 +95,5 @@ console.log('OK');
     assert r.returncode == 0 and "OK" in r.stdout, r.stderr or r.stdout
     # el contador del paso 5 y el botón «Mostrar» existen
     v2 = open(os.path.join(_RAIZ, "static", "tickets_ficha_v2.js"), encoding="utf-8").read()
-    assert "tkAdjRepetidos" in v2 and "repetidas de firma plegadas" in v2
+    assert "tkAdjRepetidos" in v2 and "repetidas plegadas" in v2
     assert "tkAdjToggleRep()" in js
