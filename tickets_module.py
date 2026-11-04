@@ -8428,6 +8428,115 @@ def register_tickets_routes(app, ctx):
         return {"contactos": out, "cliente_ficha": cliente}
 
     # ─────────────────────────────────────────────────────────────────
+    #  AUDITORÍA (SOLO LECTURA) — correos del cliente guardados dos veces.
+    #  04-nov-2026 (Daniel: «se siguen repitiendo las imágenes»): antes del
+    #  reclamo atómico (_tk_mail_reclamar) un mismo correo podía entrar dos
+    #  veces al mismo ticket, con sus fotos. Esta ruta LISTA esos pares para
+    #  que una persona decida qué quitar; no escribe nada. (tk_api_get no
+    #  sirve para revisar cientos de tickets: registra una «vista» de quien
+    #  lo abre en cada uno, y eso ensuciaría la bitácora de actividad.)
+    #  Solo superadmin: trae asuntos y primeras líneas de correos de clientes.
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_dup_agrupar(filas):
+        """Agrupa mensajes del MISMO ticket con el MISMO Message-ID. Solo
+        devuelve los grupos con 2 o más copias, ordenadas por id (la primera
+        es la que se conservaría). `mismo_contenido` dice si el texto de todas
+        las copias es idéntico (huella MD5); si no, una persona debe mirarlo."""
+        grupos = {}
+        for f in (filas or []):
+            try:
+                meta = json.loads(f.get("metadata") or "")
+            except Exception:
+                continue
+            mid = str(meta.get("message_id") or "").strip() if isinstance(meta, dict) else ""
+            if not mid:
+                continue
+            grupos.setdefault((f.get("ticket_id"), mid), []).append(f)
+        out = []
+        for (tid, mid), copias in grupos.items():
+            if len(copias) < 2:
+                continue
+            copias = sorted(copias, key=lambda c: c.get("id") or 0)
+            out.append({
+                "ticket_id": tid, "message_id": mid, "copias": copias,
+                "mismo_contenido": len({c.get("huella") for c in copias}) == 1,
+            })
+        out.sort(key=lambda gr: (gr["ticket_id"] or 0, gr["copias"][0].get("id") or 0))
+        return out
+
+    @app.route("/tickets/api/auditoria/correos-duplicados", methods=["GET"])
+    @_tickets_required
+    def tk_api_auditoria_correos_duplicados():
+        if not _tk_solo_superadmin():
+            return jsonify({"ok": False,
+                            "error": "Solo un superadministrador puede ver esta auditoría."}), 403
+        try:
+            dias = min(3650, max(1, int(request.args.get("dias", 120))))
+        except Exception:
+            dias = 120
+        filas = mysql_fetchall(
+            "SELECT id, ticket_id, tipo, metadata, usuario, created_at, message_date, "
+            "       MD5(contenido) AS huella, CHAR_LENGTH(contenido) AS largo, "
+            "       LEFT(contenido, 140) AS vista "
+            "FROM tk_mensajes "
+            "WHERE tipo IN ('client_message','mensaje') AND metadata LIKE %s "
+            "  AND created_at >= DATE_SUB(NOW(), INTERVAL %s DAY) "
+            "ORDER BY ticket_id, id LIMIT 60000",
+            ('%"message_id"%', dias)) or []
+        grupos = _tk_dup_agrupar(filas)
+
+        ids_msg = [c["id"] for gr in grupos for c in gr["copias"]]
+        adj_por_msg = {}
+        for i in range(0, len(ids_msg), 400):
+            lote = ids_msg[i:i + 400]
+            for a in (mysql_fetchall(
+                    "SELECT id, mensaje_id, archivo_nombre, mime_type, file_size_kb "
+                    "FROM tk_adjuntos WHERE mensaje_id IN (" + ",".join(["%s"] * len(lote)) + ") "
+                    "ORDER BY id", tuple(lote)) or []):
+                adj_por_msg.setdefault(a["mensaje_id"], []).append(
+                    {"id": a["id"], "nombre": a.get("archivo_nombre"),
+                     "tipo": a.get("mime_type"), "kb": a.get("file_size_kb")})
+
+        ids_tk = sorted({gr["ticket_id"] for gr in grupos})
+        tickets = {}
+        for i in range(0, len(ids_tk), 400):
+            lote = ids_tk[i:i + 400]
+            for r in (mysql_fetchall(
+                    "SELECT id, numero_ticket, titulo, empresa, nombre_contacto, estado "
+                    "FROM tk_tickets WHERE id IN (" + ",".join(["%s"] * len(lote)) + ")",
+                    tuple(lote)) or []):
+                tickets[r["id"]] = r
+
+        def _copia(c):
+            d = _fmt_row({"created_at": c.get("created_at"), "message_date": c.get("message_date")})
+            return {"id": c["id"], "tipo": c.get("tipo"), "usuario": c.get("usuario"),
+                    "guardado": d.get("created_at"), "fecha_correo": d.get("message_date"),
+                    "largo": c.get("largo"), "adjuntos": adj_por_msg.get(c["id"], [])}
+
+        salida = []
+        for gr in grupos:
+            tk = tickets.get(gr["ticket_id"]) or {}
+            copias = [_copia(c) for c in gr["copias"]]
+            salida.append({
+                "ticket_id": gr["ticket_id"], "numero_ticket": tk.get("numero_ticket"),
+                "titulo": tk.get("titulo"), "empresa": tk.get("empresa") or tk.get("nombre_contacto"),
+                "estado": tk.get("estado"), "message_id": gr["message_id"],
+                "vista": gr["copias"][0].get("vista"), "mismo_contenido": gr["mismo_contenido"],
+                "conservar": copias[0], "quitar": copias[1:],
+            })
+        return jsonify({
+            "ok": True, "solo_lectura": True, "ventana_dias": dias, "revisados": len(filas),
+            "resumen": {
+                "tickets_afectados": len(ids_tk),
+                "grupos": len(salida),
+                "mensajes_a_quitar": sum(len(s["quitar"]) for s in salida),
+                "adjuntos_a_quitar": sum(len(q["adjuntos"]) for s in salida for q in s["quitar"]),
+                "grupos_con_contenido_distinto": sum(1 for s in salida if not s["mismo_contenido"]),
+            },
+            "grupos": salida,
+        })
+
+    # ─────────────────────────────────────────────────────────────────
     #  API — actualizar
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>", methods=["PATCH"])
