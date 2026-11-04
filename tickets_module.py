@@ -4924,24 +4924,53 @@ def register_tickets_routes(app, ctx):
     #  _ensure_tk_cotizaciones_historico_triplea para el porqué vive en su
     #  propia tabla y no en mant_cotizaciones.
     # ─────────────────────────────────────────────────────────────────
+    def _hist_fecha_sin_zona(v):
+        """Una FECHA tal cual está guardada (dd/mm/aaaa), sin pasarla de UTC a hora Chile: la regla #6 es para instantes, no para fechas.
+        «Válida hasta» viene del CSV a las 00:00 y convertirla la mostraba un día antes y a las 20:00/21:00 (05/08/2026 20:00 en vez de 06/08/2026)."""
+        if not v:
+            return None
+        try:
+            return v.strftime("%d/%m/%Y")
+        except Exception:
+            return str(v)
+
     @app.route("/tickets/cotizaciones/historico")
     @_tickets_required
     @_tk_sin_cotizaciones_tecnico
     def tk_cotizaciones_historico():
-        q = (request.args.get("q") or "").strip()
+        """Histórico de Triple A (solo lectura, resumen). PAGINADO (REGLA #4.3): «Mostrando A–B de N · N por página · Anterior / Página X de Y /
+        Siguiente», con el filtro en el servidor. Antes: LIMIT 300 mudo y las 177 filas juntas (7.800 px en escritorio, 42.000 px en celular)."""
+        try:
+            page = max(1, int(request.args.get("page") or 1))
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            per_page = int(request.args.get("per_page") or 25)
+        except (TypeError, ValueError):
+            per_page = 25
+        if per_page not in (10, 25, 50, 100):
+            per_page = 25
+        q = (request.args.get("q") or "").strip()[:60]
         where, params = "1=1", []
         if q:
             where = "(numero LIKE %s OR cliente LIKE %s OR rut LIKE %s)"
             like = f"%{q}%"
             params = [like, like, like]
+        total = int((mysql_fetchone(f"SELECT COUNT(*) AS n FROM tk_cotizaciones_historico WHERE {where}", tuple(params)) or {}).get("n") or 0)
+        paginas = max(1, -(-total // per_page))
+        page = min(page, paginas)
         rows = mysql_fetchall(
             f"SELECT id, numero, estado, cliente, rut, subtotal, descuento, impuesto, total, "
             f"       valida_hasta, creada_csv "
-            f"FROM tk_cotizaciones_historico WHERE {where} ORDER BY id DESC LIMIT 300",
-            tuple(params)) or []
-        return render_template("tickets/cotizaciones_historico.html",
-                                filas=[_fmt_row(r, dt_keys=("valida_hasta", "creada_csv")) for r in rows],
-                                filtro_q=q)
+            f"FROM tk_cotizaciones_historico WHERE {where} ORDER BY id DESC LIMIT %s OFFSET %s",
+            tuple(params) + (per_page, (page - 1) * per_page)) or []
+        filas = []
+        for r in rows:
+            f = _fmt_row(r, dt_keys=("creada_csv",), date_keys=())
+            f["valida_hasta"] = _hist_fecha_sin_zona(r.get("valida_hasta"))
+            filas.append(f)
+        return render_template("tickets/cotizaciones_historico.html", filas=filas, filtro_q=q, page=page, per_page=per_page,
+                               total=total, paginas=paginas)
 
     # ─────────────────────────────────────────────────────────────────
     #  PAGINA — Cotizaciones (esqueleto, Fase 5 del blueprint)
