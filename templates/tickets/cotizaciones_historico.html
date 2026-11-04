@@ -5,39 +5,67 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='tickets_cotizaciones.css') }}">
 {% endblock %}
 {% block content %}
+{# 2026-11-05 (Daniel: «arranca con la Fase 0»; REGLAS #4.3, #15, #61): el Histórico mostraba las 177 filas juntas (7.800 px de alto en escritorio,
+   42.000 px en celular), con 205 px de scroll de lado a 1280 px, 49 nombres de cliente cortados con «…» y letra de 9,9 a 11,8 px.
+   Medido en producción. Ahora: paginador (A–B de N · N por página · Anterior / Página X de Y / Siguiente), la tabla CABE desde 1240 px,
+   el nombre va completo, la letra es de 12 px o más y bajo 1240 px cada cotización es una tarjeta compacta (≈ 137 px en vez de 236). #}
 <style>
-.hist-table-wrap{overflow-x:auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px}
-.hist-table{width:100%;border-collapse:collapse;min-width:820px}
-.hist-table th{font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;padding:9px 12px;
+.hist-table-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow-x:auto}
+.hist-table{width:100%;border-collapse:collapse}
+.hist-table th{font-size:.75rem;text-transform:uppercase;letter-spacing:.03em;color:#6b7280;padding:9px 7px;
   text-align:left;border-bottom:2px solid #f3f4f6;white-space:nowrap}
-.hist-table td{padding:8px 12px;border-bottom:1px solid #f3f4f6;vertical-align:middle;white-space:nowrap}
+.hist-table td{padding:8px 7px;border-bottom:1px solid #f3f4f6;vertical-align:middle;font-size:.88rem}
+.hist-table th:first-child,.hist-table td:first-child{padding-left:12px}
+.hist-table th:last-child,.hist-table td:last-child{padding-right:12px}
 .hist-table tr:last-child td{border-bottom:none}
-.hist-num{font-family:'JetBrains Mono',monospace;font-size:.74rem;font-weight:800;color:#92400e;
+.hist-table td.h-num,.hist-table td.h-rut,.hist-table td.h-sub,.hist-table td.h-imp,.hist-table td.h-tot,.hist-table td.h-val,.hist-table td.h-fec{white-space:nowrap}
+.hist-table td.h-cli{min-width:160px}
+.hist-num{font-family:'JetBrains Mono',monospace;font-size:.78rem;font-weight:800;color:#92400e;
   background:#fef3c7;padding:2px 8px;border-radius:6px;}
-.hist-cliente{font-weight:700;color:#0a0a0a;max-width:280px;overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap;display:inline-block;vertical-align:middle;}
-.hist-total{font-family:'JetBrains Mono',monospace;font-weight:800;font-variant-numeric:tabular-nums;}
-.hist-badge{font-size:.62rem;font-weight:800;padding:2px 9px;border-radius:50px;text-transform:uppercase;}
-.hb-borrador{background:#f3f4f6;color:#6b7280;} .hb-sent{background:#dbeafe;color:#1e40af;}
+/* REGLA #15: el nombre del cliente va COMPLETO (se parte en líneas; antes se cortaba con «…» y 49 de 177 quedaban cortados) */
+.hist-cliente{font-weight:700;color:#0a0a0a;overflow-wrap:anywhere}
+.hist-total{font-family:'JetBrains Mono',monospace;font-weight:800;font-variant-numeric:tabular-nums}
+.hist-badge{font-size:.75rem;font-weight:800;padding:2px 9px;border-radius:50px;text-transform:uppercase;display:inline-block}
+.hb-borrador{background:#f3f4f6;color:#4b5563;} .hb-sent{background:#dbeafe;color:#1e40af;}
 .hb-approved{background:#dcfce7;color:#166534;} .hb-rejected{background:#fee2e2;color:#991b1b;}
+.hist-fecha{font-size:.82rem;color:#6b7280}
+.hist-fecha .hist-hora{font-size:.75rem}
+.hist-vacio td{text-align:center;color:#6b7280;padding:28px 12px}
 .hist-aviso{background:#fff8e1;border:1px solid #fde68a;border-radius:12px;padding:14px 18px;
   font-size:.82rem;color:#78350f;margin-bottom:16px;display:flex;gap:10px;align-items:flex-start;}
 .hist-aviso i{font-size:1.1rem;flex:0 0 auto;margin-top:1px;}
-/* 2026-10-15 (REGLA #3 y #15): en celular cada cotización es una tarjeta, sin desplazar
-   de lado y con el nombre del cliente completo. */
-@media (max-width:640px){
-  .hist-table{min-width:0}
+/* Pie de tabla (REGLA #4.3, el mismo de Etiquetas, Manifiestos y Anexos anulados):
+   Mostrando A–B de N · N por página · Anterior / Página X de Y / Siguiente */
+.hist-pie{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;background:#0a0a0a;color:#fff;
+  border-radius:12px;padding:10px 14px;margin-top:12px;font-size:.88rem}
+.hist-pie a,.hist-pie select{min-height:44px;display:inline-flex;align-items:center}
+.hist-pie a{padding:0 14px;border-radius:8px;border:1px solid #333;color:#fff;text-decoration:none;font-weight:800}
+.hist-pie a:hover{border-color:#dc2626}
+.hist-pie a.dis{opacity:.35;pointer-events:none}
+/* REGLA #61: bajo 1240 px la tabla ya no cabe (menú de 212 px + márgenes) → tarjetas COMPACTAS, sin scroll de lado:
+   número + estado / cliente completo + total / los demás datos, cada uno con su etiqueta, en una línea que se parte sola. */
+@media (max-width:1239.98px){
+  .hist-table-wrap{border:0;background:transparent;overflow:visible}
   .hist-table,.hist-table tbody{display:block}
   .hist-table thead{display:none}
-  .hist-table tbody tr{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;padding:12px 14px;border-bottom:1px solid #f3f4f6}
-  .hist-table td{display:block;padding:0;border:0;white-space:normal;font-size:.84rem}
-  .hist-table td[data-label]::before{content:attr(data-label);display:block;font-size:.64rem;font-weight:800;
-    text-transform:uppercase;letter-spacing:.04em;color:#9ca3af}
-  .hist-table td.h-num::before,.hist-table td.h-cli::before{content:none}
-  .hist-table td.h-cli{grid-column:1/-1}
-  .hist-table td.h-tot{text-align:right}
-  .hist-table td[colspan]{grid-column:1/-1}
-  .hist-cliente{max-width:none;white-space:normal;display:block}
+  .hist-table tbody{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:10px}
+  .hist-table tbody tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:12px 14px;background:#fff;
+    border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .hist-table tbody tr.hist-vacio{display:block}
+  .hist-table td{display:block;padding:0;border:0;white-space:normal;font-size:.88rem}
+  .hist-table td[data-label]::before{content:attr(data-label) " ";font-size:.75rem;font-weight:700;color:#6b7280}
+  .hist-table td.h-num::before,.hist-table td.h-cli::before,.hist-table td.h-est::before,.hist-table td.h-tot::before,.hist-table td.h-rut::before{content:none}
+  .hist-table td.h-num{order:1}
+  .hist-table td.h-est{order:2;margin-left:auto}
+  .hist-table td.h-cli{order:3;flex:1 1 0;min-width:55%;font-size:.95rem}
+  .hist-table td.h-tot{order:4;margin-left:auto;font-size:1rem}
+  .hist-table td.h-rut{order:5}
+  .hist-table td.h-sub{order:6}
+  .hist-table td.h-imp{order:7}
+  .hist-table td.h-val{order:8}
+  .hist-table td.h-fec{order:9}
+}
+@media (max-width:640px){
   .tk-hero > .btn{flex:1 1 100%;min-height:44px}
 }
 </style>
@@ -60,12 +88,13 @@
 </div>
 
 <form method="get" class="mb-3" style="max-width:360px">
+  <input type="hidden" name="per_page" value="{{ per_page }}">
   <div class="input-group">
     <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
     <input type="text" name="q" value="{{ filtro_q }}" class="form-control"
            placeholder="Buscar por número, cliente o RUT..." style="font-size:16px">
     {% if filtro_q %}
-    <a href="{{ url_for('tk_cotizaciones_historico') }}" class="btn btn-outline-secondary">
+    <a href="{{ url_for('tk_cotizaciones_historico') }}" class="btn btn-outline-secondary" title="Quitar el filtro" aria-label="Quitar el filtro">
       <i class="bi bi-x-lg"></i>
     </a>
     {% endif %}
@@ -84,24 +113,46 @@
       {% for f in filas %}
       <tr>
         <td class="h-num" data-label="Número"><span class="hist-num">{{ f.numero }}</span></td>
-        <td class="h-cli" data-label="Cliente"><span class="hist-cliente" title="{{ f.cliente }}">{{ f.cliente or '—' }}</span></td>
-        <td data-label="RUT">{{ f.rut or '—' }}</td>
-        <td data-label="Estado">
+        <td class="h-cli" data-label="Cliente"><span class="hist-cliente">{{ f.cliente or '—' }}</span></td>
+        <td class="h-rut" data-label="RUT">{{ f.rut or '—' }}</td>
+        <td class="h-est" data-label="Estado">
           {% set _e = (f.estado or '')|lower %}
           <span class="hist-badge {{ 'hb-sent' if _e=='sent' else ('hb-approved' if _e=='approved' else ('hb-rejected' if _e=='rejected' else 'hb-borrador')) }}">
-            {{ f.estado or '—' }}
+            {{ f.estado | cotiz_estado }}
           </span>
         </td>
-        <td data-label="Subtotal">${{ '{:,}'.format(f.subtotal | int).replace(',', '.') }}</td>
-        <td data-label="Impuesto">${{ '{:,}'.format(f.impuesto | int).replace(',', '.') }}</td>
+        <td class="h-sub" data-label="Subtotal">${{ '{:,}'.format(f.subtotal | int).replace(',', '.') }}</td>
+        <td class="h-imp" data-label="Impuesto">${{ '{:,}'.format(f.impuesto | int).replace(',', '.') }}</td>
         <td class="hist-total h-tot" data-label="Total">${{ '{:,}'.format(f.total | int).replace(',', '.') }}</td>
-        <td data-label="Válida hasta">{{ f.valida_hasta or '—' }}</td>
-        <td data-label="Fecha" style="font-size:.78rem;color:#6b7280;">{{ f.creada_csv or '—' }}</td>
+        <td class="h-val" data-label="Válida hasta">{{ f.valida_hasta or '—' }}</td>
+        <td class="hist-fecha h-fec" data-label="Creada">
+          {%- if f.creada_csv -%}
+            {% set _fc = f.creada_csv.split(' ') %}{{ _fc[0] }}{% if _fc|length > 1 %} <span class="hist-hora">{{ _fc[1] }}</span>{% endif %}
+          {%- else -%}—{%- endif -%}
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="text-center text-muted py-4">Sin resultados</td></tr>
+      <tr class="hist-vacio"><td colspan="9">Sin resultados</td></tr>
       {% endfor %}
     </tbody>
   </table>
+</div>
+
+{# Pie de tabla (REGLA #4.3): Mostrando A–B de N · N por página · Anterior / Página X de Y / Siguiente #}
+<div class="hist-pie">
+  <span>{% if total %}Mostrando <b>{{ (page - 1) * per_page + 1 }}–{{ [page * per_page, total] | min }}</b> de <b>{{ total }}</b>{% else %}Sin resultados{% endif %}</span>
+  <form method="get" class="d-inline-flex gap-2 align-items-center">
+    <input type="hidden" name="q" value="{{ filtro_q }}">
+    <select name="per_page" onchange="this.form.submit()" class="form-select" style="width:auto;font-size:16px" aria-label="Cotizaciones por página">
+      {% for n in (10, 25, 50, 100) %}<option value="{{ n }}" {{ 'selected' if n == per_page }}>{{ n }} por página</option>{% endfor %}
+    </select>
+  </form>
+  <span class="d-inline-flex gap-2 align-items-center">
+    <a class="{{ 'dis' if page <= 1 }}" {% if page <= 1 %}aria-disabled="true" tabindex="-1"{% endif %}
+       href="{{ url_for('tk_cotizaciones_historico', q=filtro_q or None, per_page=per_page, page=page - 1) if page > 1 else '#' }}">Anterior</a>
+    <span>Página {{ page }} de {{ paginas }}</span>
+    <a class="{{ 'dis' if page >= paginas }}" {% if page >= paginas %}aria-disabled="true" tabindex="-1"{% endif %}
+       href="{{ url_for('tk_cotizaciones_historico', q=filtro_q or None, per_page=per_page, page=page + 1) if page < paginas else '#' }}">Siguiente</a>
+  </span>
 </div>
 {% endblock %}
