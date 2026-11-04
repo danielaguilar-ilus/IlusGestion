@@ -13287,6 +13287,12 @@ function otdChkEsHallazgoFirma(t){
   if (tr === 'lista') return otdChkEsResultado(t) && otdChkOpcionEsHallazgo(otdChkOpcion(t));
   return false;
 }
+function otdChkEquipoExento(mid){   // el equipo saltado / fuera de servicio / de baja no exige checklist ni la foto de sus hallazgos (como el servidor)
+  try {
+    const it = (typeof document !== 'undefined') ? document.querySelector('#otdWkCard .otd-wk-item[data-mid="' + String(mid) + '"]') : null;
+    return !!(it && it.dataset && it.dataset.excluido === '1');
+  } catch(e){ return false; }
+}
 function otdChkEvaluar(tareas, estados, estricto){
   // 🧰 2026-10-20: `estados` = {item_manual_id: estado} de los productos cuyo checklist se dispensa por una ACCIÓN del
   // técnico («No llegó», «No tiene arreglo», «No se puede usar»): espejo de _chk_revision_evaluar(tareas, estados).
@@ -13310,6 +13316,8 @@ function otdChkEvaluar(tareas, estados, estricto){
     const esNoLlego = k[0] === 'i' && Object.keys(opciones).some(id => opciones[id] === 'no llego');
     if (esNoLlego) noLlego.push(Number(k.slice(1)));
     const hayFalla = ts.some(t => otdChkValorVerif(t) === 'falla');
+    // 📸 2026-11-04: un equipo exento (saltado, fuera de servicio, de baja) no pide la foto de sus hallazgos: el servidor tampoco se la exige.
+    const _exentoGrupo = !!estricto && k[0] === 'm' && otdChkEquipoExento(k.slice(1));
     const textos = ts.filter(t => String(t.tipo_respuesta || '').trim().toLowerCase() === 'texto');
     let argumento = textos.filter(t => !!Number(t.obligatoria)).map(t => t.id);
     if (!argumento.length){
@@ -13328,7 +13336,7 @@ function otdChkEvaluar(tareas, estados, estricto){
         const nFotos = (t.n_fotos != null) ? Number(t.n_fotos) : (t.fotos || []).length;
         const fsh = (t.foto_si_hallazgo === true || Number(t.foto_si_hallazgo) > 0);
         // 📸 2026-11-04: sin la marca de la plantilla, un hallazgo igual pide su foto (la firma la exige): `_firma`.
-        const _firma = !!estricto && otdChkEsHallazgoFirma(t);
+        const _firma = !!estricto && !_exentoGrupo && otdChkEsHallazgoFirma(t);
         if ((fsh || _firma) && !vj.na && !nFotos){
           const op = opciones[t.id];
           const hallazgo = _firma ||

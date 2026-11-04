@@ -26,7 +26,7 @@ from tests.test_ot_revision_v3 import HAY_NODE, _js_funcion, _node
 D = FA.texto("templates/ot2/detalle.html")
 
 FUNCS = ("otdChkNorm", "otdChkVj", "otdChkOpciones", "otdChkEsResultado", "otdChkOpcion", "otdChkValorVerif",
-         "otdChkGrupoClave", "otdChkOpcionEsHallazgo", "otdChkEsHallazgoFirma", "otdChkEvaluar")
+         "otdChkGrupoClave", "otdChkOpcionEsHallazgo", "otdChkEsHallazgoFirma", "otdChkEquipoExento", "otdChkEvaluar")
 OPC_RESULTADO = ["Apto", "Apto con observaciones", "Reparar", "Dar de baja", "Fuera de servicio", "No llegó", "Pendiente de diagnóstico"]
 
 
@@ -82,6 +82,21 @@ class TestModoEstricto(unittest.TestCase):
         ev = _evaluar([_tarea(1, "verificacion", "Cable", {"valor": "aprobado"}),
                        _tarea(2, "verificacion", "Poleas", {"valor": "falla", "na": True, "na_motivo": "no aplica"})], True)
         self.assertTrue(ev[1]["hecha"] and ev[2]["hecha"])
+
+    def test_un_equipo_exento_no_pide_la_foto(self):
+        """Saltado / fuera de servicio / de baja (data-excluido=1 en su tarjeta): el servidor no le exige la foto de sus hallazgos
+        (excluir_maquinas), así que la pantalla tampoco; el resto de los equipos sí."""
+        tareas = [_tarea(1, "verificacion", "Cable", {"valor": "falla"}, maquina=7),
+                  _tarea(2, "verificacion", "Poleas", {"valor": "falla"}, maquina=8)]
+        cuerpo = r"""
+        global.document = { querySelector(sel){ return sel.indexOf('data-mid="7"') >= 0 ? {dataset: {excluido: '1'}} : {dataset: {}}; } };
+        const T = %s;
+        console.log(JSON.stringify(otdChkEvaluar(T, {}, true).por_tarea));
+        """ % json.dumps(tareas, ensure_ascii=False)
+        out = _js(cuerpo)
+        self.assertTrue(out["1"]["hecha"])
+        self.assertIsNone(out["1"]["motivo"])
+        self.assertEqual(out["2"]["motivo"], "foto_hallazgo")
 
     def test_el_estricto_es_el_de_la_constante_de_la_plantilla(self):
         """Sin pasar el 3.er argumento, manda OTD_FOTO_HALLAZGO_ESTRICTA (la plantilla la apaga con la OT firmada o cerrada)."""
