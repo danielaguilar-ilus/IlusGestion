@@ -29,7 +29,7 @@
 {% set _pg_first = ((_pg_p - 1) * _pg_sz) + 1 if _pg_t > 0 else 0 %}
 {% set _pg_last  = (_pg_first + (products|length) - 1) if _pg_t > 0 else 0 %}
 
-<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 px-3 py-2"
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 px-3 py-2 pg-wrap"
      style="border-top:1px solid #2d2d2d;background:#161616;border-radius:0 0 10px 10px">
 
   {# ── Contador ── #}
@@ -45,10 +45,10 @@
   </div>
 
   {# ── Controles ── #}
-  <div class="d-flex align-items-center gap-2">
+  <div class="d-flex align-items-center gap-2 pg-controls">
 
     {# Selector de tamaño (recarga al cambiar) #}
-    <select class="form-select form-select-sm pagination-size-select"
+    <select class="form-select form-select-sm pagination-size-select pg-size" aria-label="Productos por página"
             data-q="{{ _pg_q }}" data-fotos="{{ _pg_f }}" data-ver="{{ _pg_ver or '' }}"
             data-orden="{{ _pg_o }}" data-dir="{{ _pg_od }}"
             style="width:auto;font-size:.78rem;padding:2px 24px 2px 8px;border-radius:6px;
@@ -61,18 +61,18 @@
     {# Botón anterior #}
     {% if _pg_p > 1 %}
       <a href="?page={{ _pg_p - 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q|urlencode }}{% endif %}{% if _pg_f %}&fotos={{ _pg_f }}{% endif %}{% if _pg_ver %}&ver={{ _pg_ver }}{% endif %}{% if _pg_o %}&orden={{ _pg_o }}&dir={{ _pg_od }}{% endif %}"
-         class="btn btn-sm btn-outline-secondary fw-bold" style="font-size:.78rem">
+         class="btn btn-sm btn-outline-secondary fw-bold pg-prev" style="font-size:.78rem">
         <i class="bi bi-chevron-left"></i> Anterior
       </a>
     {% else %}
-      <button type="button" class="btn btn-sm btn-outline-secondary fw-bold"
+      <button type="button" class="btn btn-sm btn-outline-secondary fw-bold pg-prev"
               style="font-size:.78rem;opacity:.4;cursor:not-allowed" disabled>
         <i class="bi bi-chevron-left"></i> Anterior
       </button>
     {% endif %}
 
     {# Indicador página actual #}
-    <span class="badge"
+    <span class="badge pg-page" aria-current="page"
           style="background:var(--ilus-red,#dc2626);color:#fff;font-size:.78rem;
                  padding:6px 10px;border-radius:6px;font-weight:700">
       Pagina {{ _pg_p }} de {{ _pg_tp }}
@@ -81,11 +81,11 @@
     {# Botón siguiente #}
     {% if _pg_p < _pg_tp %}
       <a href="?page={{ _pg_p + 1 }}&size={{ _pg_sz }}{% if _pg_q %}&q={{ _pg_q|urlencode }}{% endif %}{% if _pg_f %}&fotos={{ _pg_f }}{% endif %}{% if _pg_ver %}&ver={{ _pg_ver }}{% endif %}{% if _pg_o %}&orden={{ _pg_o }}&dir={{ _pg_od }}{% endif %}"
-         class="btn btn-sm btn-ilus fw-bold" style="font-size:.78rem">
+         class="btn btn-sm btn-ilus fw-bold pg-next" style="font-size:.78rem">
         Siguiente <i class="bi bi-chevron-right"></i>
       </a>
     {% else %}
-      <button type="button" class="btn btn-sm btn-outline-secondary fw-bold"
+      <button type="button" class="btn btn-sm btn-outline-secondary fw-bold pg-next"
               style="font-size:.78rem;opacity:.4;cursor:not-allowed" disabled>
         Siguiente <i class="bi bi-chevron-right"></i>
       </button>

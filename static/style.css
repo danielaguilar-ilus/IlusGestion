@@ -1215,6 +1215,136 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   ETIQUETAS — pulido responsivo (Daniel 2026-11-04)
+   Medido en producción con iframes de 360 / 390 / 414 / 1280 / 1366 px.
+═══════════════════════════════════════════════════════════════════ */
+
+/* Utilidad que Bootstrap 5 NO trae y que index, product_detail, labels y
+   print_setup ya usaban: sin min-width:0, un hijo flex con texto largo no se
+   encoge y empuja a sus hermanos fuera del contenedor (el badge de estado de
+   la tarjeta móvil se salía +55px a 390px y +101px a 360px). */
+.min-w-0 { min-width: 0; }
+
+/* Tarjetas KPI: misma altura en cada fila (en el teléfono medían 82/89/92/92px). */
+#kpiCards .kpi-card { height: 100%; }
+#kpiCards .kpi-card:focus-visible { outline: 2px solid var(--ilus-red); outline-offset: 2px; }
+
+@media (min-width: 768px) {
+  /* 9 columnas: el padding lateral de 12px a 8px recupera 72px. La tabla
+     necesitaba 1107px y a 1366px de pantalla solo hay 1091px disponibles
+     (aparecía una barra de scroll horizontal dentro del card). */
+  .ilus-table-fullview .ilus-table th,
+  .ilus-table-fullview .ilus-table td {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  /* "Acciones" nunca se parte: con nombres muy largos la tabla comprimía esta
+     columna por debajo de lo que necesita y el botón Imprimir partía el ícono
+     y el texto en dos líneas (90×50px). nowrap fija su ancho mínimo al real. */
+  .ilus-table-fullview .ilus-table td:last-child { white-space: nowrap; }
+  /* Encabezados ordenables: anillo de foco visible sobre el fondo negro */
+  .ilus-table-fullview .ilus-table th a:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 3px;
+    border-radius: 3px;
+  }
+}
+
+/* Bajo 1400px el botón Imprimir pasa a solo ícono (conserva title y
+   aria-label): recupera ~56px y la tabla entra completa en 1280px. */
+@media (min-width: 768px) and (max-width: 1399.98px) {
+  .ilus-table-fullview .btn-lbl { display: none; }
+  /* Pantallas de 1250–1400px: un poco más compacto para que la tabla entre
+     con holgura real (a 1280px quedaban 2px; un nombre con una palabra larga
+     la hacía saltar a scroll horizontal). */
+  .ilus-table-fullview .ilus-table th,
+  .ilus-table-fullview .ilus-table td { padding-left: 6px; padding-right: 6px; }
+  .ilus-table-fullview .ilus-table th { letter-spacing: .3px; }
+}
+
+/* Tablet en horizontal (768–1279px): la tabla se desplaza DENTRO del card y la
+   columna "Acciones" queda fija al borde derecho, siempre al alcance (a 1024px
+   quedaba fuera de la vista y había que desplazarse para llegar a Ver/Editar). */
+@media (min-width: 768px) and (max-width: 1279.98px) {
+  .ilus-table-fullview .ilus-table th:last-child,
+  .ilus-table-fullview .ilus-table td:last-child {
+    position: sticky;
+    right: 0;
+  }
+  .ilus-table-fullview .ilus-table td:last-child {
+    background: #fff;
+    z-index: 2;
+    box-shadow: -8px 0 8px -8px rgba(0, 0, 0, .25);
+  }
+  .ilus-table-fullview .ilus-table tbody tr:hover td:last-child { background: #fafafa; }
+  .ilus-table-fullview .ilus-table thead th:last-child {
+    z-index: 6;
+    box-shadow: -8px 0 8px -8px rgba(0, 0, 0, .35), 0 2px 4px rgba(0, 0, 0, .08);
+  }
+}
+
+@media (max-width: 767.98px) {
+  /* Aire al final de la lista: el botón flotante "+ Nuevo" ya no tapa la
+     paginación (cubría el botón Siguiente). */
+  .eti-mobile-list { padding-bottom: 84px; }
+
+  /* Fila de acciones de la tarjeta: objetivos táctiles de 44px que no se
+     encogen. A 390px los dos botones de ícono se achicaban a 32px y a 360px
+     las etiquetas se partían en dos líneas (61px de alto). */
+  .eti-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .eti-card-actions .btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+  }
+  .eti-card-actions .eti-act-icon  { flex: 0 0 44px; width: 44px; padding: 0; }
+  /* Anchos mínimos = lo que el contenido necesita: a 360px entran los cuatro
+     botones en una fila; solo en pantallas de 320px los de ícono bajan a una
+     segunda fila en vez de apretar "Imprimir". */
+  .eti-card-actions .eti-act-ver   { flex: 1 1 62px; min-width: 62px; }
+  .eti-card-actions .eti-act-print { flex: 1.6 1 94px; min-width: 94px; }
+
+  /* Vista rápida: la tabla de bultos entra en 390px sin scroll lateral
+     (medía 409px; "PESO VOL" quedaba cortado y "1 cm" se partía en dos). */
+  #qmBody .ilus-table th,
+  #qmBody .ilus-table td { padding: 8px 6px; white-space: nowrap; }
+  #qmBody .ilus-table th { font-size: .7rem; letter-spacing: .3px; }
+
+  /* Botón cerrar de los modales de esta pantalla: zona táctil de 44px
+     (medía 31px). El ícono sigue de 1em. */
+  #quickModal .btn-close,
+  #scannerModal .btn-close,
+  #deleteQuickModal .btn-close {
+    box-sizing: content-box;
+    width: 1em;
+    height: 1em;
+    padding: 1em;
+    margin: -.7em -.7em -.7em auto;
+  }
+}
+
+/* Paginación compartida (index y ficha de mantenciones): en pantallas
+   angostas los controles se acomodan en dos filas en vez de salirse. A 390px
+   "Siguiente" quedaba fuera de la pantalla (x 373–445). */
+@media (max-width: 575.98px) {
+  .pg-wrap { justify-content: center !important; }
+  .pg-controls { flex-wrap: wrap; width: 100%; }
+  .pg-size { flex: 1 1 auto; min-height: 44px; }
+  .pg-page { order: 2; }
+  .pg-prev, .pg-next {
+    flex: 1 1 calc(50% - 4px);
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pg-prev { order: 3; }
+  .pg-next { order: 4; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    TABLA DE EQUIPOS DEL CLIENTE — full-viewport opt-in (Daniel
    2026-05-26: misma estética que la tabla de etiquetas).
    Solo la tabla scrollea, header negro sticky arriba.
