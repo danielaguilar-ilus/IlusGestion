@@ -858,7 +858,8 @@ def register_flota_routes(app, ctx):
         "FROM flota_choferes c LEFT JOIN `" + _AUTH + "` u ON u.id = c.usuario_id")
     _SQL_SOL = (
         "SELECT s.*, v.patente AS v_patente, v.tipo AS v_tipo, v.marca AS v_marca, v.modelo AS v_modelo, v.km_actual AS v_km, "
-        "COALESCE(u.nombre, c.nombre_completo) AS chofer_nombre, COALESCE(u.phone, c.telefono) AS chofer_phone "
+        "COALESCE(u.nombre, c.nombre_completo) AS chofer_nombre, COALESCE(u.phone, c.telefono) AS chofer_phone, "
+        "c.usuario_id AS chofer_usuario_id "
         "FROM flota_solicitudes s JOIN flota_vehiculos v ON v.id = s.vehiculo_id "
         "LEFT JOIN flota_choferes c ON c.id = s.chofer_id LEFT JOIN `" + _AUTH + "` u ON u.id = c.usuario_id")
     _SQL_OCUPA = (
@@ -1201,6 +1202,9 @@ def register_flota_routes(app, ctx):
         ini, fin = r["inicio"], r["fin"]
         est = r.get("estado")
         mia = bool(uid and r.get("solicitante_id") == uid)
+        # Quien retiró la llave es quien trae el vehículo: una reserva que nace de una OT la pide quien creó la OT, pero la devuelve el técnico
+        # (04-nov-2026, revisión escéptica: sin esto el chofer no podía registrar la devolución desde su celular).
+        soy_chofer = bool(uid and r.get("chofer_usuario_id") == uid)
         titulo = " ".join(x for x in (r.get("v_tipo"), r.get("v_marca"), r.get("v_modelo")) if x)
         ahora = _ahora_chile()
         fer = _feriados(ini.year, fin.year, ahora.year)
@@ -1240,7 +1244,7 @@ def register_flota_routes(app, ctx):
                 "editar": gest and est in fr.ESTADOS_EDITABLES,
                 "cancelar": (gest and est in fr.ESTADOS_OCUPAN) or (mia and est in fr.ESTADOS_EDITABLES),
                 # Devolver la llave (FASE 2): la gestión, que la recibe, o quien pidió el vehículo, que la trae.
-                "devolver": est == "llave_entregada" and (gest or mia),
+                "devolver": est == "llave_entregada" and (gest or mia or soy_chofer),
             },
         }
 
@@ -1344,11 +1348,12 @@ def register_flota_routes(app, ctx):
                 "solicitante": f.get("solicitante_nombre"), "patente_fmt": fr.patente_con_guion(f.get("v_patente")),
                 "sello_fmt": _hora_chile(f.get("sello_at"))}
 
-    def _reservar(datos, sid=None, motivo_cambio=None, solicitante=None, ot=None):
+    def _reservar(datos, sid=None, motivo_cambio=None, solicitante=None, ot=None, reabrir=False):
         """Crea una reserva (sid=None) o mueve una existente. TODO en una transacción con el vehículo bloqueado (FOR UPDATE): así dos
         personas que piden a la vez el mismo vehículo no pasan las dos; gana el sello (quien llegó primero) y la otra recibe quién lo tiene.
         `solicitante` = (id, nombre) de quien pide cuando no es la persona conectada (una OT aprobada a distancia); `ot` = (id, número) de la
-        orden de trabajo de la que nace la reserva (04-nov-2026). Devuelve (cuerpo_json, http)."""
+        orden de trabajo de la que nace la reserva (04-nov-2026). `reabrir=True` (la OT se movió de día u hora): al mover una reserva, vuelve a «Por
+        confirmar» con sello nuevo, porque la gestión había confirmado OTRO horario. Devuelve (cuerpo_json, http)."""
         if get_mysql is None:
             return {"ok": False, "error": "El servidor no pudo abrir la base de datos. Intenta de nuevo en un momento."}, 500
         ahora = _ahora_chile()
@@ -1440,7 +1445,9 @@ def register_flota_routes(app, ctx):
             else:
                 cur.execute(
                     "UPDATE flota_solicitudes SET vehiculo_id=%s, area=%s, chofer_id=%s, inicio=%s, fin=%s, motivo=%s, "
-                    "modificada_por=%s, modificada_at=NOW() WHERE id=%s AND estado IN ('solicitada','confirmada')",
+                    "modificada_por=%s, modificada_at=NOW()" +
+                    (", estado='solicitada', confirmada_por=NULL, confirmada_at=NULL, sello_at=NOW(), sla_aviso=NULL" if reabrir else "") +
+                    " WHERE id=%s AND estado IN ('solicitada','confirmada')",
                     (datos["vehiculo_id"], datos["area"], datos["chofer_id"], inicio, fin, datos["motivo"], current_username(), sid))
                 if not cur.rowcount:
                     conn.rollback()
@@ -1546,12 +1553,35 @@ def register_flota_routes(app, ctx):
                            f"{ocupado['rango_texto']}.")
                 por_veh[str(v["id"])] = {"ok": not err, "error": err, "aviso": aviso}
             choferes.append({"usuario_id": uid, "nombre": nombre, "chofer_id": fila["id"], "enrolado": True, "motivo": None, "por_vehiculo": por_veh})
-        avisos = list(_avisos_dia_no_laboral(inicio, fin)) if horario_ok else []
+        avisos = []
+        if horario_ok and fin <= _ahora_chile():
+            # Un horario que ya terminó no se puede reservar (el servidor lo rechaza al crear): no se muestra nada como «libre».
+            horario_ok = False
+            avisos.append("Ese horario ya pasó: elige un día y una hora que no hayan terminado.")
+        if horario_ok:
+            avisos += list(_avisos_dia_no_laboral(inicio, fin))
+            avisos += list(fr.avisos_horario(inicio, fin, _feriados(inicio.year, fin.year)))      # llaves: lunes a viernes hábiles, 08–13 y 14–17
         return {"ok": True, "horario_ok": horario_ok, "vehiculos": vehiculos, "choferes": choferes, "avisos": avisos,
                 "horario_llaves": fr.HORARIO_TEXTO, "antelacion_horas": fr.MIN_ANTELACION_H, "sla_respuesta_min": fr.SLA_RESPUESTA_MIN}
 
+    def _ot_puede_reservar():
+        """Reservar desde una OT pasa por la MISMA puerta que Solicitudes de vehículo (`flota_solicitar`, que Daniel asigna por el front) y
+        nunca la familia técnico (REGLA #19/#26). Revisión escéptica 04-nov: sin esto cualquiera que creara OT reservaba la flota a ciegas."""
+        es_tec = ctx.get("_es_rol_tecnico")
+        try:
+            tecnico = bool(es_tec()) if es_tec else False
+        except Exception:
+            tecnico = True               # sin poder saber quién es, se cierra
+        try:
+            return bool(_flota_puede()) and not tecnico
+        except Exception:
+            return False
+
     def _ot_reservar(ot_id, numero_ot, titulo_ot, fecha, desde, hasta, vehiculo_id, chofer_id, solicitante=None):
         """Reserva el vehículo para una OT recién creada. Devuelve {ok, solicitud, avisos} o {ok: False, error}: NUNCA lanza ni deshace la OT."""
+        if not _ot_puede_reservar():
+            return {"ok": False, "codigo": "SIN_PERMISO_FLOTA",
+                    "error": "Tu usuario no tiene el permiso «Solicitar vehículos», así que no se reservó el vehículo."}
         motivo = re.sub(r"\s+", " ", f"Para la {numero_ot}" + (f": {titulo_ot}" if titulo_ot else "")).strip()[:fr.USO_MOTIVO_MAX]
         datos, errores = fr.validar_solicitud(
             {"vehiculo_id": vehiculo_id, "chofer_id": chofer_id, "area": "Servicio Técnico", "motivo": motivo, "fecha": fecha,
@@ -1563,7 +1593,7 @@ def register_flota_routes(app, ctx):
             return {"ok": False, "error": cuerpo.get("error") or "No se pudo reservar el vehículo.", "codigo": cuerpo.get("error_codigo")}
         avisos = list(cuerpo.get("avisos") or [])
         if datos["inicio"] < _ahora_chile() + timedelta(hours=fr.MIN_ANTELACION_H):
-            avisos.append(f"Faltan menos de {fr.MIN_ANTELACION_H} horas para esta reserva: la gestión de flota la verá como urgente.")
+            avisos.append(f"Faltan menos de {fr.MIN_ANTELACION_H} horas para esta reserva: avísale a la gestión de flota para que la confirme a tiempo.")
         fila = _sol_fila(cuerpo["id"])
         info = _ot_fila_json(dict(fila)) if fila else {"id": cuerpo["id"]}
         return {"ok": True, "solicitud": info, "avisos": avisos}
@@ -1585,7 +1615,112 @@ def register_flota_routes(app, ctx):
             print(f"[flota] reservas de la OT {ot_id}: {type(e).__name__}", flush=True)
             return []
 
-    OT_API.update(disponibilidad=_ot_disponibilidad, reservar=_ot_reservar, de_orden=_ot_de_orden)
+    # ── UNA SOLA AGENDA (Daniel, 04-nov-2026: «al cancelar la OT o mover la agenda, mueve la agenda del camión; deben comportarse como una sola
+    # agenda») ─ la OT y su reserva se mueven y se cancelan juntas. Sin esto, la reserva de una OT cancelada seguía bloqueando el vehículo y el
+    # barrido del SLA mandaba correos de «llave atrasada» por una OT muerta (revisión escéptica). Sin correos: es interno y la reserva de una OT
+    # tampoco los manda al crearse.
+    def _hhmm_de(v):
+        """TIME de MySQL (timedelta), time, datetime o 'HH:MM[:SS]' → time sin segundos; None si no hay hora."""
+        if v is None or v == "":
+            return None
+        if isinstance(v, timedelta):
+            t = int(v.total_seconds()) % 86400
+            return time(t // 3600, (t % 3600) // 60)
+        if isinstance(v, datetime):
+            return v.time().replace(second=0, microsecond=0)
+        if isinstance(v, time):
+            return v.replace(second=0, microsecond=0)
+        try:
+            return fr.parse_hora(str(v))
+        except ValueError:
+            return None
+
+    def _ini_fin_ot(p):
+        """(fecha, fecha_fin, hora_inicio, hora_fin) de la foto de una OT, o None si no tiene fecha."""
+        p = p or {}
+        try:
+            f = fr.fecha_o_none(p.get("fecha_programada"))
+            ff = fr.fecha_o_none(p.get("fecha_fin")) or f
+        except ValueError:
+            return None
+        return None if f is None else (f, ff, _hhmm_de(p.get("hora_inicio")), _hhmm_de(p.get("hora_fin")))
+
+    def _cancelar_por_ot(r, motivo):
+        veh = _titulo_vehiculo({"tipo": r.get("v_tipo"), "patente": r.get("v_patente")})
+        if mysql_rowcount(
+                "UPDATE flota_solicitudes SET estado='cancelada', cancelada_por=%s, cancelada_at=NOW(), cancelada_motivo=%s "
+                "WHERE id=%s AND estado IN ('solicitada','confirmada')", (current_username(), motivo[:300], r["id"])):
+            _slog(r["id"], "cancelada", {"motivo": motivo, "estado_antes": r["estado"], "origen": "ot"})
+            return veh
+        return None
+
+    def _ot_sincronizar(ot_id, antes=None, despues=None, cancelar=None):
+        """Mueve o cancela las reservas VIVAS de una OT. `cancelar` = motivo («La OT se canceló.») → se cancelan todas; si no, `antes` y `despues`
+        son la foto de la OT (fecha_programada, fecha_fin, hora_inicio, hora_fin) y cada reserva se corre lo MISMO que se corrió la OT (la salida
+        con el inicio y el regreso con el término, así se respeta lo que la persona ajustó). Una reserva movida vuelve a «Por confirmar»; si ya no
+        puede ir en el horario nuevo, se cancela y se dice. Con la llave ya entregada (el vehículo salió) no se toca: se avisa.
+        Devuelve {ok, acciones: [{numero, accion, texto}], avisos: [...]}. NUNCA lanza ni frena el guardado de la OT."""
+        out = {"ok": True, "acciones": [], "avisos": []}
+        try:
+            filas = [dict(x) for x in (mysql_fetchall(
+                _SQL_SOL + " WHERE s.ot_id=%s AND s.estado IN ('solicitada','confirmada','llave_entregada') ORDER BY s.inicio, s.id LIMIT 20",
+                (int(ot_id),)) or [])]
+            if not filas:
+                return out
+            d_ini = d_fin = None
+            if not cancelar:
+                a, d = _ini_fin_ot(antes), _ini_fin_ot(despues)
+                if not a or not d:
+                    return out
+                if d[0].year >= 2099:                         # la OT quedó «sin fecha» (pendiente por falta de stock): no hay día al que ir
+                    cancelar = "La OT quedó sin fecha."
+                else:
+                    sin_h = a[2] is None or d[2] is None
+                    sin_f = a[3] is None or d[3] is None
+                    d_ini = (datetime.combine(d[0], time.min) - datetime.combine(a[0], time.min)) if sin_h else \
+                        (datetime.combine(d[0], d[2]) - datetime.combine(a[0], a[2]))
+                    d_fin = (datetime.combine(d[1], time.min) - datetime.combine(a[1], time.min)) if sin_f else \
+                        (datetime.combine(d[1], d[3]) - datetime.combine(a[1], a[3]))
+                    if not d_ini and not d_fin:
+                        return out                           # cambió otra cosa de la OT, no su día ni su hora
+            ahora = _ahora_chile()
+            for r in filas:
+                num, ot = r.get("numero") or "", r.get("ot_numero") or "la OT"
+                veh = _titulo_vehiculo({"tipo": r.get("v_tipo"), "patente": r.get("v_patente")})
+                if r["estado"] == "llave_entregada":
+                    out["avisos"].append(f"{veh} ya salió con la llave entregada ({num}): su reserva no se {'cancela' if cancelar else 'mueve'} sola. "
+                                         f"Cuando vuelva, registra su devolución.")
+                    continue
+                if cancelar:
+                    if _cancelar_por_ot(r, f"{ot}: {cancelar}"):
+                        out["acciones"].append({"numero": num, "accion": "cancelada",
+                                                "texto": f"Se canceló la reserva {num} ({veh}) porque {cancelar[0].lower() + cancelar[1:]}"})
+                    continue
+                ini, fin = r["inicio"] + d_ini, r["fin"] + d_fin
+                payload = {"vehiculo_id": r["vehiculo_id"], "chofer_id": r["chofer_id"], "area": r.get("area"), "motivo": r.get("motivo"),
+                           "fecha": ini.date().isoformat(), "hora_desde": ini.strftime("%H:%M"),
+                           "fecha_hasta": fin.date().isoformat(), "hora_hasta": fin.strftime("%H:%M")}
+                datos, errores = fr.validar_solicitud(payload, ahora, editando=True)
+                error = " ".join(str(v) for v in errores.values()) if errores else None
+                if not error:
+                    cuerpo, _http = _reservar(datos, sid=r["id"], reabrir=True,
+                                              motivo_cambio=f"La {ot} se movió: {fr.rango_texto(r['inicio'], r['fin'])} → {fr.rango_texto(ini, fin)}.")
+                    if cuerpo.get("ok"):
+                        out["acciones"].append({"numero": num, "accion": "movida",
+                                                "texto": f"La reserva {num} ({veh}) se movió con la {ot} a {fr.rango_texto(ini, fin)} y quedó «Por confirmar» de nuevo."})
+                        continue
+                    error = cuerpo.get("error") or "no está libre"
+                if _cancelar_por_ot(r, f"{ot} se movió y la reserva no cupo en el horario nuevo: {error}"):
+                    out["acciones"].append({"numero": num, "accion": "cancelada",
+                                            "texto": f"La {ot} se movió, pero {veh} no se pudo mover con ella ({str(error).rstrip('.')}): se canceló la reserva {num}. "
+                                                     f"Pide el vehículo de nuevo para el horario nuevo."})
+        except Exception as e:
+            print(f"[flota] sincronizar la reserva con la OT {ot_id}: {type(e).__name__}: {e}", flush=True)
+            out["ok"] = False
+            out["avisos"].append("No se pudo revisar la reserva del vehículo de esta OT: revísala en Solicitudes de vehículo.")
+        return out
+
+    OT_API.update(disponibilidad=_ot_disponibilidad, reservar=_ot_reservar, de_orden=_ot_de_orden, sincronizar=_ot_sincronizar)
 
     _mant_req = ctx.get("_mant_required") or login_required
     _no_tec = ctx.get("_no_tecnico") or (lambda f: f)
@@ -1595,11 +1730,18 @@ def register_flota_routes(app, ctx):
     @_no_tec
     def flota_ot_api_disponibilidad():
         """Lo que el asistente «Nueva OT» muestra en su paso Vehículo. Solo lee."""
+        if not _ot_puede_reservar():
+            return _error("Reservar vehículos desde una OT necesita el permiso «Solicitar vehículos» y no está disponible para técnicos.", 403,
+                          error_codigo="SIN_PERMISO_FLOTA")
         ids = []
         for x in (request.args.get("tecnicos") or "").split(",")[:10]:
             x = x.strip()
-            if x.isdigit() and int(x) > 0 and int(x) not in ids:
-                ids.append(int(x))
+            try:
+                n = int(x) if x.isascii() and x.isdecimal() else 0       # «²» o «٣» pasan isdigit() pero no son un id
+            except ValueError:
+                n = 0
+            if n > 0 and n not in ids:
+                ids.append(n)
         try:
             return jsonify(_ot_disponibilidad(request.args.get("fecha"), request.args.get("desde"), request.args.get("hasta"), ids))
         except Exception as e:
