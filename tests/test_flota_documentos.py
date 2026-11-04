@@ -202,6 +202,8 @@ class Base2(TS.Base):
         self.camion = self.veh("PHVD21-7", "Camión", "Kia", "Frontier 2.5", propietario="Banco de Crédito e Inversiones")
         self.ana = self.chofer(1)
         self.beto = self.chofer(2)
+        # Cada chofer se registra con su licencia escaneada (04-nov-2026): estos son los archivos «de fábrica» que las pruebas no cuentan.
+        self.arch_base, self.obj_base = len(self.base.arch), len(self.bucket.objetos)
 
     def subir(self, entidad, ident, tipo, datos, headers=SUPER, nombre="documento.pdf", tipo_mime="application/pdf"):
         import io
@@ -353,7 +355,7 @@ class TestArchivosPrivados(Base2):
         self.subir("vehiculo", self.furgon, "soap", PDF + b"nuevo")
         archivos = [a for a in self.base.arch.values() if a["tipo"] == "soap"]
         self.assertEqual(sorted(a["activo"] for a in archivos), [0, 1])
-        self.assertEqual(len(self.bucket.objetos), 2)                          # los dos siguen guardados
+        self.assertEqual(len(self.bucket.objetos), self.obj_base + 2)          # los dos siguen guardados
         vigente = next(a for a in archivos if a["activo"])
         soap = next(d for d in self.veh_json()["documentos"] if d["clave"] == "soap")
         self.assertEqual(soap["archivo"]["id"], vigente["id"])
@@ -366,7 +368,7 @@ class TestArchivosPrivados(Base2):
         self.assertEqual(self.c.post(f"/flota/api/archivos/{aid}/quitar", json={}, headers=SUPER).status_code, 200)
         self.assertEqual(self.c.post(f"/flota/api/archivos/{aid}/quitar", json={}, headers=SUPER).status_code, 409)
         self.assertEqual(self.base.arch[aid]["activo"], 0)
-        self.assertEqual(len(self.bucket.objetos), 1)
+        self.assertEqual(len(self.bucket.objetos), self.obj_base + 1)
         self.assertFalse(next(d for d in self.veh_json()["documentos"] if d["clave"] == "seguro")["tiene_pdf"])
 
     def test_la_bitacora_anota_los_archivos(self):
@@ -383,7 +385,7 @@ class TestArchivosPrivados(Base2):
             self.assertEqual(r.status_code, 400, (entidad, tipo))
         self.assertEqual(self.subir("vehiculo", 999, "soap", PDF).status_code, 404)
         self.assertEqual(len(self.base.arch), n)
-        self.assertEqual(self.bucket.objetos, {})
+        self.assertEqual(len(self.bucket.objetos), self.obj_base)
 
     def test_sin_almacenamiento_avisa_y_no_registra_nada(self):
         app = TS._app(self.base, None)
@@ -391,12 +393,12 @@ class TestArchivosPrivados(Base2):
         r = app.test_client().post("/flota/api/archivos", headers=SUPER, content_type="multipart/form-data", data={
             "entidad": "vehiculo", "entidad_id": str(self.furgon), "tipo": "soap", "archivo": (io.BytesIO(PDF), "a.pdf", "application/pdf")})
         self.assertEqual(r.status_code, 503)
-        self.assertEqual(self.base.arch, {})
+        self.assertEqual(len(self.base.arch), self.arch_base)
 
     def test_licencia_del_chofer_solo_la_ve_quien_tiene_documentos(self):
         r = self.subir("chofer", self.ana, "licencia", PDF, nombre="licencia.pdf")
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        aid = next(a["id"] for a in self.base.arch.values() if a["tipo"] == "licencia")
+        aid = next(a["id"] for a in self.base.arch.values() if a["tipo"] == "licencia" and a["entidad_id"] == self.ana and a["activo"])
         self.assertTrue(self.base.arch[aid]["gcs_key"].startswith("flota_privado/chofer/"))
         c = next(x for x in self.c.get("/flota/api/choferes", headers=CON_DOCS).get_json()["choferes"] if x["id"] == self.ana)
         self.assertEqual(c["licencia_archivo"]["id"], aid)
@@ -474,8 +476,8 @@ class TestArchivarYBorrar(Base2):
         r = self.c.delete(f"/flota/api/vehiculos/{self.camion}", json={"confirmacion": "phvd21-7"}, headers=SUPER)
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertNotIn(self.camion, self.base.veh)
-        self.assertTrue(all(a["activo"] == 0 for a in self.base.arch.values() if a["entidad_id"] == self.camion))
-        self.assertEqual(len(self.bucket.objetos), 1)                          # el archivo sigue guardado
+        self.assertTrue(all(a["activo"] == 0 for a in self.base.arch.values() if a["entidad"] == "vehiculo" and a["entidad_id"] == self.camion))
+        self.assertEqual(len(self.bucket.objetos), self.obj_base + 1)          # el archivo sigue guardado
 
     def test_archivar_y_borrar_choferes(self):
         self.assertEqual(self.c.post(f"/flota/api/choferes/{self.beto}/archivar", json={"motivo": "x"}, headers=SUPER).status_code, 400)

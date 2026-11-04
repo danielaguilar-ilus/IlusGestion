@@ -567,6 +567,9 @@ def evaluar_chofer(chofer, clases_vehiculo, fecha_fin, hoy):
     nombre = (chofer or {}).get("nombre") or "El chofer"
     if not (chofer or {}).get("habilitado"):
         return f"{nombre} está inhabilitado como chofer.", None
+    # Daniel, 04-nov-2026: «solo pueda avanzar si el chofer escanea su licencia». Sin el archivo guardado no se le puede asignar un vehículo.
+    if not (chofer or {}).get("licencia_escaneada"):
+        return f"{nombre} no tiene su licencia escaneada en el sistema: súbela en Choferes antes de reservarle un vehículo.", None
     exigidas = normalizar_clases(clases_vehiculo)
     if not licencia_cubre(chofer.get("licencia_clases"), exigidas):
         return f"{nombre} no tiene registrada la licencia que exige este vehículo (clase {' o '.join(exigidas)}).", None
@@ -602,6 +605,12 @@ def avisos_vehiculo(fila_vehiculo, fecha_uso):
 CHOFER_COLUMNAS = ("rut", "nombre_completo", "direccion", "licencia_clases", "licencia_vence", "notas")
 CHOFER_ETIQUETAS = {"rut": "RUT", "nombre_completo": "Nombre completo", "direccion": "Dirección",
                     "licencia_clases": "Clases de licencia", "licencia_vence": "Licencia vence", "notas": "Observaciones"}
+
+
+# Daniel, 04-nov-2026: «solo pueda avanzar si el chofer escanea su licencia en el sistema; de lo contrario se podrá realizar el registro solo
+# si agregan la licencia, esto por seguridad, además de la fecha de término de la licencia». La fecha ya era obligatoria; ahora también el
+# archivo (foto o PDF) al registrar al chofer y, para uno antiguo que no lo tenga, al editarlo.
+MSG_LICENCIA_SIN_ARCHIVO = ("Escanea la licencia del chofer (foto o PDF): sin ella no se puede registrar ni asignar a una reserva.")
 
 
 def validar_telefono(t):

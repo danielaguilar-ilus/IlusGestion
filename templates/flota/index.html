@@ -44,6 +44,13 @@
     <div class="fl-kpi fl-kpi--info"><span class="fl-kpi-n" id="flKpiHoy">–</span><span class="fl-kpi-l">Reservas de hoy</span></div>
   </section>
 
+  {# Daniel, 04-nov-2026: «la app está enviando mail a todos y debería solo reconocer los que están registrados». Solo reciben los registrados. #}
+  <div class="fl-aviso fl-aviso--warn" id="flSolAvisoCorreo" role="status" hidden>
+    <i class="bi bi-envelope-exclamation" aria-hidden="true"></i>
+    <div><b>Nadie está registrado para recibir los avisos por correo de la flota.</b> Las solicitudes nuevas, las llaves atrasadas y las devoluciones no le llegan a nadie.
+      Para registrar a alguien: Roles → «Solicitudes de vehículo» → «Gestionar solicitudes» (por rol, o por persona en «Permisos individuales»).</div>
+  </div>
+
   <div class="fl-toolbar">
     <div class="fl-vistas" role="group" aria-label="Forma de ver las solicitudes">
       <button type="button" class="fl-fchip on" data-vista="lista"><i class="bi bi-list-ul"></i>Lista</button>
@@ -804,8 +811,10 @@
                 <input type="date" id="flChVence" name="licencia_vence">
                 <div class="fl-msg" aria-live="polite"></div>
               </div>
-              <div class="fl-subir" id="flChSubirCaja">
-                <label class="fl-subir-t" for="flChArchivo">Licencia en PDF (opcional)</label>
+              {# Obligatoria (Daniel, 04-nov-2026): sin la licencia escaneada y su fecha de término el chofer no se registra. #}
+              <div class="fl-subir fl-campo" id="flChSubirCaja" data-campo="licencia_archivo">
+                <label class="fl-subir-t" for="flChArchivo">Licencia escaneada (foto o PDF) <span class="fl-req">*</span></label>
+                <p class="fl-ayuda">Por seguridad, el chofer no se registra sin su licencia escaneada y su fecha de término. Desde el celular puedes sacarle una foto al carnet.</p>
                 <div id="flChArchivoActual" class="fl-subir-actual"></div>
                 <input type="file" id="flChArchivo" accept="application/pdf,image/jpeg,image/png,image/webp">
                 <div class="fl-msg" id="flChArchivoMsg" aria-live="polite"></div>

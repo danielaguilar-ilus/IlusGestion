@@ -28,7 +28,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import flota_reglas as R  # noqa: E402
-from test_flota_vehiculos import BaseFalsa  # noqa: E402
+from test_flota_vehiculos import BaseFalsa, BucketFalso  # noqa: E402
+from flask.testing import FlaskClient  # noqa: E402
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HAY_NODE = shutil.which("node") is not None
@@ -195,7 +196,7 @@ class TestChoferYVehiculo(unittest.TestCase):
     HOY = dt.date(2026, 11, 2)
 
     def chofer(self, **k):
-        d = {"nombre": "Ana Pérez", "habilitado": True, "licencia_clases": "B", "licencia_vence": dt.date(2027, 6, 1)}
+        d = {"nombre": "Ana Pérez", "habilitado": True, "licencia_clases": "B", "licencia_vence": dt.date(2027, 6, 1), "licencia_escaneada": True}
         d.update(k)
         return d
 
@@ -212,6 +213,7 @@ class TestChoferYVehiculo(unittest.TestCase):
     def test_chofer_que_no_puede(self):
         for chofer, parte in (
             (self.chofer(habilitado=False), "inhabilitado"),
+            (self.chofer(licencia_escaneada=False), "licencia escaneada"),
             (self.chofer(licencia_clases="C"), "no tiene registrada la licencia"),
             (self.chofer(licencia_vence=None), "no tiene registrado el vencimiento"),
             (self.chofer(licencia_vence=dt.date(2026, 11, 3)), "antes de terminar"),
@@ -304,7 +306,7 @@ class Falsa(BaseFalsa):
         if s.startswith("SELECT * FROM flota_solicitudes WHERE id=%s FOR UPDATE"):
             return [dict(self.sol[p[0]])] if p[0] in self.sol else []
         if s.startswith("SELECT u.id, (SELECT up.permitido FROM usuario_permisos up WHERE up.user_id=u.id AND up.permiso='flota_gestionar'"):
-            return [{"id": 2, "ov": 1, "rolp": None}, {"id": 4, "ov": None, "rolp": 0}]      # Beto gestiona la flota; Dani no
+            return [dict(x) for x in getattr(self, "gestores_filas", [{"id": 2, "ov": 1, "rolp": None}, {"id": 4, "ov": None, "rolp": 0}])]      # Beto gestiona la flota; Dani no
         if s.startswith("SELECT id, tipo, nombre_original, content_type, bytes, subido_por, subido_at FROM flota_archivos WHERE entidad='solicitud'"):
             return [dict(a) for a in sorted(self.arch.values(), key=lambda a: a["id"]) if a["entidad"] == "solicitud" and a["entidad_id"] == p[0] and a["activo"]]
         if s.startswith("SELECT IS_NULLABLE FROM information_schema.COLUMNS"):
@@ -597,8 +599,39 @@ class _Cursor:
         return [dict(x) for x in self._r]
 
 
-def _app(base, bucket=None, extra=None):
+PDF_LICENCIA = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"
+_RUTA_CHOFER = re.compile(r"^/flota/api/choferes(/\d+)?$")
+
+
+class ClienteFlota(FlaskClient):
+    """Cliente de prueba. Un chofer se registra CON su licencia escaneada (Daniel, 04-nov-2026), así que a los POST en JSON de
+    /flota/api/choferes les adjunta una licencia de mentira y los manda como formulario. El encabezado «X-Sin-Licencia» los deja tal cual.
+    Las ediciones (PUT) siguen en JSON: el chofer ya tiene su licencia guardada y adjuntar otra es una decisión de la persona."""
+
+    def open(self, *args, **kw):
+        metodo = str(kw.get("method") or "GET").upper()
+        ruta = str(args[0]) if args and isinstance(args[0], str) else str(kw.get("path") or "")
+        if (metodo == "POST" and "json" in kw and _RUTA_CHOFER.match(ruta) and "X-Sin-Licencia" not in (kw.get("headers") or {})):
+            form = {}
+            for k, v in (kw.pop("json") or {}).items():
+                if v is None:
+                    continue
+                if k == "licencia_clases":
+                    form[k] = [str(x) for x in v] if isinstance(v, (list, tuple)) else str(v)
+                elif isinstance(v, bool):
+                    form[k] = "true" if v else "false"
+                else:
+                    form[k] = str(v)
+            form["archivo"] = (__import__("io").BytesIO(PDF_LICENCIA), "licencia.pdf", "application/pdf")
+            kw["data"], kw["content_type"] = form, "multipart/form-data"
+        return super().open(*args, **kw)
+
+
+def _app(base, bucket="auto", extra=None):
     from flask import Flask, g, redirect, request
+
+    if isinstance(bucket, str) and bucket == "auto":
+        bucket = BucketFalso()
 
     plantillas = tempfile.mkdtemp(prefix="flota_tpl_")
     os.makedirs(os.path.join(plantillas, "flota"))
@@ -608,6 +641,7 @@ def _app(base, bucket=None, extra=None):
     shutil.copy(os.path.join(RAIZ, "templates", "flota", "index.html"), os.path.join(plantillas, "flota", "index.html"))
     app = Flask(__name__, template_folder=plantillas)
     app.config["TESTING"] = True
+    app.test_client_class = ClienteFlota
 
     @app.route("/")
     def index():

@@ -720,19 +720,10 @@ def register_flota_routes(app, ctx):
     def _log_entidad(entidad, ident, accion, detalle):
         (_log if entidad == "vehiculo" else _clog)(ident, accion, detalle)
 
-    @app.route("/flota/api/archivos", methods=["POST"])
-    @_flota_admin_required
-    def flota_api_archivo_subir():
-        """Guarda (o reemplaza) la foto o un PDF. El anterior NO se borra: queda como no vigente, con su historial."""
-        entidad = (request.form.get("entidad") or "").strip()
-        tipo = (request.form.get("tipo") or "").strip()
-        ident = fr._id(request.form.get("entidad_id"))
-        archivo = request.files.get("archivo")
-        if entidad not in fr.TIPOS_ARCHIVO or not ident or archivo is None:
-            return _error("Faltan datos para guardar el archivo.", 400)
-        if not _entidad_existe(entidad, ident):
-            return _error("No encontré a quién pertenece ese archivo.", 404)
-        data = archivo.read(max(fr.ARCHIVO_MAX_BYTES.values()) + 1)
+    def _guardar_archivo(entidad, ident, tipo, data, nombre_original, registrar=True):
+        """Valida, sube a GCS y registra el archivo (el anterior NO se borra: queda como no vigente, con su historial).
+        `registrar=False` cuando el evento de la bitácora lo escribe quien llama (el alta del chofer lo anota dentro de «creado»).
+        → None si salió bien, o la respuesta de error (tupla) para devolver tal cual."""
         info, err = fr.validar_archivo(entidad, tipo, data)
         if err:
             return _error(err, 400, errores={"archivo": err})
@@ -748,7 +739,7 @@ def register_flota_routes(app, ctx):
                     ext = ".png" if ct == "image/png" else (".webp" if ct == "image/webp" else ".jpg")
             except Exception as e:
                 print(f"[flota] redimensionar imagen: {type(e).__name__}", flush=True)
-        nombre = fr.nombre_seguro(getattr(archivo, "filename", "") or fr.ETIQUETAS_ARCHIVO.get(tipo, "archivo"), ext)
+        nombre = fr.nombre_seguro(nombre_original or fr.ETIQUETAS_ARCHIVO.get(tipo, "archivo"), ext)
         clave = f"{_PREFIJO_PRIVADO}{entidad}/{ident}/{tipo}_{secrets.token_hex(8)}{ext}"
         try:
             blob = bucket.blob(clave)
@@ -768,7 +759,26 @@ def register_flota_routes(app, ctx):
         except Exception as e:
             print(f"[flota] registrar archivo: {type(e).__name__}: {e}", flush=True)
             return _error("El archivo se subió pero no quedó registrado. Intenta de nuevo.", 500)
-        _log_entidad(entidad, ident, "archivo_subido", {"tipo": tipo, "nombre": nombre, "bytes": len(contenido)})
+        if registrar:
+            _log_entidad(entidad, ident, "archivo_subido", {"tipo": tipo, "nombre": nombre, "bytes": len(contenido)})
+        return None
+
+    @app.route("/flota/api/archivos", methods=["POST"])
+    @_flota_admin_required
+    def flota_api_archivo_subir():
+        """Guarda (o reemplaza) la foto o un PDF. El anterior NO se borra: queda como no vigente, con su historial."""
+        entidad = (request.form.get("entidad") or "").strip()
+        tipo = (request.form.get("tipo") or "").strip()
+        ident = fr._id(request.form.get("entidad_id"))
+        archivo = request.files.get("archivo")
+        if entidad not in fr.TIPOS_ARCHIVO or not ident or archivo is None:
+            return _error("Faltan datos para guardar el archivo.", 400)
+        if not _entidad_existe(entidad, ident):
+            return _error("No encontré a quién pertenece ese archivo.", 404)
+        data = archivo.read(max(fr.ARCHIVO_MAX_BYTES.values()) + 1)
+        err = _guardar_archivo(entidad, ident, tipo, data, getattr(archivo, "filename", ""))
+        if err:
+            return err
         return _devolver_entidad(entidad, ident)
 
     def _devolver_entidad(entidad, ident):
@@ -831,6 +841,10 @@ def register_flota_routes(app, ctx):
         f = mysql_fetchone("SELECT * FROM flota_archivos WHERE id=%s", (aid,))
         if not f:
             return _error("No encontré ese archivo.", 404)
+        if f["entidad"] == "chofer" and f["tipo"] == "licencia" and f.get("activo"):
+            # Daniel, 04-nov-2026: un chofer registrado siempre tiene su licencia escaneada. Se reemplaza subiendo la nueva (la anterior queda).
+            return _error("La licencia escaneada no se puede quitar: un chofer registrado siempre la tiene. Para cambiarla, sube la nueva "
+                          "(la anterior queda guardada en el historial).", 409, error_codigo="LICENCIA_OBLIGATORIA")
         n = mysql_rowcount("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() WHERE id=%s AND activo=1",
                            (current_username(), aid))
         if not n:
@@ -906,6 +920,8 @@ def register_flota_routes(app, ctx):
             "licencia_estado": estado, "licencia_dias": dias,
             "licencia_texto_dias": fr.texto_dias(dias) if vence else "Sin fecha registrada",
             "tiene_licencia_pdf": bool(lic),
+            # Sin la licencia escaneada el chofer queda registrado pero no puede recibir reservas (04-nov-2026).
+            "falta_licencia_archivo": not bool(lic),
             "habilitado": bool(r.get("habilitado")),
             "inhabilitado_motivo": r.get("inhabilitado_motivo"), "inhabilitado_por": r.get("inhabilitado_por"),
             "inhabilitado_fmt": _hora_chile(r.get("inhabilitado_at")),
@@ -913,8 +929,8 @@ def register_flota_routes(app, ctx):
             "archivado_por": r.get("archivado_por"), "archivado_fmt": _hora_chile(r.get("archivado_at")),
             "creado_por": r.get("created_by"), "creado_fmt": _hora_chile(r.get("created_at")),
             "actualizado_por": r.get("updated_by"), "actualizado_fmt": _hora_chile(r.get("updated_at")),
-            # Puede recibir una reserva hoy: habilitado, con usuario activo y la licencia sin vencer.
-            "disponible": bool(r.get("habilitado")) and activo and estado not in ("vencido", "sin_fecha"),
+            # Puede recibir una reserva hoy: habilitado, con usuario activo, la licencia escaneada y sin vencer.
+            "disponible": bool(r.get("habilitado")) and activo and bool(lic) and estado not in ("vencido", "sin_fecha"),
             # Lo personal (RUT, nombre completo, dirección, notas y el PDF de la licencia) solo con «Documentos y datos de la flota».
             "rut": None, "rut_fmt": "", "nombre_completo": None, "direccion": None, "notas": None, "licencia_archivo": None,
             "direccion_verificada": False, "direccion_lat": None, "direccion_lng": None, "direccion_place_id": None,
@@ -1008,21 +1024,46 @@ def register_flota_routes(app, ctx):
              "direccion_lat": _num(f.get("direccion_lat")), "direccion_lng": _num(f.get("direccion_lng")),
              "direccion_place_id": f.get("direccion_place_id") or ""} for f in filas]})
 
+    def _datos_de_peticion():
+        """(datos, archivo) del alta o la edición de un chofer: JSON, o formulario con la licencia escaneada adjunta (campo «archivo»)."""
+        if request.is_json:
+            return (request.get_json(silent=True) or {}), None
+        datos = {k: request.form.get(k) for k in request.form.keys()}
+        datos["licencia_clases"] = [c for v in request.form.getlist("licencia_clases") for c in re.split(r"[,/;\s]+", v or "") if c]
+        archivo = request.files.get("archivo")
+        if archivo is not None and not (getattr(archivo, "filename", "") or "").strip():
+            archivo = None                       # un campo de archivo vacío del navegador llega sin nombre: es «no adjuntó nada»
+        return datos, archivo
+
+    def _leer_licencia(archivo, obligatoria):
+        """(bytes, error) de la licencia escaneada (foto o PDF) que viaja con el registro del chofer."""
+        if archivo is None:
+            return None, (fr.MSG_LICENCIA_SIN_ARCHIVO if obligatoria else None)
+        data = archivo.read(max(fr.ARCHIVO_MAX_BYTES.values()) + 1)
+        _info, err = fr.validar_archivo("chofer", "licencia", data)
+        return (None, err) if err else (data, None)
+
     @app.route("/flota/api/choferes", methods=["POST"])
     @_flota_admin_required
     def flota_api_chofer_crear():
-        payload = request.get_json(silent=True) or {}
+        payload, archivo = _datos_de_peticion()
         # Daniel, 03-nov-2026: «todos tienen que pertenecer a la página. Si no está registrado, no puede retirar el camión».
         if payload.get("externo") in (True, 1, "1", "true", "si") or not payload.get("usuario_id"):
             return _error("El chofer tiene que ser un usuario de ILUS: si no está registrado, no puede retirar el vehículo. "
                           "Créale su usuario y después agrégalo aquí.", 400, errores={"usuario_id": "Elige un usuario de ILUS."},
                           error_codigo="CHOFER_SIN_USUARIO")
         datos, errores = fr.validar_chofer(payload)
+        data_lic, err_lic = _leer_licencia(archivo, obligatoria=True)
+        if err_lic:
+            errores["licencia_archivo"] = err_lic
         if errores:
             return _error("Revisa los campos marcados.", 400, errores=errores)
         u = mysql_fetchone("SELECT id, nombre, active FROM `" + _AUTH + "` WHERE id=%s", (datos["usuario_id"],))
         if not u or not u.get("active"):
             return _error("Ese usuario no existe o está desactivado.", 400, errores={"usuario_id": "Elige un usuario activo de ILUS."})
+        if _bucket() is None:
+            return _error("El almacenamiento de archivos no está disponible en este momento: sin guardar la licencia no se puede registrar al chofer. "
+                          "Intenta de nuevo en unos minutos.", 503)
         try:
             mysql_execute(
                 "INSERT INTO flota_choferes (usuario_id, rut, nombre_completo, direccion, direccion_lat, direccion_lng, direccion_place_id, "
@@ -1039,7 +1080,15 @@ def register_flota_routes(app, ctx):
         fila = mysql_fetchone(_SQL_CHOF + " WHERE c.usuario_id=%s", (datos["usuario_id"],))
         if not fila:
             return _error("El chofer se guardó pero no se pudo leer de vuelta. Recarga la pantalla.", 500)
-        _clog(fila["id"], "creado", {"usuario": u.get("nombre"), "licencia_clases": datos["licencia_clases"]})
+        # La licencia viaja con el registro: si no se puede guardar, el chofer NO queda registrado (se deshace lo recién creado).
+        err_subida = _guardar_archivo("chofer", fila["id"], "licencia", data_lic, getattr(archivo, "filename", ""), registrar=False)
+        if err_subida:
+            try:
+                mysql_execute("DELETE FROM flota_choferes WHERE id=%s", (fila["id"],))
+            except Exception as e:
+                print(f"[flota] deshacer chofer sin licencia: {type(e).__name__}: {e}", flush=True)
+            return err_subida
+        _clog(fila["id"], "creado", {"usuario": u.get("nombre"), "licencia_clases": datos["licencia_clases"], "licencia_escaneada": True})
         return _chofer_respuesta(fila["id"])
 
     @app.route("/flota/api/choferes/<int:cid>", methods=["PUT"])
@@ -1049,8 +1098,14 @@ def register_flota_routes(app, ctx):
         if not actual:
             return _error("No encontré ese chofer.", 404)
         externo = actual.get("usuario_id") is None
-        datos, errores = fr.validar_chofer(request.get_json(silent=True) or {}, con_usuario=False,
-                                           direccion_actual=actual.get("direccion"), externo=externo)
+        payload, archivo = _datos_de_peticion()
+        datos, errores = fr.validar_chofer(payload, con_usuario=False, direccion_actual=actual.get("direccion"), externo=externo)
+        # Un chofer antiguo sin la licencia escaneada no se guarda hasta adjuntarla; si ya la tiene, adjuntar otra la reemplaza. El externo
+        # antiguo (sin usuario de ILUS) no la necesita para corregirle un dato: igual no puede retirar vehículos (CHOFER_SIN_USUARIO).
+        tiene_lic = bool((_archivos_activos("chofer").get(cid) or {}).get("licencia"))
+        data_lic, err_lic = _leer_licencia(archivo, obligatoria=not tiene_lic and not externo)
+        if err_lic:
+            errores["licencia_archivo"] = err_lic
         if errores:
             return _error("Revisa los campos marcados.", 400, errores=errores)
         cambios = fr.cambios(dict(actual), datos, campos=fr.CHOFER_COLUMNAS)
@@ -1059,8 +1114,11 @@ def register_flota_routes(app, ctx):
         if datos["direccion_accion"] == "guardar" and (actual.get("direccion_place_id") or "") != (datos["direccion_place_id"] or ""):
             cambios["direccion"] = {"antes": actual.get("direccion") or None, "despues": (datos["direccion"] or "") + " (verificada con Google)"}
         if not cambios:
-            return jsonify({"ok": True, "sin_cambios": True,
-                            "chofer": _chofer_json(dict(actual), _hoy(), _archivos_activos("chofer").get(cid))})
+            if data_lic is None:
+                return jsonify({"ok": True, "sin_cambios": True,
+                                "chofer": _chofer_json(dict(actual), _hoy(), _archivos_activos("chofer").get(cid))})
+            err_subida = _guardar_archivo("chofer", cid, "licencia", data_lic, getattr(archivo, "filename", ""))
+            return err_subida if err_subida else _chofer_respuesta(cid)
         try:
             if datos["direccion_accion"] == "mantener":       # misma dirección de antes: su ubicación no se toca
                 mysql_execute(
@@ -1085,6 +1143,10 @@ def register_flota_routes(app, ctx):
                 print(f"[flota] teléfono de chofer externo: {type(e).__name__}: {e}", flush=True)
                 return _error("No se pudo guardar el teléfono. Intenta de nuevo.", 500)
         _clog(cid, "editado", {"cambios": cambios})
+        if data_lic is not None:
+            err_subida = _guardar_archivo("chofer", cid, "licencia", data_lic, getattr(archivo, "filename", ""))
+            if err_subida:
+                return err_subida
         return _chofer_respuesta(cid)
 
     @app.route("/flota/api/choferes/<int:cid>/inhabilitar", methods=["POST"])
@@ -1250,26 +1312,28 @@ def register_flota_routes(app, ctx):
 
     # ── Correos de la flota (Daniel, 03-nov-2026: «activa en comunicaciones sus mails»; REGLA #33) ──────────────────
     def _gestores_flota():
-        """ids de los usuarios ACTIVOS que gestionan la flota: el permiso «Gestionar solicitudes» EXPLÍCITO (por persona manda sobre el
-        rol; el atajo del superadministrador no cuenta). De respaldo, los superadministradores, para que el aviso no se pierda."""
+        """ids de los usuarios ACTIVOS REGISTRADOS como gestores de la flota: el permiso «Gestionar solicitudes» marcado a la persona (por
+        persona manda sobre el rol) o a su rol. Daniel, 04-nov-2026: «la app está enviando mail a todos y debería solo reconocer los que
+        están registrados». Ya NO hay respaldo a todos los superadministradores (cada aviso le llegaba a siete personas) y el atajo del
+        superadministrador no cuenta: si nadie está registrado no sale ningún correo, y /flota lo dice a la vista (alertar, no trabar)."""
         ids = []
         try:
             filas = mysql_fetchall(
                 "SELECT u.id, "
                 "(SELECT up.permitido FROM usuario_permisos up WHERE up.user_id=u.id AND up.permiso='flota_gestionar' LIMIT 1) AS ov, "
-                "(SELECT rp.permitido FROM rol_permisos rp WHERE rp.rol_slug=u.role AND rp.modulo='flota' AND rp.accion='gestionar' LIMIT 1) AS rolp "
-                "FROM `" + _AUTH + "` u WHERE u.active=1") or []
+                "(SELECT rp.permitido FROM rol_permisos rp WHERE rp.rol_slug=u.role AND rp.modulo='flota' AND rp.accion='gestionar' LIMIT 1) AS rolp, "
+                "u.role AS rol_slug FROM `" + _AUTH + "` u WHERE u.active=1") or []
             for f in filas:
-                v = f.get("ov") if f.get("ov") is not None else f.get("rolp")
-                if v is not None and int(v):
+                if f.get("ov") is not None:
+                    registrado = bool(int(f["ov"]))             # lo marcado a ESA persona manda sobre su rol
+                elif str(f.get("rol_slug") or "") == "superadmin":
+                    registrado = False                          # el rol superadmin lo tiene todo: no es un registro de gestor
+                else:
+                    registrado = f.get("rolp") is not None and bool(int(f["rolp"]))
+                if registrado:
                     ids.append(int(f["id"]))
         except Exception as e:
             print(f"[flota] gestores: {type(e).__name__}", flush=True)
-        if not ids:
-            try:
-                ids = [int(f["id"]) for f in (mysql_fetchall("SELECT id FROM `" + _AUTH + "` WHERE active=1 AND role='superadmin'") or [])]
-            except Exception:
-                ids = []
         return ids
 
     def _correo_flota(clave, uids, titulo, cuerpo, sid=None):
@@ -1392,8 +1456,9 @@ def register_flota_routes(app, ctx):
                 conn.rollback()
                 msg = f"{ch.get('u_nombre') or 'Ese chofer'} no tiene usuario de ILUS: solo retira el vehículo quien está registrado en la plataforma."
                 return {"ok": False, "error": msg, "error_codigo": "CHOFER_SIN_USUARIO", "errores": {"chofer_id": msg}}, 400
-            chofer_ev ={"nombre": ch.get("u_nombre"), "habilitado": bool(ch.get("habilitado")) and bool(ch.get("u_activo")),
-                         "licencia_clases": ch.get("licencia_clases"), "licencia_vence": ch.get("licencia_vence")}
+            chofer_ev = {"nombre": ch.get("u_nombre"), "habilitado": bool(ch.get("habilitado")) and bool(ch.get("u_activo")),
+                         "licencia_clases": ch.get("licencia_clases"), "licencia_vence": ch.get("licencia_vence"),
+                         "licencia_escaneada": bool((_archivos_activos("chofer").get(datos["chofer_id"]) or {}).get("licencia"))}
             err_lic, aviso_lic = fr.evaluar_chofer(chofer_ev, veh.get("licencia_clases"), fin, ahora.date())
             if err_lic:
                 conn.rollback()
@@ -1523,6 +1588,7 @@ def register_flota_routes(app, ctx):
                               "marca_modelo": " ".join(x for x in (v.get("marca"), v.get("modelo")) if x),
                               "licencia_exigida": fr.normalizar_clases(v.get("licencia_clases")), "libre": libre, "motivo": motivo, "choque": choque})
         choferes, vistos = [], set()
+        arch_ch = _archivos_activos("chofer")
         for uid in usuario_ids:
             if uid in vistos:
                 continue
@@ -1544,7 +1610,8 @@ def register_flota_routes(app, ctx):
                     ocupado = {"numero": cruces[0].get("numero") or "", "rango_texto": fr.rango_texto(cruces[0]["inicio"], cruces[0]["fin"]),
                                "patente_fmt": fr.patente_con_guion(cruces[0].get("v_patente"))}
             ch_ev = {"nombre": nombre, "habilitado": bool(fila.get("habilitado")) and bool(fila.get("u_activo")),
-                     "licencia_clases": fila.get("licencia_clases"), "licencia_vence": fila.get("licencia_vence")}
+                     "licencia_clases": fila.get("licencia_clases"), "licencia_vence": fila.get("licencia_vence"),
+                     "licencia_escaneada": bool((arch_ch.get(fila["id"]) or {}).get("licencia"))}
             por_veh = {}
             for v in vehs:
                 err, aviso = fr.evaluar_chofer(ch_ev, v.get("licencia_clases"), f or hoy, hoy)
@@ -1775,6 +1842,8 @@ def register_flota_routes(app, ctx):
                         "tolerancia_min": fr.SLA_TOLERANCIA_MIN, "critico_min": fr.SLA_CRITICO_MIN},
             "hoy": ahora.date().isoformat(), "ahora_hhmm": ahora.strftime("%H:%M"),
             "areas": list(fr.AREAS_SUGERIDAS), "max_dias": fr.MAX_DIAS_USO,
+            # Cuántas personas están registradas para recibir los avisos por correo (solo lo ve quien gestiona): 0 = no sale ninguno.
+            "gestores_avisos": len(_gestores_flota()) if (_flota_gestiona() or _flota_admin()) else None,
         })
 
     @app.route("/flota/api/calendario", methods=["GET"])
