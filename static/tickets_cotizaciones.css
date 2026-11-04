@@ -642,7 +642,9 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
    El ancho útil es el de la ventana menos el menú (212 px) y los márgenes (~50 px): a 1240 px quedan ~980 px para la tabla.
    ══════════════════════════════════════════════════════════════════════ */
 .cot-lista{width:100%}
-.cot-lista th,.cot-lista td{padding:10px 6px;vertical-align:middle}
+/* 5 px de lado (no 6): con los datos reales de producción la tabla necesita 965 px como mínimo y a 1240–1244 px de ventana asomaban 1–4 px de
+   scroll interno (medido en vivo el 4-nov, después de ensanchar Acciones). Con 5 px el mínimo baja ≈ 14 px y queda holgura en todo el rango ≥ 1240. */
+.cot-lista th,.cot-lista td{padding:10px 5px;vertical-align:middle}
 .cot-lista th:first-child,.cot-lista td:first-child{padding-left:12px}
 .cot-lista th:last-child,.cot-lista td:last-child{padding-right:12px}
 .cot-lista td[data-label="Número"]{white-space:nowrap}
