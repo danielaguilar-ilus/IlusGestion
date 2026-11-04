@@ -1155,7 +1155,8 @@
 .fl-resp--tarde{background:#fff8e1;color:#92400e;border:1px solid #fde68a}
 td > .fl-resp,td > .fl-dsv{display:flex}
 /* Guía de la solicitud: pasos con semáforo (verde hecho, rojo el que toca, gris lo que viene) */
-.fl-guia{list-style:none;margin:0 0 14px;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+/* Cinco pasos desde el 05-nov-2026 (el quinto: la gestión confirma la recepción): tres por fila, para que quede 3 + 2 y no 4 + 1. */
+.fl-guia{list-style:none;margin:0 0 14px;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .fl-guia-p{display:flex;gap:10px;border:1.5px solid #e5e7eb;border-radius:14px;padding:10px;background:#fff;min-width:0}
 .fl-guia-n{flex:0 0 30px;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:#e5e7eb;color:#4b5563}
 .fl-guia-c{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:.84rem}
@@ -1223,3 +1224,33 @@ td > .fl-resp,td > .fl-dsv{display:flex}
   .fl-tabla--sol tbody tr.inhab{background:#fafafa}
   .fl-tabla--sol tbody tr:hover td{background:transparent}
 }
+
+/* ═══ Recepción de la llave confirmada por la gestión (05-nov-2026) ═══
+   La devuelta tiene dos caras: «por confirmar» (amarillo, como una reserva pendiente) y «Cerrada» (verde). */
+.fl-est--por_cerrar{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+.fl-est--cerrada{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}
+.fl-sem--por_cerrar{--fl-sem:#f59e0b}.fl-sem--cerrada{--fl-sem:#16a34a}
+.fl-recep-chk{display:flex;gap:14px;align-items:flex-start;padding:14px 16px;border:1.5px solid #d1d5db;border-radius:14px;cursor:pointer;background:#fff;margin:16px 0 6px;line-height:1.35}
+.fl-recep-chk input{width:26px;height:26px;flex:0 0 26px;margin-top:1px;accent-color:#16a34a;cursor:pointer}
+.fl-recep-chk.on{border-color:#16a34a;background:#f0fdf4}
+.fl-recep-chk.bad{border-color:#dc2626;background:#fef2f2}
+#flModalRecep .fl-dev-cab{margin-bottom:12px}
+@media (max-width: 860px){
+  #flModalRecep .modal-dialog{margin:0;max-width:none}
+  #flModalRecep .modal-footer .btn{flex:1 1 auto;min-height:44px}
+}
+
+/* ═══ Barra de progreso de las subidas (05-nov-2026, Daniel: «tarda mucho subiendo las fotos, colócale una barra de proceso») ═══
+   Ocupa todo el ancho del pie del modal (también en el celular) y dice en qué etapa va. */
+.fl-prog-wrap{flex:1 1 100%;order:-1;min-width:0}
+.fl-prog-wrap:empty{display:none}
+.fl-prog{background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px;margin:0 0 2px}
+.fl-prog[hidden]{display:none}
+.fl-prog-t{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:.88rem;font-weight:700;color:#111827;margin-bottom:8px}
+.fl-prog-txt{min-width:0;overflow-wrap:anywhere}
+.fl-prog-pct{flex:0 0 auto;font-variant-numeric:tabular-nums;color:#0a0a0a;font-size:1rem}
+.fl-prog-bar{height:14px;border-radius:999px;background:#e5e7eb;overflow:hidden}
+.fl-prog-bar > i{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,#dc2626,#ef4444);transition:width .25s ease}
+.fl-prog-bar.ind > i{width:40%;animation:fl-prog-ind 1.1s ease-in-out infinite}
+@keyframes fl-prog-ind{0%{margin-left:-40%}100%{margin-left:100%}}
+@media (prefers-reduced-motion: reduce){.fl-prog-bar > i{transition:none}.fl-prog-bar.ind > i{animation:none;width:100%;opacity:.6}}

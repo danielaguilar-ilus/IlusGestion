@@ -70,6 +70,8 @@
         <button type="button" class="fl-fchip" data-sest="confirmada">Confirmadas</button>
         <button type="button" class="fl-fchip" data-sest="llave_entregada">Llave entregada</button>
         <button type="button" class="fl-fchip" data-sest="devuelta">Devueltas</button>
+        {# 05-nov-2026 (Daniel): las devueltas que la gestión aún no confirma, con su contador #}
+        <button type="button" class="fl-fchip" data-sest="por_cerrar"><i class="bi bi-patch-check"></i>Por cerrar <span class="fl-fchip-n" id="flChipPorCerrarN"></span></button>
         <button type="button" class="fl-fchip" data-sest="cancelada">Canceladas</button>
       </div>
       <div class="fl-chips" role="group" aria-label="Cuándo">
@@ -720,9 +722,43 @@
         </form>
       </div>
       <div class="modal-footer">
+        <div class="fl-prog-wrap" id="flDevProgreso"></div>
         <div class="fl-pie-form" id="flDevPie" aria-live="polite"></div>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-danger" id="flDevGuardar"><i class="bi bi-box-arrow-in-down me-1"></i>Registrar devolución</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ═══ Modal: CONFIRMAR LA RECEPCIÓN de la llave (05-nov-2026) ═══
+   Daniel: «cuando el chofer gestione la entrega de llaves a Aarón, este las pueda confirmar y que los datos son reales, y ahí sí quedaría
+   cerrado, al igual que cuando solicitan la agenda Aarón debe confirmar la agenda». La gestión ve lo que declaró el chofer (km, combustible,
+   fotos), marca que son reales y la solicitud queda cerrada. #}
+<div class="modal fade" id="flModalRecep" tabindex="-1" aria-labelledby="flRecTitulo" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content fl-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="flRecTitulo">Confirmar la recepción</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div id="flRecResumen"></div>
+        <label class="fl-recep-chk" id="flRecChk" for="flRecReal">
+          <input type="checkbox" id="flRecReal">
+          <span><b>Recibí la llave y confirmo que los datos son reales.</b><br>
+            <span class="fl-sub">El kilometraje, el combustible y las fotos corresponden al vehículo que me devolvieron.</span></span>
+        </label>
+        <div class="fl-msg" id="flRecMsg" aria-live="polite"></div>
+        <div class="fl-campo fl-campo--ancho" data-campo="nota">
+          <label for="flRecNota">Nota (opcional)</label>
+          <textarea id="flRecNota" rows="2" maxlength="500" placeholder="Por ejemplo: la llave quedó en el tablero de la oficina"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="fl-pie-form" id="flRecPie" aria-live="polite"></div>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-success" id="flRecGuardar" disabled><i class="bi bi-patch-check me-1"></i>Confirmar y cerrar</button>
       </div>
     </div>
   </div>
@@ -833,6 +869,7 @@
         </form>
       </div>
       <div class="modal-footer fl-ficha-acc">
+        <div class="fl-prog-wrap" id="flChProgreso"></div>
         <div class="fl-pie-form" id="flChPieForm" aria-live="polite"></div>
         <div class="fl-gestion" id="flChGestion"></div>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
@@ -845,6 +882,7 @@
 {% block scripts %}
 <script>window.FLOTA_PERMISOS = {{ (flota_permisos or {}) | tojson }};</script>
 <script src="{{ url_for('static', filename='ilus_persona_fields.js') }}"></script>
+<script src="{{ url_for('static', filename='flota_subida.js') }}"></script>
 <script src="{{ url_for('static', filename='flota.js') }}"></script>
 <script src="{{ url_for('static', filename='flota_uso.js') }}"></script>
 {% endblock %}
