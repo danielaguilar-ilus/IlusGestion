@@ -139,24 +139,27 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
 /* ── Guía del ticket (misma barra negra que la guía de Retiros) ── */
 .tk-guia{margin:0 0 16px;background:#0a0a0a;border:2px solid #0a0a0a;border-radius:16px;color:#fff;overflow:hidden;}
 .tk-guia-cargando{padding:16px 20px;font-size:1rem;color:#e5e7eb;}
-.tk-gbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 22px;padding:12px 18px 6px;}
-.tk-gbar-t{display:flex;align-items:center;gap:10px;font-size:1.15rem;}
-.tk-gbar-t .bi{font-size:1.5rem;color:#f87171;}
+.tk-gbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 20px;padding:8px 16px 2px;}
+.tk-gbar-t{display:flex;align-items:center;gap:10px;font-size:1.05rem;}
+.tk-gbar-t .bi{font-size:1.25rem;color:#f87171;}
 .tk-gbar-prog{display:flex;flex:1 1 280px;align-items:center;gap:12px;font-size:.95rem;color:#e5e7eb;}
-.tk-gprog{flex:1 1 140px;max-width:340px;height:10px;border-radius:99px;background:rgba(255,255,255,.2);overflow:hidden;}
+.tk-gbar-prog > span{white-space:nowrap;}
+/* Hueco de «Estado» y «Plazo de respuesta» (tickets_ficha_v2.js los mueve aquí: ver más abajo) */
+.tk-gbar-ea{display:flex;flex:0 1 auto;margin-left:auto;min-width:0;}
+.tk-gprog{flex:1 1 140px;max-width:340px;height:8px;border-radius:99px;background:rgba(255,255,255,.2);overflow:hidden;}
 .tk-gprog i{display:block;height:100%;border-radius:99px;background:#22c55e;transition:width .5s;}
 .tk-gbar-prog b{color:#fbbf24;}
-.tk-gchips{list-style:none;margin:0;padding:6px 14px 8px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+.tk-gchips{list-style:none;margin:0;padding:4px 12px 6px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;}
 @media (min-width:992px){.tk-gchips{grid-template-columns:repeat(4,minmax(0,1fr));}}
 @media (min-width:1200px){.tk-gchips{grid-template-columns:repeat(6,minmax(0,1fr));}}
-.tk-gchip{display:flex;align-items:center;gap:8px;width:100%;min-height:52px;padding:6px 10px;border-radius:12px;border:2px solid #374151;
+.tk-gchip{display:flex;align-items:center;gap:7px;width:100%;min-height:40px;padding:3px 8px;border-radius:10px;border:1.5px solid #374151;
   background:#111827;color:#e5e7eb;text-align:left;cursor:pointer;font:inherit;transition:border-color .15s,background .15s;}
 .tk-gchip:hover{border-color:#9ca3af;}
 .tk-gchip:focus-visible{outline:2px solid #fff;outline-offset:2px;}
-.tk-gchip-n{display:flex;align-items:center;justify-content:center;flex:0 0 auto;width:32px;height:32px;border-radius:50%;
-  font-weight:800;font-size:1rem;border:2.5px solid #9ca3af;color:#e5e7eb;background:#0a0a0a;}
-.tk-gchip-t{display:flex;flex-direction:column;min-width:0;font-size:.92rem;font-weight:700;line-height:1.2;overflow-wrap:anywhere;}
-.tk-gchip-t small{display:flex;align-items:center;gap:4px;font-size:.78rem;font-weight:600;color:#d1d5db;line-height:1.3;}
+.tk-gchip-n{display:flex;align-items:center;justify-content:center;flex:0 0 auto;width:26px;height:26px;border-radius:50%;
+  font-weight:800;font-size:.85rem;border:2px solid #9ca3af;color:#e5e7eb;background:#0a0a0a;}
+.tk-gchip-t{display:flex;flex-direction:column;min-width:0;font-size:.84rem;font-weight:700;line-height:1.15;overflow-wrap:anywhere;}
+.tk-gchip-t small{display:flex;align-items:center;gap:4px;font-size:.72rem;font-weight:600;color:#d1d5db;line-height:1.2;}
 .tk-gchip-t small .bi{flex:0 0 auto;}
 .tk-gchip.is-hecho{border-color:#16a34a;}
 .tk-gchip.is-hecho .tk-gchip-n{background:#16a34a;border-color:#16a34a;color:#fff;}
@@ -169,19 +172,22 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
 .tk-gchip.is-espera .tk-gchip-t small{color:#bfdbfe;}
 .tk-gchip.is-opcional{opacity:.85;border-style:dashed;}
 @keyframes tkGPulso{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.55);}50%{box-shadow:0 0 0 9px rgba(245,158,11,0);}}
-.tk-gsig{margin:4px 14px 14px;padding:14px 18px;border:3px solid #f59e0b;border-radius:14px;background:#fffbeb;color:#111827;}
+/* «Siguiente / Esperando»: título y botón en UNA fila (en celular se apila; ver el @media de abajo) */
+.tk-gsig{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"k t a" "p p a";align-items:center;gap:2px 14px;
+  margin:2px 12px 10px;padding:8px 14px;border:2px solid #f59e0b;border-radius:12px;background:#fffbeb;color:#111827;}
 .tk-gsig.is-vencido{border-color:#dc2626;background:#fef2f2;}
 .tk-gsig.is-espera{border-color:#60a5fa;background:#eff6ff;}
 .tk-gsig.is-sugerencia{border-color:#9ca3af;background:#f9fafb;}
 .tk-gsig.is-fin{border-color:#16a34a;background:#f0fdf4;}
-.tk-gsig-k{display:flex;align-items:center;gap:8px;font-size:.84rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#b45309;}
+.tk-gsig-k{grid-area:k;display:flex;align-items:center;gap:8px;font-size:.74rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#b45309;}
 .tk-gsig.is-vencido .tk-gsig-k{color:#b91c1c;}
 .tk-gsig.is-espera .tk-gsig-k{color:#1d4ed8;}
 .tk-gsig.is-sugerencia .tk-gsig-k{color:#4b5563;}
 .tk-gsig.is-fin .tk-gsig-k{color:#166534;}
-.tk-gsig h4{margin:6px 0 2px;font-size:1.3rem;font-weight:800;line-height:1.25;}
-.tk-gsig p{margin:0 0 6px;font-size:1rem;color:#374151;line-height:1.45;}
+.tk-gsig h4{grid-area:t;margin:0;font-size:1.08rem;font-weight:800;line-height:1.25;}
+.tk-gsig p{grid-area:p;margin:0;font-size:.9rem;color:#374151;line-height:1.35;}
 .tk-gacc{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;}
+.tk-gsig .tk-gacc{grid-area:a;margin:0;}
 .tk-gbtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 18px;border-radius:12px;
   border:2px solid #dc2626;background:#dc2626;color:#fff;font-size:.98rem;font-weight:800;cursor:pointer;text-decoration:none;
   font-family:inherit;transition:filter .15s,transform .1s;}
@@ -193,6 +199,14 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
 .tk-gbtn.chico{min-height:40px;padding:0 12px;font-size:.88rem;}
 .tk-gbtn:focus-visible{outline:3px solid #0a0a0a;outline-offset:2px;}
 .tk-gbtn:disabled{opacity:.6;cursor:not-allowed;}
+/* Dentro de la guía los botones son más bajos (el «Asociar OT» del modal conserva el tamaño de arriba) */
+.tk-guia .tk-gbtn{min-height:38px;padding:0 14px;font-size:.9rem;}
+@media (max-width:991px){
+  /* En celular la tarjeta vuelve a apilarse: no cabe título + botón en una fila */
+  .tk-gsig{grid-template-columns:minmax(0,1fr);grid-template-areas:"k" "t" "p" "a";}
+  .tk-gsig .tk-gacc{margin-top:6px;}
+  .tk-guia .tk-gbtn{min-height:44px;}
+}
 @media (min-width:992px){.tk-guia{position:sticky;top:0;z-index:40;}}
 .tk-guia-sentinel{height:1px;margin-top:-1px;}
 .tk-gbar-sig{display:none;align-items:center;gap:8px;min-height:40px;padding:4px 12px;border-radius:10px;border:2px solid #f59e0b;
@@ -200,7 +214,6 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
 .tk-gbar-sig span{overflow-wrap:anywhere;}
 .tk-gbar-sig b{color:#fff;}
 .tk-guia.is-fija .tk-gchips,.tk-guia.is-fija .tk-gsig{display:none;}
-.tk-guia.is-fija .tk-gbar{padding-bottom:12px;}
 .tk-guia.is-fija .tk-gbar-sig{display:inline-flex;}
 .tk-resalta{animation:tkResalta 1.6s ease-out 1;}
 @keyframes tkResalta{0%{box-shadow:0 0 0 0 rgba(220,38,38,.7);}100%{box-shadow:0 0 0 24px rgba(220,38,38,0);}}
@@ -260,36 +273,6 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
 .tk-cot-dialog .modal-body{min-height:0;height:100%;}
 @media (max-width:576px){.tk-cot-dialog{height:100dvh;margin:0;max-width:100vw;}.tk-cot-dialog .modal-content{border-radius:0 !important;}}
 
-/* ── Pestaña Respuestas (28-oct, Daniel): sin tocar la lógica ni las burbujas.
-   (1) el visor de mensajes es lo grande; (2) el composer más chico;
-   (3) De / Para / CC compactos en UNA fila en escritorio, sin perder nada. ── */
-.rp-thread{padding:16px 18px;}
-.rp-bubble{font-size:1rem;line-height:1.5;}
-.rp-headers.show{display:grid;grid-template-columns:auto minmax(0,1.3fr) minmax(0,1fr);gap:4px 14px;align-items:center;padding:6px 14px;}
-.rp-headers .row-h{border-bottom:none;padding:2px 0;margin:0;}
-.rp-headers .row-h label{width:auto;min-width:32px;font-size:.74rem;}
-.rp-headers .row-h:focus-within{margin:0;padding-left:0;background:transparent;}
-.email-chipbox{min-height:36px;padding:3px 6px;}
-.rp-mode-tabs{padding:7px 10px;}
-.rp-mode-tab{padding:7px 12px;}
-.rp-editor-wrap .ql-editor{padding:10px 14px;}
-.rp-toolbar-extra{padding:7px 10px;}
-@media (max-width:768px){
-  /* Celular (medido a 390×844: el «chrome» del composer pesaba 313 px y al hilo
-     le quedaba el piso de 200). Mismos controles, en una fila que se desliza. */
-  .rp-headers.show{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;align-items:center;padding:6px 12px;}
-  .rp-headers .row-h{display:contents;}
-  .rp-headers .row-h label{min-width:0;font-size:.74rem;}
-  .email-chipbox{min-height:38px;}
-  .rp-mode-tabs{padding:6px 8px;gap:6px;}
-  .rp-mode-tab{padding:8px 10px;font-size:.8rem;}
-  .rp-editor-wrap .ql-toolbar{white-space:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;}
-  .rp-editor-wrap .ql-toolbar .ql-formats{display:inline-flex;vertical-align:middle;}
-  .rp-toolbar-extra{gap:8px;}
-  .rp-toolbar-extra > div{flex:1 1 auto;flex-wrap:nowrap !important;overflow-x:auto;-webkit-overflow-scrolling:touch;min-width:0;padding-bottom:2px;}
-  .rp-toolbar-extra > div > *{flex:0 0 auto;}
-}
-
 /* ── Celular (REGLA #3) ── */
 @media (max-width:576px){
   /* Celular: fichas y pasos en UNA fila que se desliza (medido a 390 px: en
@@ -297,11 +280,8 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
   .tk-hero-tiles{display:flex;overflow-x:auto;gap:8px;margin-top:12px;padding-bottom:4px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;}
   .tk-tile{flex:0 0 200px;min-height:56px;padding:9px 11px;scroll-snap-align:start;}
   .tk-tile .v{font-size:.95rem;}
-  .tk-gchips{display:flex;overflow-x:auto;gap:8px;padding:6px 10px 10px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;}
+  .tk-gchips{display:flex;overflow-x:auto;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;}
   .tk-gchips li{flex:0 0 170px;scroll-snap-align:start;}
-  .tk-gchip{min-height:48px;padding:6px 8px;}
-  .tk-gsig{margin:4px 10px 12px;padding:12px 14px;}
-  .tk-gsig h4{font-size:1.15rem;}
   .tk-gacc .tk-gbtn{flex:1 1 100%;}
   .tk-asoc-item{flex-direction:column;}
   .tk-asoc-acc{flex-direction:row;}
@@ -319,21 +299,21 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
 .tk-dl .tk-id-item.vacio .tk-id-item-top i{color:#cbd5e1;}
 
 /* ══════════ Estado y avance (28-oct): el lenguaje de la ficha de Retiros ══════════ */
-.tk-ea{display:grid;grid-template-columns:1.1fr 1.2fr 1.4fr;gap:0;margin:0 0 14px;background:#fff;border:1px solid #e5e7eb;
+.tk-ea{display:grid;grid-template-columns:1.1fr 1.2fr 1.4fr;gap:0;margin:0 0 10px;background:#fff;border:1px solid #e5e7eb;
   border-radius:14px;box-shadow:0 2px 10px rgba(10,10,10,.05);overflow:hidden;}
 .tk-ea[hidden]{display:none;}
-.tk-ea-col{display:flex;flex-direction:column;gap:8px;padding:16px 20px;min-width:0;}
+.tk-ea-col{display:flex;flex-direction:column;gap:5px;padding:10px 16px;min-width:0;}
 .tk-ea-col + .tk-ea-col{border-left:1px solid #eef0f3;}
 .tk-ea-k{display:flex;align-items:center;gap:7px;font-size:.72rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#64748b;}
 .tk-ea-k i{color:#dc2626;font-size:.95rem;}
-.tk-ea-pill{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:8px 16px;border-radius:999px;
+.tk-ea-pill{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:5px 14px;border-radius:999px;
   font-size:1rem;font-weight:800;letter-spacing:.01em;max-width:100%;font-variant-numeric:tabular-nums;}
 .tk-ea-pill i{font-size:1.05rem;}
 .tk-ea-sub{font-size:.85rem;color:#475569;line-height:1.35;overflow-wrap:anywhere;}
 .tk-ea-num{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
-.tk-ea-num b{font-size:2rem;line-height:1;color:#0a0a0a;font-variant-numeric:tabular-nums;}
+.tk-ea-num b{font-size:1.6rem;line-height:1;color:#0a0a0a;font-variant-numeric:tabular-nums;}
 .tk-ea-num span{font-size:.88rem;font-weight:700;color:#475569;}
-.tk-ea-barra{height:10px;border-radius:99px;background:#e5e7eb;overflow:hidden;}
+.tk-ea-barra{height:8px;border-radius:99px;background:#e5e7eb;overflow:hidden;}
 .tk-ea-barra i{display:block;height:100%;border-radius:99px;background:#0a0a0a;transition:width .8s ease;}
 .tk-ea-barra.verde i{background:#16a34a;}
 .tk-ea-barra.ambar i{background:#f59e0b;}
@@ -382,71 +362,33 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
   .tk-trk-resumen{justify-content:flex-start;}
 }
 
-/* ── Cabecera de la ficha más compacta (Daniel 03-nov: «me cuesta más darle scroll, es fastidioso») ──
-   Medido en una ficha real a 1920 px: hasta el contenido había ~1.040 px (cabecera 256 + estado y avance 152 +
-   guía 399 + recorrido 236). Aquí la guía baja ~66 px y «Estado y avance» ~29 px SIN quitar ningún dato:
-   la tarjeta «Esperando / Siguiente» pasa a una fila (título + botón al lado) y las fichas se apretan.
-   Los selectores llevan #tkGuia / #tkEstadoAvance a propósito: ganan sobre las reglas de arriba. */
-#tkEstadoAvance{margin-bottom:10px;}
-#tkEstadoAvance .tk-ea-col{gap:5px;padding:10px 16px;}
-#tkEstadoAvance .tk-ea-pill{padding:5px 14px;}
-#tkEstadoAvance .tk-ea-num b{font-size:1.6rem;}
-#tkEstadoAvance .tk-ea-barra{height:8px;}
-#tkGuia .tk-gbar{padding:8px 16px 2px;gap:6px 20px;}
-#tkGuia .tk-gbar-t{font-size:1.05rem;}
-#tkGuia .tk-gbar-t .bi{font-size:1.25rem;}
-#tkGuia .tk-gprog{height:8px;}
-#tkGuia .tk-gchips{padding:4px 12px 6px;gap:6px;}
-#tkGuia .tk-gchip{min-height:40px;padding:3px 8px;gap:7px;border-width:1.5px;border-radius:10px;}
-#tkGuia .tk-gchip-n{width:26px;height:26px;font-size:.85rem;border-width:2px;}
-#tkGuia .tk-gchip-t{font-size:.84rem;line-height:1.15;}
-#tkGuia .tk-gchip-t small{font-size:.72rem;line-height:1.2;}
-#tkGuia .tk-gsig{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"k t a" "p p a";align-items:center;gap:2px 14px;margin:2px 12px 10px;padding:8px 14px;border-width:2px;border-radius:12px;}
-#tkGuia .tk-gsig-k{grid-area:k;font-size:.74rem;}
-#tkGuia .tk-gsig h4{grid-area:t;margin:0;font-size:1.08rem;}
-#tkGuia .tk-gsig p{grid-area:p;margin:0;font-size:.9rem;line-height:1.35;}
-#tkGuia .tk-gsig .tk-gacc{grid-area:a;margin:0;}
-#tkGuia .tk-gbtn{min-height:38px;padding:0 14px;font-size:.9rem;}
-/* Barra fija arriba al bajar: la tarjeta «Siguiente» se esconde (la regla de arriba, con #tkGuia,
-   le ganaba a «.tk-guia.is-fija .tk-gsig{display:none}» y la barra fija medía 129 px en vez de ~50) */
-#tkGuia.is-fija .tk-gsig{display:none;}
-@media (max-width:991px){
-  /* En celular la tarjeta vuelve a apilarse: no cabe título + botón en una fila */
-  #tkGuia .tk-gsig{grid-template-columns:minmax(0,1fr);grid-template-areas:"k" "t" "p" "a";}
-  #tkGuia .tk-gsig .tk-gacc{margin-top:6px;}
-  #tkGuia .tk-gbtn{min-height:44px;}
-}
-
 /* ── «Estado y avance» DENTRO de la barra de la guía (Daniel 03-nov: «sí, fusiónalo») ──
    tickets_ficha_v2.js (ponerEstadoAvance) mueve #tkEstadoAvance al hueco .tk-gbar-ea y le pone
    .is-en-guia. La columna «Avance» se oculta solo aquí: su %, sus pasos y su «Siguiente» ya los
    dice la guía. Sin guía, la tarjeta blanca de siempre sigue igual.
    Medido en una ficha real a 1920 px: guía 242 + tarjeta 123 (+10 de margen) -> 260 px en total. */
-#tkGuia .tk-gbar-prog > span{white-space:nowrap;}
-#tkGuia .tk-gbar-ea{display:flex;flex:0 1 auto;margin-left:auto;min-width:0;}
-#tkGuia .tk-ea.is-en-guia:not([hidden]){display:flex;flex-wrap:wrap;align-items:stretch;gap:8px 0;margin:0;
+.tk-ea.is-en-guia:not([hidden]){display:flex;flex-wrap:wrap;align-items:stretch;gap:8px 0;margin:0;
   background:transparent;border:0;border-radius:0;box-shadow:none;overflow:visible;}
 /* Cada bloque: etiqueta + píldora (+ barra) arriba, y el texto chico abajo */
-#tkGuia .tk-ea.is-en-guia .tk-ea-col{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:center;
+.tk-ea.is-en-guia .tk-ea-col{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:center;
   column-gap:8px;row-gap:3px;padding:0 0 0 16px;margin-left:16px;border-left:1px solid rgba(255,255,255,.18);border-top:0;}
-/* Más específica que la de arriba a propósito: si no, la columna «Avance» vuelve a aparecer */
-#tkGuia .tk-ea.is-en-guia .tk-ea-col.tk-ea-avance{display:none;}
-#tkGuia .tk-ea.is-en-guia .tk-ea-k{color:#9ca3af;font-size:.66rem;}
-#tkGuia .tk-ea.is-en-guia .tk-ea-k i{color:#f87171;font-size:.85rem;}
-#tkGuia .tk-ea.is-en-guia .tk-ea-pill{padding:3px 12px;font-size:.86rem;}
-#tkGuia .tk-ea.is-en-guia .tk-ea-pill i{font-size:.92rem;}
-#tkGuia .tk-ea.is-en-guia .tk-ea-barra{width:90px;height:6px;background:rgba(255,255,255,.18);}
+.tk-ea.is-en-guia .tk-ea-col.tk-ea-avance{display:none;}
+.tk-ea.is-en-guia .tk-ea-k{color:#9ca3af;font-size:.66rem;}
+.tk-ea.is-en-guia .tk-ea-k i{color:#f87171;font-size:.85rem;}
+.tk-ea.is-en-guia .tk-ea-pill{padding:3px 12px;font-size:.86rem;}
+.tk-ea.is-en-guia .tk-ea-pill i{font-size:.92rem;}
+.tk-ea.is-en-guia .tk-ea-barra{width:90px;height:6px;background:rgba(255,255,255,.18);}
 /* width:0 + min-width:100%: el texto chico no ensancha el bloque (si no, baja a otra línea) */
-#tkGuia .tk-ea.is-en-guia .tk-ea-sub{grid-column:1 / -1;width:0;min-width:100%;font-size:.74rem;color:#d1d5db;line-height:1.3;}
-#tkGuia .tk-ea.is-en-guia .tk-ea-sub:empty{display:none;}
-#tkGuia .tk-ea.is-en-guia .tk-ea-tiempo.is-alerta .tk-ea-sub{color:#fca5a5;}
+.tk-ea.is-en-guia .tk-ea-sub{grid-column:1 / -1;width:0;min-width:100%;font-size:.74rem;color:#d1d5db;line-height:1.3;}
+.tk-ea.is-en-guia .tk-ea-sub:empty{display:none;}
+.tk-ea.is-en-guia .tk-ea-tiempo.is-alerta .tk-ea-sub{color:#fca5a5;}
 /* Barra fija arriba al bajar: solo las píldoras, para que siga en una línea */
-#tkGuia.is-fija .tk-ea.is-en-guia .tk-ea-sub{display:none;}
+.tk-guia.is-fija .tk-ea.is-en-guia .tk-ea-sub{display:none;}
 @media (max-width:991px){
-  #tkGuia .tk-gbar-ea{flex:1 1 100%;margin-left:0;}
-  #tkGuia .tk-ea.is-en-guia:not([hidden]){flex-direction:column;gap:0;width:100%;}
-  #tkGuia .tk-ea.is-en-guia .tk-ea-col{margin-left:0;padding:8px 0 0;border-left:0;border-top:1px solid rgba(255,255,255,.14);}
-  #tkGuia .tk-ea.is-en-guia .tk-ea-col:first-child{border-top:0;}
+  .tk-gbar-ea{flex:1 1 100%;margin-left:0;}
+  .tk-ea.is-en-guia:not([hidden]){flex-direction:column;gap:0;width:100%;}
+  .tk-ea.is-en-guia .tk-ea-col{margin-left:0;padding:8px 0 0;border-left:0;border-top:1px solid rgba(255,255,255,.14);}
+  .tk-ea.is-en-guia .tk-ea-col:first-child{border-top:0;}
   /* la barra del plazo va en su propia línea: al lado de la píldora no cabe */
-  #tkGuia .tk-ea.is-en-guia .tk-ea-barra{grid-column:1 / -1;width:auto;}
+  .tk-ea.is-en-guia .tk-ea-barra{grid-column:1 / -1;width:auto;}
 }
