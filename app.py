@@ -5040,6 +5040,11 @@ PERMS_KEYS = (
     # en True y Daniel no es responsable de nada por serlo; la lista de candidatos sale de ot_responsable.es_candidato (permiso
     # EXPLÍCITO, activo y fuera de la familia técnico). Dormido por completo mientras nadie lo tenga encendido.
     "mant_ot_responsable",
+    # mant_inc_excel — «Descargar Excel de Incidencias» (aditivo 2026-11-04). Daniel: «Víctor me pide ver el botón de Excel» de la bodega
+    # de Incidencias, que desde el 08-oct era solo de admin. Nace APAGADO para todos los roles y personas (no es de tipo bloqueo); se
+    # enciende por persona en «Permisos individuales» o por rol en Roles → Servicio Técnico. Admin y superadmin lo conservan sin
+    # necesitarlo. La familia técnico nunca lo recibe, aunque se encienda (_inc_puede_excel).
+    "mant_inc_excel",
     # flota_* — «Solicitudes de vehículo» (aditivo 2026-11-02). Daniel: «déjalo habilitado por el front para poder dejarle las
     # asignaciones a cada uno… nadie puede agregar vehículos y nadie puede agregar choferes, solamente puede gestionar solicitudes».
     # Nacen APAGADAS para todos los roles y personas (el módulo solo lo ve el superadministrador hasta que él las encienda, por rol en
@@ -5214,6 +5219,8 @@ def _build_perms_from_matrix(role):
     # 🙋 2026-10-21 (REGLA #36): «Responsable de OT». Nace APAGADO (no es de tipo bloqueo): se enciende a propósito para quien
     # corresponda. Ver "mant_ot_responsable" en PERMS_KEYS.
     base["mant_ot_responsable"] = bool(man.get("ot_responsable"))
+    # 📊 2026-11-04: «Descargar Excel de Incidencias». Nace APAGADO (no es de tipo bloqueo). Ver "mant_inc_excel" en PERMS_KEYS.
+    base["mant_inc_excel"] = bool(man.get("inc_excel"))
     # 🔔 2026-10-23: «Recibe avisos de autorizaciones de OT». Tipo BLOQUEO (ausencia de fila = concedido), como mant_taller.
     base["mant_ot_autoriza_aviso"] = (man.get("ot_autoriza_aviso") is None
                                       or bool(man.get("ot_autoriza_aviso")))
@@ -14455,6 +14462,8 @@ PERMISSIONS_MATRIX = {
                                    "ot2_tecnico", "taller",
                                    # 🙋 2026-10-21 (REGLA #36): quién puede ser el responsable de una OT. Nace apagado.
                                    "ot_responsable",
+                                   # 📊 2026-11-04: quién puede descargar el Excel de Incidencias (nace apagado).
+                                   "inc_excel",
                                    # 🔔 2026-10-23: quién recibe los avisos de «Autorización pendiente» (bloqueo: nace concedido).
                                    "ot_autoriza_aviso"]},
     "retiros":        {"label":"Retiros",       "icon":"bi-box-arrow-up-right",
@@ -14570,6 +14579,11 @@ PERMISSIONS_META = {
         # se enciende solo para Víctor, Aarón y Juan Pablo (por persona en «Permisos individuales», o por rol aquí).
         "ot_responsable": {"label": "Responsable de OT (lleva las órdenes de trabajo y recibe sus avisos)",
                          "tipo": "submodulo", "icon": "bi-person-check"},
+        # 📊 2026-11-04 (Daniel: «Víctor me pide ver el botón de Excel» de Incidencias). Quien lo tiene ve «Descargar Excel» en la bodega de
+        # Incidencias. Nace apagado para todos; se enciende por persona en «Permisos individuales» o por rol aquí. Admin y superadmin lo
+        # tienen siempre; un técnico nunca, aunque se encienda.
+        "inc_excel": {"label": "Descargar Excel de Incidencias (bodega, para análisis)",
+                         "tipo": "submodulo", "icon": "bi-file-earmark-excel"},
         # 🔔 2026-10-23 (Daniel: «a Felipe, al ser superadmin, le llegan esos mensajes… sácale eso por el front»). Quien lo tiene recibe
         # la campana y el correo de «Autorización pendiente» (OT sin documento, $0, etc.). Nace concedido; se apaga por persona en
         # «Permisos individuales». No cambia quién puede aprobar.
@@ -71057,6 +71071,18 @@ def mant_api_incidencias_motivos_frecuentes():
     return jsonify({"ok": True, "motivos": [_sentence_case(f["motivo"]) for f in filas if f.get("motivo")]})
 
 
+def _inc_puede_excel():
+    """¿Puede este usuario descargar el Excel de la bodega de Incidencias?
+
+    ÚNICA fuente de verdad: la usan el botón de la pantalla y la ruta de descarga, así que lo que se ve es lo que se puede hacer.
+    Admin y superadmin siempre (así quedó el 08-oct-2026); además quien tenga el permiso «Descargar Excel de Incidencias»
+    (mant_inc_excel, que se enciende por rol o por persona). La familia técnico nunca, aunque el permiso esté encendido."""
+    perms = g.get("permissions") or {}
+    if perms.get("admin") or perms.get("superadmin"):
+        return True
+    return bool(perms.get("mant_inc_excel")) and not _es_rol_tecnico()
+
+
 @app.route("/mantenciones/incidencias")
 @app.route("/servicio-tecnico/incidencias")
 @_mant_required
@@ -71068,7 +71094,8 @@ def mant_incidencias_page():
     (REGLA #4.3, patrón Etiquetas)."""
     # 🗄️ 2026-09-30: los motivos de baja salen de UNA sola fuente (INC_BAJA_MOTIVOS).
     return render_template("mantenciones/incidencias.html",
-                           motivos_baja=[{"codigo": k, "texto": v} for k, v in INC_BAJA_MOTIVOS.items()])
+                           motivos_baja=[{"codigo": k, "texto": v} for k, v in INC_BAJA_MOTIVOS.items()],
+                           puede_excel_inc=_inc_puede_excel())
 
 
 def _inc_diagnostico_ua_duplicadas():
@@ -71771,14 +71798,14 @@ def _inc_excel_bytes(filas, ahora_chile, motivos_baja=None):
 @_mant_required
 @_no_tecnico_salvo_taller
 def mant_api_incidencias_excel():
-    """Descarga en Excel el detalle de la bodega de Incidencias (solo admin y
-    superadmin; el técnico nunca). Respeta los filtros de la pantalla por
+    """Descarga en Excel el detalle de la bodega de Incidencias (admin, superadmin
+    y quien tenga el permiso «Descargar Excel de Incidencias»; el técnico nunca:
+    ver _inc_puede_excel). Respeta los filtros de la pantalla por
     querystring: q, estado, f_chk, ver_todo=1 (incluye las que no cuadran) y
     bajas=1 (incluye las dadas de baja). `todo=1` ignora todos los filtros e
     incluye las dadas de baja. Solo lectura. Las eliminadas nunca salen."""
-    perms = g.get("permissions") or {}
-    if not (perms.get("admin") or perms.get("superadmin")):
-        return jsonify({"ok": False, "error": "Solo un administrador puede descargar este Excel."}), 403
+    if not _inc_puede_excel():
+        return jsonify({"ok": False, "error": "No tienes permiso para descargar este Excel."}), 403
     try:
         import openpyxl  # noqa: F401
     except ImportError:

@@ -1,4 +1,4 @@
-"""Excel de la bodega de Incidencias, solo admin (Daniel, 2026-10-08).
+"""Excel de la bodega de Incidencias: admin, superadmin y quien tenga el permiso mant_inc_excel (Daniel, 2026-10-08 y 2026-11-04).
 
 Sin Flask ni BD reales: las funciones de app.py se extraen con ast (mismo criterio que
 tests/test_incidencias_bajas.py) y la ruta se ejecuta con una "base" falsa.
@@ -19,7 +19,7 @@ from tests.test_incidencias_repuesto_tercera_fuente import _codigo_y_arbol  # no
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLANTILLA = os.path.join(RAIZ, "templates", "mantenciones", "incidencias.html")
 FUNCIONES = ("_inc_rango_dias", "_inc_excel_dt_chile", "_inc_excel_fecha", "_inc_excel_repuesto",
-             "_inc_excel_bytes", "mant_api_incidencias_excel")
+             "_inc_excel_bytes", "_inc_puede_excel", "mant_api_incidencias_excel")
 RUTA = "/mantenciones/api/incidencias/excel"
 
 
@@ -27,7 +27,7 @@ class _Obj(dict):
     pass
 
 
-def _cargar(request_args, permisos, filas, bajas=None, fotos=None):
+def _cargar(request_args, permisos, filas, bajas=None, fotos=None, es_tecnico=False):
     _, arbol = _codigo_y_arbol()
     consultas = []
 
@@ -55,6 +55,7 @@ def _cargar(request_args, permisos, filas, bajas=None, fotos=None):
 
     ambito = {
         "g": _G(), "request": _Req(), "Response": _Resp,
+        "_es_rol_tecnico": lambda: es_tecnico,
         "jsonify": lambda d: _Obj(d),
         "mysql_fetchall": mysql_fetchall,
         "_inc_ids_en_baja": lambda: set(), "_inc_ids_no_cuadran": lambda: set(),
@@ -149,11 +150,54 @@ class TestIncidenciasExcel(unittest.TestCase):
                          ["0-30 días", "0-30 días", "31-90 días", "31-90 días", "91-365 días",
                           "91-365 días", "Más de 365 días", "Sin fecha"])
 
-    def test_boton_solo_admin_en_la_plantilla(self):
+    def test_quien_puede_el_excel(self):
+        def puede(permisos, es_tecnico=False):
+            return _cargar({}, permisos, [], es_tecnico=es_tecnico)[0]["_inc_puede_excel"]()
+        self.assertTrue(puede({"admin": True}))
+        self.assertTrue(puede({"superadmin": True}))
+        self.assertTrue(puede({"mant_inc_excel": True}), "Víctor, con el permiso encendido")
+        self.assertFalse(puede({}))
+        self.assertFalse(puede({"mantenciones": True}), "ver Incidencias no basta")
+        self.assertFalse(puede({"mant_inc_excel": False}))
+        self.assertFalse(puede({"mant_inc_excel": True}, es_tecnico=True), "un técnico nunca, aunque se encienda")
+
+    def test_con_el_permiso_descarga_y_el_tecnico_recibe_403(self):
+        amb, _ = _cargar({}, {"mant_inc_excel": True}, [FILA])
+        resp = amb["mant_api_incidencias_excel"]()
+        self.assertIn("incidencias_bodega_", resp.headers["Content-Disposition"])
+        amb2, consultas = _cargar({}, {"mant_inc_excel": True}, [FILA], es_tecnico=True)
+        r = amb2["mant_api_incidencias_excel"]()
+        self.assertEqual(r[1], 403)
+        self.assertEqual(consultas, [], "el técnico no debe consultar nada")
+
+    def test_el_permiso_esta_cableado_y_nace_apagado(self):
+        codigo, _ = _codigo_y_arbol()
+        self.assertIn('    "mant_inc_excel",\n', codigo, "llave en PERMS_KEYS (permisos individuales)")
+        self.assertIn('"inc_excel",\n', codigo, "acción en la matriz de roles")
+        self.assertIn('"inc_excel": {"label"', codigo, "etiqueta en PERMISSIONS_META")
+        self.assertIn('base["mant_inc_excel"] = bool(man.get("inc_excel"))', codigo)
+        # No es de tipo bloqueo: no nace concedido ni en la matriz ni en el fallback de los roles sin filas.
+        self.assertNotIn('("mantenciones", "inc_excel")', codigo)
+        linea = [l for l in codigo.splitlines() if l.startswith("_PERMS_CONCEDIDOS_POR_DEFECTO =")]
+        self.assertEqual(len(linea), 1)
+        self.assertNotIn("mant_inc_excel", linea[0])
+
+    def test_la_pagina_y_la_ruta_usan_el_mismo_helper(self):
+        codigo, _ = _codigo_y_arbol()
+        self.assertIn("puede_excel_inc=_inc_puede_excel()", codigo)
+        ruta = codigo[codigo.index("def mant_api_incidencias_excel"):]
+        ruta = ruta[:ruta.index("\n@app.route")]
+        self.assertIn("if not _inc_puede_excel():", ruta)
+
+    def test_boton_excel_sigue_al_helper_y_se_quito_importar_csv(self):
         html = open(PLANTILLA, encoding="utf-8").read()
-        i = html.index("incBtnExcel")
-        self.assertIn("permissions.admin or permissions.superadmin", html[max(0, i - 600):i])
+        i = html.index('id="incBtnExcel"')
+        self.assertIn("{% if puede_excel_inc %}", html[max(0, i - 900):i])
         self.assertIn("Descargar Excel", html)
+        # Daniel, 2026-11-04: fuera el botón «Importar CSV». Sin botón, el listener no puede tronar el resto del script.
+        self.assertNotIn('<span class="tx">Importar CSV', html)
+        self.assertNotIn('<button class="btn inc-hbtn gris" id="incBtnImportar"', html)
+        self.assertIn("if(incBtnImportar) incBtnImportar.addEventListener", html)
 
 
 if __name__ == "__main__":
