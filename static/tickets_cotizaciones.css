@@ -697,3 +697,35 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
   .cot-lista .cot-acc-m{display:flex;gap:8px;width:100%}
   .cot-lista .tk-row-total{font-size:1.02rem}
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   FORMATO ILUS DE LA LISTA (2026-11-05, Daniel: «la tabla de cotizaciones no se ve bien, fiel al formato y colores»).
+   Mismo lenguaje que la bandeja de Tickets: tarjeta blanca con borde fino, encabezado negro, semáforo de color en el borde izquierdo de cada fila
+   (el estado se lee de un vistazo), cliente en negrita con su RUT debajo, fecha en dos líneas y los estados con su punto de color. No cambia anchos ni quita nada (REGLA #4.2).
+   ══════════════════════════════════════════════════════════════════════ */
+.cot-lista-card{border:1px solid #eaecf0;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.cot-lista thead th{font-size:.75rem;letter-spacing:.06em;font-weight:700;padding-top:13px;padding-bottom:13px}
+.cot-lista{border-collapse:separate;border-spacing:0}
+.cot-lista tbody tr.cot-row{transition:background .12s}
+.cot-lista tbody tr.cot-row:hover{background:#fafbfc}
+.cot-lista tbody tr.cot-row > td{border-bottom:1px solid #f1f3f6}
+.cot-lista tbody tr.cot-row:last-child > td{border-bottom:0}
+.cot-lista tbody tr.cot-row > td:first-child{border-left:4px solid var(--cot-st,#d1d5db)}
+.cot-lista .cot-st-draft{--cot-st:#9ca3af}
+.cot-lista .cot-st-sent{--cot-st:#3b82f6}
+.cot-lista .cot-st-approved{--cot-st:#16a34a}
+.cot-lista .cot-st-rejected{--cot-st:#dc2626}
+.cot-lista .cot-st-expired,.cot-lista .cot-st-vencida{--cot-st:#f59e0b}
+.cot-lista .cot-cli-nom{display:block;font-weight:800;color:#0a0a0a;font-size:.95rem;line-height:1.25}
+.cot-lista .cot-cli-rut{display:block;margin-top:2px;font-size:.78rem;color:#6b7280;font-variant-numeric:tabular-nums}
+.cot-lista .tk-badge{display:inline-flex;align-items:center;gap:6px;font-size:.75rem;letter-spacing:.04em}
+.cot-lista .tk-badge::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.75;flex:0 0 auto}
+.cot-lista .cot-fec-d{display:block;font-weight:700;color:#374151;font-size:.82rem}
+.cot-lista .cot-fec-h{display:block;color:#6b7280;font-size:.78rem}
+.cot-lista .tk-row-total{font-size:.98rem}
+@media (max-width:1239.98px){
+  .cot-lista.table-mobile-cards tbody tr.cot-row{border-left:5px solid var(--cot-st,#d1d5db)}
+  .cot-lista.table-mobile-cards tbody tr.cot-row > td:first-child{border-left:0}
+  .cot-lista .cot-fec-d,.cot-lista .cot-fec-h{display:inline;font-size:.82rem}
+  .cot-lista .cot-fec-h::before{content:" · "}
+}
