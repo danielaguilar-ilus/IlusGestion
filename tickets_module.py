@@ -50,6 +50,7 @@ import tickets_firma_correo as _tkfirma
 import cot_composicion as _cotcomp
 import cot_sin_saldo as _cotsinsaldo
 import cot_frecuencia as _cotfrec
+import cot_detalle_calculo as _cotdet
 from retiros_monitor import hace as rm_hace
 
 # Validacion server-side del "correo que da la cara" (Reply-To de tickets).
@@ -4617,7 +4618,7 @@ def register_tickets_routes(app, ctx):
         tipo_servicio = cot.get("tipo_servicio") or "mantencion"
         items_rows = mysql_fetchall(
             "SELECT id, erp_kopr, descripcion, clase_producto, cantidad, descuento_pct, "
-            "       precio_unitario, subtotal, total "
+            "       precio_unitario, subtotal, total, precio_manual "
             "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
 
         cfg = _tk_cfg_margen(_tk_cotiz_pricing_config(), cot.get("margen_pct"))   # 2026-10-27: el margen propio de la cotización
@@ -4678,7 +4679,16 @@ def register_tickets_routes(app, ctx):
                 "subtotal": int(it.get("subtotal") or 0),
                 "total": int(it.get("total") or 0),
                 "sin_tarifa": tarifa is None,
+                # 2026-11-06 (Daniel: «reparar ese PDF… para las dudas más adelante»): DE DÓNDE salió el precio y cuánto margen deja de verdad
+                # (automático / escrito a mano / fijo / mínimo / no cobrable / sin tarifa). Ver cot_detalle_calculo.py.
+                "analisis": _cotdet.analizar_item(
+                    cantidad=it.get("cantidad"), precio_unitario=it.get("precio_unitario"), total=it.get("total"),
+                    precio_manual=it.get("precio_manual"),
+                    tarifa_fijo=(tarifa or {}).get("precio_fijo"), precio_piso=(tarifa or {}).get("precio_piso"),
+                    horas=horas, tecnicos=tecnicos, valor_hh=_valor_hh_tipo, margen_pct=cfg.get("margen_pct"),
+                    sin_tarifa=tarifa is None, no_cobrable=_tk_cotiz_clase_no_cobrable(clase)),
             })
+        _res_dc = _cotdet.resumen(items)
 
         # Zona / costo de ruta (Daniel: "eso multiplicado por la zona") --
         # el detalle completo de tk_cotiz_rutas para la comuna del cliente,
@@ -4735,6 +4745,12 @@ def register_tickets_routes(app, ctx):
                 "total": total,
             },
             "items": items,
+            "resumen": _res_dc,
+            "dudas": _cotdet.dudas(_res_dc, tipo_servicio_label=_TK_COTIZ_TIPOS_SERVICIO_LABELS.get(tipo_servicio, tipo_servicio),
+                                   ruta_excluida=bool(cot.get("ruta_excluida")), costo_ruta=int(cot.get("costo_ruta") or 0)),
+            # La UF con la que se EMITIÓ (congelada en la cotización); la de hoy va aparte en uf_info.
+            "uf_emision": ({"valor": float(cot.get("uf_valor")), "fecha": _uf_fecha_cl(str(cot.get("uf_fecha") or "")[:10])}
+                           if cot.get("uf_valor") else None),
             "ruta": ruta,
             "cfg": cfg,
             # `cfg["valor_hh"]` es un dict {tipo_servicio: valor} desde
