@@ -49,6 +49,7 @@ import tickets_guia as _tkguia
 import tickets_firma_correo as _tkfirma
 import cot_composicion as _cotcomp
 import cot_sin_saldo as _cotsinsaldo
+import cot_frecuencia as _cotfrec
 from retiros_monitor import hace as rm_hace
 
 # Validacion server-side del "correo que da la cara" (Reply-To de tickets).
@@ -4210,20 +4211,8 @@ def register_tickets_routes(app, ctx):
                 "Registro de observaciones y recomendaciones técnicas por equipo.",
                 "Coordinación del servicio para reducir interrupciones operativas.",
             ]
-            if _previas > 0:
-                recomendacion_lineas = [
-                    f"Cliente recurrente: ya registra {_previas} mantención(es) previa(s) con nosotros — se dará continuidad a la trazabilidad de cada equipo.",
-                    "Comparar hallazgos con la visita anterior para anticipar desgaste y repuestos.",
-                    "Mantener la frecuencia recomendada de dos intervenciones al año.",
-                    "Cotizar previamente repuestos o trabajos correctivos que requieran autorización.",
-                ]
-            else:
-                recomendacion_lineas = [
-                    "Primera mantención registrada para este cliente: se levantará la línea base del estado de cada equipo.",
-                    "Programar dos intervenciones anuales, separadas aproximadamente cada seis meses.",
-                    "Emitir un informe técnico al cierre con hallazgos y recomendaciones.",
-                    "Cotizar previamente repuestos o trabajos correctivos que requieran autorización.",
-                ]
+            # 2026-11-06 (Daniel): la frecuencia recomendada la elige quien cotiza (antes decía siempre «dos»), y se aclara que lo cotizado es UNA visita.
+            recomendacion_lineas = _cotfrec.recomendaciones_por_defecto(cot.get("frecuencia_anual"), _previas)
         # 2026-07-24 (Daniel, mensaje de voz: "para cada visita, instalación o
         # mantención deberás tener un texto inteligente para que vaya en la
         # cotización"). Mismo patrón que mantención de arriba (NO tocado),
@@ -4298,7 +4287,7 @@ def register_tickets_routes(app, ctx):
                 # (servicio recurrente) -- una visita técnica o instalación no
                 # se repiten "N veces al año", así que el KPI queda en None y
                 # la plantilla oculta esa tarjeta (ver cotizacion_pdf.html).
-                "mantenciones_anio": int(cot.get("frecuencia_anual") or 2) if cot.get("tipo_servicio") == "mantencion" else None,
+                "mantenciones_anio": _cotfrec.normalizar(cot.get("frecuencia_anual")) if cot.get("tipo_servicio") == "mantencion" else None,
                 "dias_habiles": cot.get("dias_habiles_estimado"),
             }
 
@@ -4315,16 +4304,11 @@ def register_tickets_routes(app, ctx):
             _tipo_rico = cot.get("tipo_servicio")
             if _tipo_rico == "mantencion":
                 _frecuencia = kpis["mantenciones_anio"]
-                _parrafo = (
-                    f"Se recomienda ejecutar {_frecuencia} mantenciones preventivas al año"
-                    + (", idealmente con una separación aproximada de seis meses" if _frecuencia == 2 else "")
-                    + ". Esta frecuencia permite anticipar fallas, preservar la operatividad de los equipos y "
-                      "mantener una adecuada trazabilidad técnica. La presente cotización corresponde al valor "
-                      "unitario de una mantención de los equipos individualizados en el detalle adjunto."
-                    + (" Las mantenciones posteriores se calcularán utilizando los mismos precios expresados en "
-                       "UF y la UF vigente a la fecha del servicio." if uf_info else "")
-                )
+                # 2026-11-06 (Daniel): la frecuencia es una RECOMENDACIÓN; lo cotizado es UNA visita (cot_frecuencia.py).
+                _parrafo = _cotfrec.parrafo_mantencion(_frecuencia, bool(uf_info))
                 rico_textos = {
+                    "aviso_una_visita": _cotfrec.AVISO_UNA_VISITA,
+                    "frecuencia_texto": _cotfrec.veces_al_anio(_frecuencia),
                     "titulo": "Propuesta de Mantención Preventiva",
                     "bt_sub": "Valor Unitario",
                     "parrafo": _parrafo,

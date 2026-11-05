@@ -632,6 +632,12 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
 .cot-int-linea{display:block;color:#92400e;font-size:.75rem;}
 @media (max-width:768px){.cot-wiz-interno{max-width:none;margin-left:0}}
 
+/* Frecuencia de mantención recomendada (2026-11-06): atajos de 44 px (REGLA #3); el elegido va en rojo ILUS. */
+.cot-wiz-frec-chips{display:flex;gap:6px;flex-wrap:wrap}
+.cot-wiz-frec-chip{min-width:44px;min-height:44px;padding:0 12px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#374151;font-weight:800;font-size:.95rem;cursor:pointer}
+.cot-wiz-frec-chip:hover{border-color:#dc2626;color:#dc2626}
+.cot-wiz-frec-chip.on{background:#dc2626;border-color:#dc2626;color:#fff}
+
 /* ══════════════════════════════════════════════════════════════════════
    LISTA RESPONSIVA (2026-11-05). Daniel: «la lista no cabe en 1280… en el celular las tarjetas son muy grandes y feas, con letras muy chicas;
    no quiero letras chicas, pero tampoco mucho scroll». REGLA #4.3 (cabe en pantalla, sin scroll de lado), #3 (toques de 44 px), #15 (nombres
