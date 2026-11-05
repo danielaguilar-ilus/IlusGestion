@@ -80,7 +80,7 @@
 .dh-entrega-empty{ width:48px; height:48px; border-radius:10px; background:var(--trx-g1); display:flex; align-items:center; justify-content:center; color:var(--trx-g3); flex-shrink:0; }
 .dh-entrega-body{ flex:1; min-width:0; }
 .dh-entrega-cli{ font-weight:700; font-size:.88rem; color:var(--trx-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.dh-entrega-meta{ font-size:.74rem; color:var(--trx-muted); }
+.dh-entrega-meta{ font-size:.75rem; color:var(--trx-muted); }
 .dh-entrega-time{ font-size:.7rem; font-weight:800; color:var(--trx-ok); }
 
 .dh-topcourier{ display:flex; justify-content:space-between; align-items:center; padding:.55rem 0; border-bottom:1px solid var(--trx-g1); font-size:.88rem; }
@@ -91,7 +91,7 @@
 
 /* Nota metodológica del bloque de KPI */
 .dh-note{
-  font-size:.74rem; color:var(--trx-ink-3); line-height:1.55;
+  font-size:.75rem; color:var(--trx-ink-3); line-height:1.55;
   background:var(--trx-info-bg); border:1px solid #bfdbfe;
   border-radius:var(--trx-r-sm); padding:10px 12px; margin-bottom:14px;
 }
@@ -132,12 +132,50 @@
 .dh-badge-entrega.ruta{ background:var(--trx-info-bg); color:#1e40af; }
 .dh-row-actions{ display:flex; gap:6px; flex-wrap:wrap; }
 .dh-row-actions a{ font-size:.72rem; font-weight:700; text-decoration:none; padding:5px 10px; border-radius:7px; border:1.5px solid var(--trx-g2); color:var(--trx-ink-3); display:inline-flex; align-items:center; gap:4px; white-space:nowrap; background:#fff; }
-.dh-row-actions a:hover{ background:var(--trx-black); color:#fff; border-color:var(--trx-black); }
+.dh-row-actions a:hover{ background:var(--trx-black,#0a0a0a); color:#fff; border-color:var(--trx-black,#0a0a0a); }
 
 .dh-pager{ display:flex; align-items:center; justify-content:center; gap:10px; padding:14px 18px; }
 .dh-pager a, .dh-pager span{ font-size:.8rem; font-weight:700; padding:6px 12px; border-radius:8px; border:1.5px solid var(--trx-g2); text-decoration:none; color:var(--trx-ink-3); min-height:36px; display:inline-flex; align-items:center; background:#fff; }
 .dh-pager a:hover{ background:var(--trx-g1); }
 .dh-pager .cur{ background:var(--trx-black); color:#fff; border-color:var(--trx-black); }
+
+/* ═══ COMPROMISOS EN EL CELULAR (2026-11-05, REGLA #61) ══════════════════════
+   La tabla de 9 columnas (880 px de mínimo) se deslizaba 608 px por dentro a 390 px de pantalla (medido en producción). Bajo 768 px cada compromiso
+   pasa a UNA tarjeta con las MISMAS 9 celdas (REGLA #4.2: no se quita nada) y cada dato con su rótulo; el borde izquierdo conserva el color del
+   estado de la entrega (verde entregado, rojo problema, azul en ruta). El escritorio no cambia: todo va dentro de este @media y bajo `.dh-scroll`. */
+@media (max-width:767.98px){
+  .trx-table-wrap:has(> .dh-scroll){ background:transparent; border:0; border-radius:0; box-shadow:none; overflow:visible; }
+  .dh-scroll{ overflow:visible; }
+  .dh-scroll table{ min-width:0; display:block; width:100%; }
+  .dh-scroll thead{ display:none; }
+  .dh-scroll tbody{ display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr)); gap:10px; }
+  .dh-scroll tbody tr{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; background:#fff; border:1px solid #e5e7eb; border-left:4px solid #cbd5e1;
+    border-radius:14px; padding:12px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  .dh-scroll tbody tr.trx-row-ok{ border-left-color:#16a34a; }
+  .dh-scroll tbody tr.trx-row-dang{ border-left-color:#dc2626; }
+  .dh-scroll tbody tr.trx-row-info{ border-left-color:#3b82f6; }
+  .dh-scroll tbody td{ display:block; min-width:0; padding:0; border:0 !important; box-shadow:none !important; }
+  /* orden: [documento][estado] / [cliente] / [comuna][courier] / [entrega] / [emisión][entregado] / [acciones] */
+  .dh-scroll td.dh-c-doc{ order:1; flex:1 1 0; font-size:.95rem; }
+  .dh-scroll td.dh-c-est{ order:2; flex:0 0 auto; }
+  .dh-scroll td.dh-c-cli{ order:3; flex:0 0 100%; font-weight:700; }
+  .dh-scroll td.dh-c-com{ order:4; flex:1 1 calc(50% - 6px); }
+  .dh-scroll td.dh-c-cou{ order:5; flex:1 1 calc(50% - 6px); }
+  .dh-scroll td.dh-c-ent{ order:6; flex:0 0 100%; }
+  .dh-scroll td.dh-c-emi{ order:7; flex:1 1 calc(50% - 6px); }
+  .dh-scroll td.dh-c-fin{ order:8; flex:1 1 calc(50% - 6px); }
+  .dh-scroll td.dh-c-acc{ order:9; flex:0 0 100%; border-top:1px solid #f1f3f6 !important; padding-top:8px; }
+  .dh-scroll td.dh-c-com::before, .dh-scroll td.dh-c-cou::before, .dh-scroll td.dh-c-emi::before, .dh-scroll td.dh-c-fin::before{
+    display:block; font-size:.75rem; font-weight:800; color:#6b7280; text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px; }
+  .dh-scroll td.dh-c-com::before{ content:"Comuna"; }
+  .dh-scroll td.dh-c-cou::before{ content:"Courier"; }
+  .dh-scroll td.dh-c-emi::before{ content:"Emisión"; }
+  .dh-scroll td.dh-c-fin::before{ content:"Entregado"; }
+  /* REGLA #3: botones de 44 px; REGLA #61: letra de 12 px o más (la comuna trae su tamaño en línea) */
+  .dh-scroll .dh-row-actions a{ min-height:44px; padding:0 14px; font-size:.78rem; }
+  .dh-scroll td.dh-c-com{ font-size:.85rem !important; }
+  .dh-scroll .dh-badge-estado, .dh-scroll .dh-badge-entrega{ font-size:.75rem; }
+}
 </style>
 
 
@@ -455,16 +493,18 @@
           <tbody>
             {% for c in compromisos %}
             <tr class="{% if c.estado_entrega == 'Entregado' %}trx-row-ok{% elif c.estado_entrega in ('Problema', 'Entrega fallida', 'Devolución') %}trx-row-dang{% elif c.estado_entrega == 'En ruta' %}trx-row-info{% endif %}">
-              <td style="font-weight:700;color:var(--trx-black)">{{ c.tido }} {{ c.nudo_display }}</td>
-              <td>{{ c.cliente_nombre or '—' }}</td>
-              <td style="color:var(--trx-muted);font-size:.78rem">{{ c.comuna or '—' }}</td>
-              <td>{{ c.courier or '—' }}</td>
-              <td>
+              {# 📱 2026-11-05 (REGLA #61): cada celda lleva su clase `dh-c-*`. En escritorio no hacen nada; en el celular (CSS «COMPROMISOS EN EL CELULAR»,
+                 arriba) la fila pasa a ser una tarjeta y esas clases dicen dónde va cada celda. Siguen siendo las MISMAS 9 celdas, en el mismo orden. #}
+              <td class="dh-c-doc" style="font-weight:700;color:var(--trx-black)">{{ c.tido }} {{ c.nudo_display }}</td>
+              <td class="dh-c-cli">{{ c.cliente_nombre or '—' }}</td>
+              <td class="dh-c-com" style="color:var(--trx-muted);font-size:.78rem">{{ c.comuna or '—' }}</td>
+              <td class="dh-c-cou">{{ c.courier or '—' }}</td>
+              <td class="dh-c-est">
                 <span class="dh-badge-estado bg-{{ estado_colors.get(c.estado, 'secondary') }}">
                   {{ c.estado or '—' }}
                 </span>
               </td>
-              <td>
+              <td class="dh-c-ent">
                 {% if c.estado_entrega == 'Entregado' %}
                   <span class="dh-badge-entrega ok"><i class="bi bi-check-lg"></i> Entregado</span>
                 {% elif c.estado_entrega in ('Problema', 'Entrega fallida', 'Devolución') %}
@@ -477,9 +517,9 @@
                   <span class="dh-badge-entrega">Sin manifiesto</span>
                 {% endif %}
               </td>
-              <td>{{ c.fecha_emision.strftime('%d/%m/%Y') if c.fecha_emision else '—' }}</td>
-              <td>{{ c.delivered_at | chile_fmt if c.delivered_at else '—' }}</td>
-              <td>
+              <td class="dh-c-emi">{{ c.fecha_emision.strftime('%d/%m/%Y') if c.fecha_emision else '—' }}</td>
+              <td class="dh-c-fin">{{ c.delivered_at | chile_fmt if c.delivered_at else '—' }}</td>
+              <td class="dh-c-acc">
                 {# el flex va en un div, NO en el <td>: display:flex sobre una
                    celda la saca del layout de tabla y rompe el borde de la fila #}
                 <div class="dh-row-actions">
