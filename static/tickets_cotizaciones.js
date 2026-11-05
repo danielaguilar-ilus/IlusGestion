@@ -892,7 +892,10 @@ async function _cotWizAsignarDesdeDocumento(items, header){
     return { sku: it.sku || '', nombre: it.nombre || '', qty: (it.qty == null ? 1 : it.qty),
              // Multidocumento (2026-07-22): cada ítem conserva su documento
              // ERP de origen (tido+nudo) para la columna "Documento".
-             tido: it.tido || null, nudo: it.nudo || null, koen: it.koen, clase_producto: null };
+             tido: it.tido || null, nudo: it.nudo || null, koen: it.koen, clase_producto: null,
+             // 2026-11-06: una línea de un documento SIN SALDO que se desbloqueó en el buscador viaja con su comentario: queda en el
+             // historial de la cotización (quién, cuándo y por qué).
+             marcada_sin_saldo: !!it.marcada_sin_saldo, motivo_sin_saldo: it.motivo_sin_saldo || '' };
   });
   _WIZ.items = _WIZ.items.concat(nuevos);
   await cotWizClasificar();
@@ -1959,7 +1962,8 @@ function _cotWizInternoPintar(desc){
                                        // PLAN (2026-09-01): solo tiene sentido si el
                                        // ítem viene de un equipo real de la ficha.
                                        maquina_id: (it.maquina_id != null ? it.maquina_id : null),
-                                       aplica_mantencion: !!it.aplica_mantencion })),
+                                       aplica_mantencion: !!it.aplica_mantencion,
+                                       marcada_sin_saldo: !!it.marcada_sin_saldo, motivo_sin_saldo: it.motivo_sin_saldo || '' })),
         header: {
           cliente: empresa,
           rut: document.getElementById('cotWizRut').value.trim(),
@@ -2632,7 +2636,9 @@ const _COT_HIST_ICONOS = {
   enviar_correo:'bi-envelope', generar_ticket:'bi-ticket-perforated',
   generar_ot:'bi-clipboard-check', eliminar:'bi-trash',
   // 2026-09-05: vínculo con un ticket que ya existía (y su reverso).
-  asociar_ticket:'bi-link-45deg', desasociar_ticket:'bi-x-circle'
+  asociar_ticket:'bi-link-45deg', desasociar_ticket:'bi-x-circle',
+  // 2026-11-06: productos de documentos sin saldo que se desbloquearon con un comentario.
+  sin_saldo:'bi-unlock-fill'
 };
 const _COT_HIST_LABEL = {
   crear:'Creada', editar:'Editada', editar_aprobada:'Editada (estaba aprobada)',
@@ -2640,7 +2646,8 @@ const _COT_HIST_LABEL = {
   aprobar:'Aprobada', rechazar:'Rechazada', reabrir:'Reabierta',
   enviar_correo:'Enviada por correo', generar_ticket:'Ticket generado',
   generar_ot:'OT generada', eliminar:'Eliminada',
-  asociar_ticket:'Asociada a un ticket', desasociar_ticket:'Desasociada del ticket'
+  asociar_ticket:'Asociada a un ticket', desasociar_ticket:'Desasociada del ticket',
+  sin_saldo:'Documentos sin saldo desbloqueados'
 };
 async function cotVerHistorial(cid, numero){
   document.getElementById('cotHistNum').textContent = numero || '';
@@ -2673,6 +2680,11 @@ function _cotHistDetalle(accion, o){
   // secas no permite reconstruir la historia meses después.
   if (accion === 'asociar_ticket' && o.numero_ticket) return '→ ' + _cotEsc(o.numero_ticket);
   if (accion === 'desasociar_ticket' && o.numero_ticket) return '← ' + _cotEsc(o.numero_ticket);
+  // El comentario va COMPLETO (REGLA #15): es la razón por la que se incluyó algo que el ERP ya rebajó.
+  if (accion === 'sin_saldo' && o.comentario){
+    const docs = (o.documentos || []).map(_cotEsc).join(', ');
+    return '— «' + _cotEsc(o.comentario) + '»' + (o.total ? ' · ' + o.total + ' producto' + (o.total === 1 ? '' : 's') : '') + (docs ? ' de ' + docs : '');
+  }
   return '';
 }
 
