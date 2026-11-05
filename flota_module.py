@@ -1371,8 +1371,10 @@ def register_flota_routes(app, ctx):
         if resp_lic is not None:
             return resp_lic
         cambios = fr.cambios(dict(actual), datos, campos=fr.CHOFER_COLUMNAS)
-        if _lic_verificar() and data_lic is None and tiene_lic and any(c in cambios for c in ("rut", "licencia_vence", "licencia_clases")):
-            # El RUT, las clases y el vencimiento SALEN de la licencia: con una ya escaneada no se reescriben a mano (Daniel, 05-nov-2026).
+        if _lic_verificar() and data_lic is None and any(c in cambios for c in ("rut", "licencia_vence", "licencia_clases")):
+            # El RUT, las clases y el vencimiento SALEN de la licencia: nunca se reescriben a mano, tenga o no una ya escaneada (Daniel, 05-nov-2026:
+            # «elimina la entrada a mano para que la persona no pueda burlar los controles»). Un chofer con usuario sin licencia escaneada ya no
+            # llega aquí (se le exige adjuntarla para guardar cualquier cosa); el externo antiguo (sin usuario) sí, y también tiene que escanearla.
             motivo_omitir = _lic_motivo_omitir(payload)
             if not motivo_omitir:
                 return _error("El RUT, las clases y el vencimiento salen de la licencia: para cambiarlos escanea la licencia nueva.", 400,

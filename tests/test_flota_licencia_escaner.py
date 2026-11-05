@@ -674,7 +674,8 @@ class TestPantallaDelEscaner(unittest.TestCase):
         self.assertIn("S.chBloquea = !!(c && c.tiene_licencia_pdf);", ab)
         self.assertIn("aplicarBloqueoCh();", ab)
         b = self.BLOQUE_JS[self.BLOQUE_JS.index("function aplicarBloqueoCh"):]
-        self.assertIn("f.elements.rut.readOnly = b; f.elements.licencia_vence.readOnly = b;", b)
+        self.assertIn("f.elements.rut.readOnly = b;", b)
+        self.assertIn("bloquearVence();", b)             # el vencimiento ya no depende de esta bandera: nunca se escribe a mano (05-nov-2026)
         self.assertIn("i.disabled = b", b)
 
     def test_registrar_sin_comprobar_solo_se_ofrece_si_el_servidor_dice_que_puede_y_pide_motivo(self):

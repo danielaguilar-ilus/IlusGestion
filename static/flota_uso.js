@@ -1959,7 +1959,8 @@
     else r.direccion = res('bad', 'Elige la dirección de la lista de sugerencias de Google para validarla.');
     r.licencia_clases = clasesCh().length ? res('ok', 'Licencia clase ' + clasesCh().join(' y ') + '.') : res('bad', 'Elige al menos una clase de licencia (por ejemplo B).');
     var v = vCh('licencia_vence');
-    if (!v) r.licencia_vence = res('bad', 'Indica cuándo vence la licencia: sin esa fecha no se puede comprobar que esté vigente.');
+    if (!v) r.licencia_vence = res('bad', S.chOmitir ? 'Indica cuándo vence la licencia: sin esa fecha no se puede comprobar que esté vigente.'
+      : 'Escanea la licencia: la fecha de vencimiento sale de la foto, no se escribe a mano.');
     else {
       var f = aFecha(v), d = diasHasta(v);
       if (!f || f.getFullYear() < 2000 || f.getFullYear() > 2100) r.licencia_vence = res('bad', 'Fecha no válida.');
@@ -2131,9 +2132,22 @@
     pintarLectura();
   }
   /* Con una licencia ya escaneada, el RUT, las clases y el vencimiento salen de ella: no se reescriben a mano (el servidor también lo exige). */
+  /* El vencimiento NUNCA se escribe a mano (Daniel, 05-nov-2026: «elimina la entrada a mano para que la persona no pueda burlar los controles:
+     que suban la imagen y ella coloque el vencimiento»). Sale de la licencia escaneada y lo único que la persona hace es elegir entre las fechas
+     que se leyeron (los botones de «Fechas que leí»). Única excepción: el superadministrador que registra «sin comprobar» (con motivo escrito y
+     anotado), porque ahí no hay fecha leída. El servidor lo exige igual. */
+  function bloquearVence() {
+    var el = $('flFormCh').elements.licencia_vence, libre = !!S.chOmitir;
+    el.readOnly = !libre; el.disabled = !libre;
+    var ay = $('flChVenceAyuda');
+    if (ay) ay.textContent = libre
+      ? 'Registro sin comprobar: escribe la fecha de control que ves en la licencia. Queda anotada con tu motivo.'
+      : 'Sale de la licencia que escanees (la «fecha de control»). No se escribe a mano.';
+  }
   function aplicarBloqueoCh() {
     var f = $('flFormCh'), b = !!S.chBloquea;
-    f.elements.rut.readOnly = b; f.elements.licencia_vence.readOnly = b;
+    f.elements.rut.readOnly = b;
+    bloquearVence();
     Array.prototype.forEach.call(document.querySelectorAll('#flChClases input'), function (i) { i.disabled = b; });
     var nota = $('flChBloqueoNota');
     nota.hidden = !b;
@@ -2200,6 +2214,7 @@
   var ICONO_LEC = { ok: 'bi-check-circle-fill', warn: 'bi-exclamation-triangle-fill', bad: 'bi-x-octagon-fill' };
   function pintarLectura() {
     var box = $('flChLectura');
+    bloquearVence();                                                           // cambió la lectura o la omisión: el campo se vuelve a bloquear o liberar
     if (!box) return;
     if (S.chLeyendo) {
       box.hidden = false; box.className = 'fl-lectura leyendo';

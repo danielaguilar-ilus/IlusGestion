@@ -868,8 +868,10 @@
                 <div class="fl-msg" aria-live="polite"></div>
               </div>
               <div class="fl-campo fl-campo--corto" data-campo="licencia_vence">
-                <label for="flChVence">La licencia vence <span class="fl-req">*</span></label>
-                <input type="date" id="flChVence" name="licencia_vence">
+                <label for="flChVence"><i class="bi bi-lock-fill" aria-hidden="true"></i> La licencia vence <span class="fl-req">*</span></label>
+                {# Nunca se escribe a mano (Daniel, 05-nov-2026): sale de la licencia escaneada y la persona solo elige entre las fechas que se leyeron. #}
+                <input type="date" id="flChVence" name="licencia_vence" readonly disabled aria-readonly="true" aria-describedby="flChVenceAyuda">
+                <p class="fl-ayuda" id="flChVenceAyuda">Sale de la licencia que escanees (la «fecha de control»). No se escribe a mano.</p>
                 <div class="fl-msg" aria-live="polite"></div>
               </div>
               {# Obligatoria (Daniel, 04-nov-2026): sin la licencia escaneada y su fecha de término el chofer no se registra. #}

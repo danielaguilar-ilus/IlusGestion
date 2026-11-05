@@ -1312,6 +1312,8 @@ td > .fl-resp,td > .fl-dsv{display:flex}
 @keyframes flLecGiro{to{transform:rotate(360deg)}}
 .fl-lectura.leyendo{border-color:#d1d5db;background:#fafafa}
 input[readonly].fl-bloq,#flFormCh input[readonly]{background:#f3f4f6;color:#374151;cursor:not-allowed}
+#flChVence:disabled{opacity:1;-webkit-text-fill-color:currentColor;background:#f3f4f6;color:#374151;cursor:not-allowed;border-style:dashed}
+[data-campo="licencia_vence"] .fl-ayuda{margin:6px 0 0}
 @media (max-width: 640px){
   .fl-lec-filas{grid-template-columns:1fr}
   .fl-btn-esc{flex-basis:100%}
