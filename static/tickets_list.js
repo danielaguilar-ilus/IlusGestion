@@ -345,18 +345,20 @@ function tkFilaHtml(tk){
     ? '<div class="tkc-sub"><i class="bi bi-person"></i>'+esc(tk.nombre_contacto)+'</div>' : '';
   const fono = tk.phone ? '<div class="tkc-sub"><i class="bi bi-telephone"></i>'+esc(tk.phone)+'</div>' : '';
   const rut = (tk.rut && tk.rut !== cliente) ? '<div class="tkc-sub">RUT '+esc(tk.rut)+'</div>' : '';
+  // 2026-11-05 (REGLA #61): cada celda lleva su clase `tk-c-*`. En escritorio no hacen nada; en el celular (tickets_list.css, «BANDEJA EN EL
+  // CELULAR») la fila pasa a ser una tarjeta y esas clases dicen dónde va cada celda. Siguen siendo las MISMAS 8 celdas, en el mismo orden.
   return '<tr class="prio-'+(tk.prioridad||'media')+(sem?' sla-'+sem:'')+'" onclick="location.href=\'/tickets/'+tk.id+'\'">'
-    + '<td><div class="tkc-num"><span class="tk-num">'+esc(tk.numero_ticket||('#'+tk.id))+'</span>'+garBadge+unread+urg+'</div>'
+    + '<td class="tk-c-num"><div class="tkc-num"><span class="tk-num">'+esc(tk.numero_ticket||('#'+tk.id))+'</span>'+garBadge+unread+urg+'</div>'
     +   '<div class="tkc-orig">'+tkOrigenCelda(tk.origen)+'<span class="tkc-hace">'+esc(fpCreado.f)+(fpCreado.h?' '+esc(fpCreado.h):'')+'</span></div></td>'
-    + '<td><div class="tkc-cliente">'+esc(cliente)+'</div>'+rut+contacto+fono
+    + '<td class="tk-c-cli"><div class="tkc-cliente">'+esc(cliente)+'</div>'+rut+contacto+fono
     +   (titulo?'<div class="tkc-titulo">'+esc(titulo)+'</div>':'')+'</td>'
-    + '<td>'+tkTipoCelda(tk)+'</td>'
-    + '<td><span class="tk-badge bs-'+tk.estado+'">'+esc(ESTADO_LABEL[tk.estado]||tk.estado)+'</span>'
+    + '<td class="tk-c-tipo">'+tkTipoCelda(tk)+'</td>'
+    + '<td class="tk-c-est"><span class="tk-badge bs-'+tk.estado+'">'+esc(ESTADO_LABEL[tk.estado]||tk.estado)+'</span>'
     +   '<div class="tkc-avance">'+tkMiniStepper(tk)+'</div></td>'
-    + '<td>'+tkRespCelda(tk)+'</td>'
-    + '<td>'+tkSlaCelda(tk)+'</td>'
-    + '<td>'+tkActividadCelda(tk, fpActualizado)+'</td>'
-    + '<td>'+tkAccionesCelda(tk)+'</td>'
+    + '<td class="tk-c-resp">'+tkRespCelda(tk)+'</td>'
+    + '<td class="tk-c-sla">'+tkSlaCelda(tk)+'</td>'
+    + '<td class="tk-c-act">'+tkActividadCelda(tk, fpActualizado)+'</td>'
+    + '<td class="tk-c-acc">'+tkAccionesCelda(tk)+'</td>'
     + '</tr>';
 }
 

@@ -460,3 +460,57 @@ table.tk-table tbody tr.sla-rojo{background:#fffafa;}
 .tkc-sla .barra i{display:block;height:100%;border-radius:99px;background:#16a34a;transition:width .8s linear;}
 .tkc-sla.ambar .barra i{background:#f59e0b;}
 .tkc-sla.rojo .barra i{background:#dc2626;}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BANDEJA EN EL CELULAR (2026-11-05, REGLA #61)
+   La tabla de 8 columnas (1040 px de mínimo, 1285 reales) se deslizaba por dentro y en un celular solo se veían una o dos columnas a la vez
+   (medido en producción a 390 px). Bajo 768 px cada ticket pasa a UNA tarjeta con las MISMAS ocho celdas (nada se quita: REGLA #4.2) y los
+   encabezados que ordenan siguen ahí, como una tira de botones de 44 px. La tabla de escritorio, que Daniel pidió el 11-jul («que sea una TABLA»),
+   no cambia: todo lo de abajo va dentro de este @media. Probado inyectando este CSS en producción a 390 px con los 50 tickets reales: sin
+   desborde lateral y tarjetas de 320 a 430 px. Todo va bajo `table.tk-table` para no tocar otras pantallas.
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (max-width:767.98px){
+  .tk-table-wrap{max-height:none;overflow:visible;background:transparent;border:0;border-radius:0;box-shadow:none;}
+  table.tk-table{display:block;width:100%;min-width:0;}
+  /* orden: los encabezados siguen ordenando, ahora como una tira de botones (una sola línea que se desliza) */
+  table.tk-table thead{display:block;}
+  table.tk-table thead tr{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none;}
+  table.tk-table thead tr::-webkit-scrollbar{display:none;}
+  table.tk-table thead th{position:static;display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;min-height:44px;padding:0 14px;
+    border:1.5px solid #e5e7eb;border-radius:999px;background:#fff;color:#0f172a;font-size:.8rem;font-weight:800;
+    text-transform:none;letter-spacing:0;white-space:nowrap;cursor:pointer;}
+  table.tk-table thead th:first-child{border-left:1.5px solid #e5e7eb;}
+  table.tk-table thead th.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff;}
+  table.tk-table thead th:not(.tk-th-sort){display:none;}   /* «Acciones» no ordena */
+  /* cada ticket = una tarjeta */
+  table.tk-table tbody{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:10px;}
+  table.tk-table tbody tr{display:grid;grid-template-columns:minmax(0,1fr) auto;
+    grid-template-areas:"num est" "cli cli" "tipo resp" "sla sla" "act act" "acc acc";gap:8px 10px;align-items:start;
+    background:#fff;border:1px solid #e5e7eb;border-left:4px solid #6b7280;border-radius:14px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.05);}
+  /* borde izquierdo: prioridad, y el semáforo del SLA gana (igual que la tabla de escritorio) */
+  table.tk-table tbody tr.prio-urgente{border-left-color:#dc2626;}
+  table.tk-table tbody tr.prio-alta{border-left-color:#f59e0b;}
+  table.tk-table tbody tr.prio-baja{border-left-color:#94a3b8;}
+  table.tk-table tbody tr.sla-rojo{border-left-color:#dc2626;}
+  table.tk-table tbody tr.sla-ambar{border-left-color:#f59e0b;}
+  table.tk-table tbody tr.sla-verde{border-left-color:#16a34a;}
+  table.tk-table tbody td{display:block;min-width:0;padding:0;border:0 !important;}
+  table.tk-table tbody td.tk-c-num{grid-area:num;}
+  table.tk-table tbody td.tk-c-est{grid-area:est;justify-self:end;text-align:right;}
+  table.tk-table tbody td.tk-c-cli{grid-area:cli;}
+  table.tk-table tbody td.tk-c-tipo{grid-area:tipo;align-self:center;}
+  table.tk-table tbody td.tk-c-resp{grid-area:resp;justify-self:end;align-self:center;}
+  table.tk-table tbody td.tk-c-sla{grid-area:sla;}
+  table.tk-table tbody td.tk-c-act{grid-area:act;}
+  table.tk-table tbody td.tk-c-acc{grid-area:acc;justify-self:stretch;border-top:1px solid #f1f3f6 !important;padding-top:8px;}
+  table.tk-table .tk-acciones{justify-content:flex-end;}
+  /* lo que en la tabla tenía ancho máximo ahora ocupa la tarjeta entera; nombres y textos completos (REGLA #15) */
+  table.tk-table .tkc-cliente,table.tk-table .tkc-titulo,table.tk-table .tkc-act,table.tk-table .tkc-sla{max-width:none;}
+  table.tk-table .tkc-sla{min-width:0;}
+  table.tk-table .tkc-sla .barra{max-width:none;}
+  table.tk-table .tkc-act .txt{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}   /* es un extracto del mensaje */
+  /* REGLA #3: botones de 44 px; REGLA #61: letra de 12 px o más */
+  table.tk-table .tk-act,.tk-pg-btn{width:44px;height:44px;min-width:44px;min-height:44px;}
+  table.tk-table .tk-badge,table.tk-table .tk-origen-pill,table.tk-table .tk-unread,table.tk-table .tk-gar-badge,table.tk-table .tkc-urg,
+  table.tk-table .tkc-hace,table.tk-table .tk-num,table.tk-table .tkc-sla .sub,table.tk-table .tkc-fecha .hora,table.tk-table .tk-mini-extra{font-size:.75rem;}
+}
