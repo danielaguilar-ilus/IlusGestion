@@ -4,13 +4,13 @@
    ES UN MODO ADICIONAL: la contraseña sigue igual y sigue siendo el respaldo. Se activa dispositivo por dispositivo y se apaga igual.
    Este archivo hace tres cosas, todas opcionales y sin romper nada si el teléfono no lo soporta:
      1) Mi cuenta (#pkCard): el interruptor «Usar Face ID / huella en este dispositivo» y la lista de dispositivos con «Quitar».
-     2) Login (#pkLoginBtn): el botón «Entrar con Face ID / huella».
+     2) Login (#pkLoginBtn): un enlace chico «Entrar con Face ID / huella»; si este teléfono ya lo activó, Face ID se pide SOLO al abrir.
      3) Una pregunta amable en el celular, una vez, después de entrar con la contraseña («¿Quieres entrar con Face ID?»).
    La verificación de verdad la hace el servidor (passkeys_reglas.py); acá solo se habla con el teléfono (WebAuthn) y se pasan los datos. */
 (function () {
   'use strict';
   var API = '/passkeys';
-  var K_CRED = 'ilus_pk_cred', K_OK = 'ilus_pk_ok', K_NO = 'ilus_pk_no', K_TARDE = 'ilus_pk_tarde';
+  var K_CRED = 'ilus_pk_cred', K_OK = 'ilus_pk_ok', K_NO = 'ilus_pk_no', K_TARDE = 'ilus_pk_tarde', K_NOAUTO = 'ilus_pk_noauto';
   var meta = document.querySelector('meta[name="ilus-passkeys"]');
   var ACTIVO = !!(meta && meta.getAttribute('content') === '1');
 
@@ -214,29 +214,52 @@
     recargar().then(function (r) { if (r && r[0]) opcionesReg(); });
   }
 
-  /* ═══ 2) Login: «Entrar con Face ID / huella» ═══ */
+  /* ═══ 2) Login (Daniel, 05-nov-2026: «más directo… el botón más sutil») ═══
+     · El acceso es un ENLACE chico («Entrar con Face ID / huella»), no un botón grande.
+     · Si este teléfono ya lo activó, Face ID se pide SOLO al abrir la pantalla, sin tocar nada. Si el teléfono exige un toque (Safari del iPhone lo exige),
+       no pasa nada malo: queda el enlace chico, sin mensajes de error.
+     · No se pide solo si la persona acaba de cerrar sesión a propósito (podría querer entrar con otra cuenta), si ya escribió su correo (por ejemplo se
+       equivocó de clave) o si la pantalla está en segundo plano. Se intenta UNA vez por visita: si lo cierra, no insiste. */
   function iniciarLogin() {
     var btn = document.getElementById('pkLoginBtn');
     if (!btn) return;
-    var msg = document.getElementById('pkLoginMsg');
-    soportado().then(function (ok) {
-      if (!ok) return;
-      btn.hidden = false;
-      if (leer(K_OK)) btn.classList.add('pk-login-btn--ya');           // ya lo activó en este teléfono: se vuelve el botón principal
-      opcionesLogin();
-      window.setInterval(function () { if (!btn.disabled) { cacheLogin = null; opcionesLogin(); } }, VIDA_DESAFIO_MS);
-    });
-    btn.addEventListener('click', function () {
-      if (btn.disabled) return;
-      btn.disabled = true; msg.textContent = 'Mira tu teléfono…'; msg.className = 'pk-msg';
+    var msg = document.getElementById('pkLoginMsg'), usuario = document.querySelector('input[name="username"]'), intentando = false;
+    function intentar(esAuto) {
+      if (intentando) return;
+      intentando = true; btn.disabled = true;
+      msg.textContent = esAuto ? 'Verificando con Face ID…' : 'Mira tu teléfono…'; msg.className = 'pk-msg';
       entrar(btn.getAttribute('data-next') || '/').then(function (r) {
         if (r && r.ok) { msg.textContent = 'Listo. Entrando…'; window.location.href = r.redirect || '/'; return; }
-        btn.disabled = false;
+        intentando = false; btn.disabled = false;
         opcionesLogin();                                              // el desafío de este intento ya se usó: se pide otro para el siguiente
+        if (r && r.error_codigo === 'DESCONOCIDA') { borrar(K_OK); borrar(K_CRED); }       // lo quitaron en otro lado: ya no se pide solo
+        if (esAuto && r && r.cancelado) { msg.textContent = ''; return; }                   // lo cerró (o el teléfono pide un toque): sin reclamos
         msg.textContent = (r && r.error) || 'No se pudo entrar. Usa tu contraseña.';
         msg.className = 'pk-msg ' + (r && r.cancelado ? '' : 'pk-msg--mal');
       });
+    }
+    function pedirseSolo() {
+      if (!leer(K_OK)) return false;                                  // solo donde la persona ya lo activó
+      try { if (window.sessionStorage.getItem(K_NOAUTO)) { window.sessionStorage.removeItem(K_NOAUTO); return false; } } catch (e) { /* nada */ }
+      return !document.hidden && !(usuario && usuario.value);
+    }
+    var solo = pedirseSolo();
+    soportado().then(function (ok) {
+      if (!ok) return;
+      btn.hidden = false;
+      opcionesLogin();
+      window.setInterval(function () { if (!btn.disabled) { cacheLogin = null; opcionesLogin(); } }, VIDA_DESAFIO_MS);
+      if (solo) window.setTimeout(function () { if (!document.hidden && !(usuario && usuario.value)) intentar(true); }, 350);
     });
+    btn.addEventListener('click', function () { intentar(false); });
+  }
+
+  /* Cerrar sesión a propósito: en la pantalla de login que sigue, Face ID NO se pide solo (la persona puede querer entrar con otra cuenta). */
+  function marcarCierreDeSesion() {
+    document.addEventListener('submit', function (ev) {
+      var f = ev && ev.target, accion = f && f.getAttribute && f.getAttribute('action');
+      if (accion && /\/logout(\?|$)/.test(accion)) { try { window.sessionStorage.setItem(K_NOAUTO, '1'); } catch (e) { /* nada */ } }
+    }, true);
   }
 
   /* ═══ 3) La pregunta, una vez, en el celular (Daniel: «que le pregunte si quiere») ═══ */
@@ -268,7 +291,7 @@
     aB64u: aB64u, deB64u: deB64u, mensajeDeError: mensajeDeError, esCelular: esCelular };
 
   function arrancar() {
-    try { iniciarMiCuenta(); iniciarLogin(); ofrecer(); } catch (e) { /* nunca romper la página por esto */ }
+    try { marcarCierreDeSesion(); iniciarMiCuenta(); iniciarLogin(); ofrecer(); } catch (e) { /* nunca romper la página por esto */ }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', arrancar); else arrancar();
 })();

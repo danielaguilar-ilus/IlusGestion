@@ -70,8 +70,15 @@ class TestEnganche(unittest.TestCase):
         self.assertIn("width: 22px !important", mobile)                                  # la regla de la app que deformaba el interruptor
         self.assertRegex(TARJETA, r"\.form-check-input\{float:none;margin:0 !important;width:3\.1rem !important;height:1\.7rem !important")
 
-    def test_boton_y_quitar_son_tactiles(self):
-        self.assertIn("min-height:48px", LOGIN_PARCIAL)
+    def test_el_acceso_del_login_es_un_enlace_sutil_pero_tactil(self):
+        """Daniel, 05-nov-2026: «el botón del login del Face ID haz algo más sutil»: sin caja, sin fondo, letra chica y gris; pero con blanco táctil de 44 px."""
+        css = LOGIN_PARCIAL[LOGIN_PARCIAL.index(".pk-login-btn{"):LOGIN_PARCIAL.index(".pk-login-btn[hidden]")]
+        self.assertIn("border:0;background:transparent", css)
+        self.assertIn("min-height:44px", css)
+        self.assertIn("font-size:.85rem", css)
+        self.assertNotIn("#0a0a0a", css)
+        self.assertNotIn("width:100%", css)
+        self.assertNotIn("pk-login-btn--ya", LOGIN_PARCIAL + JS)                      # ya no hay un «botón principal» negro
         self.assertIn("min-height:44px", TARJETA)
 
     def test_las_rutas_sin_sesion_estan_exentas_de_csrf_y_del_corte_por_inactividad(self):
@@ -88,7 +95,7 @@ class TestEnganche(unittest.TestCase):
 
 class TestSinRomperNada(unittest.TestCase):
     def test_el_script_nunca_rompe_la_pagina(self):
-        self.assertIn("try { iniciarMiCuenta(); iniciarLogin(); ofrecer(); } catch (e) { /* nunca romper la página por esto */ }", JS)
+        self.assertIn("try { marcarCierreDeSesion(); iniciarMiCuenta(); iniciarLogin(); ofrecer(); } catch (e) { /* nunca romper la página por esto */ }", JS)
 
     def test_usa_los_dialogos_de_ilus_y_nunca_los_nativos(self):
         for prohibido in ("alert(", "confirm(", "prompt("):
@@ -109,13 +116,13 @@ const src = fs.readFileSync(process.argv[2], 'utf8');
 const resultados = {};
 function crearMundo(cfg) {
   cfg = cfg || {};
-  const guardado = Object.assign({}, cfg.local || {});
+  const guardado = Object.assign({}, cfg.local || {}), sesion = Object.assign({}, cfg.sesion || {});
   const localStorage = { getItem: k => (k in guardado ? guardado[k] : null), setItem: (k, v) => { guardado[k] = String(v); }, removeItem: k => { delete guardado[k]; } };
-  const llamadas = { fetch: [], confirm: [], toasts: [], create: [], get: [] };
+  const llamadas = { fetch: [], confirm: [], toasts: [], create: [], get: [], handlers: {} };
   const elementos = Object.assign({}, cfg.elementos || {});
   const document = {
-    readyState: 'complete', hidden: false, addEventListener() {},
-    querySelector: s => (s === 'meta[name="ilus-passkeys"]' ? (cfg.sinMeta ? null : { getAttribute: () => '1' }) : (s === '.modal.show' ? (cfg.modalAbierto ? {} : null) : null)),
+    readyState: 'complete', hidden: !!cfg.enSegundoPlano, addEventListener(ev, fn) { (llamadas.handlers[ev] = llamadas.handlers[ev] || []).push(fn); },
+    querySelector: s => (s === 'meta[name="ilus-passkeys"]' ? (cfg.sinMeta ? null : { getAttribute: () => '1' }) : (s === '.modal.show' ? (cfg.modalAbierto ? {} : null) : (s === 'input[name="username"]' ? (cfg.usuario || null) : null))),
     getElementById: id => elementos[id] || null
   };
   const respuestas = cfg.respuestas || {};
@@ -126,17 +133,18 @@ function crearMundo(cfg) {
     return { status: d.status || 200, json: async () => d };
   };
   const navigator = { userAgent: cfg.ua || 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-    standalone: !!cfg.standalone, credentials: { create: async o => { llamadas.create.push(o); if (cfg.createFalla) throw cfg.createFalla; return cfg.credencial; }, get: async o => { llamadas.get.push(o); if (cfg.getFalla) throw cfg.getFalla; return cfg.asercion; } } };
+    standalone: !!cfg.standalone, credentials: { create: async o => { llamadas.create.push(o); if (cfg.createFalla) throw cfg.createFalla; return cfg.credencial; }, get: async o => { llamadas.get.push(o); if (cfg.getColgado) await new Promise(() => {}); if (cfg.getFalla) throw cfg.getFalla; return cfg.asercion; } } };
   const window = {
-    localStorage, isSecureContext: cfg.inseguro ? false : true, setTimeout: f => { f(); return 1; }, setInterval: () => 1, __ILUS_UID: cfg.uid === undefined ? '0' : cfg.uid,
+    localStorage, isSecureContext: cfg.inseguro ? false : true, setTimeout: f => { f(); return 1; }, __ILUS_UID: cfg.uid === undefined ? '0' : cfg.uid,
     matchMedia: q => ({ matches: !!(cfg.mediaCelular && /max-width: 860px/.test(q)) }),
     PublicKeyCredential: cfg.sinApi ? undefined : { isUserVerifyingPlatformAuthenticatorAvailable: async () => cfg.plataforma !== false },
     ilusConfirm: cfg.sinConfirm ? undefined : (o => { llamadas.confirm.push(o); return Promise.resolve(cfg.respondeConfirm === undefined ? false : cfg.respondeConfirm); }),
     ilusToast: (t, o) => llamadas.toasts.push([t, (o || {}).type]),
-    location: { href: '' }
+    location: { href: '' }, setInterval: () => 1,
+    sessionStorage: { getItem: k => (k in sesion ? sesion[k] : null), setItem: (k, v) => { sesion[k] = String(v); }, removeItem: k => { delete sesion[k]; } }
   };
   new Function('window', 'document', 'navigator', 'fetch', 'btoa', 'atob', src)(window, document, navigator, fetch, s => Buffer.from(s, 'binary').toString('base64'), s => Buffer.from(s, 'base64').toString('binary'));
-  return { w: window.ilusPasskeys, window, llamadas, guardado };
+  return { w: window.ilusPasskeys, window, llamadas, guardado, sesion };
 }
 const buf = (...b) => new Uint8Array(b).buffer;
 const b64 = ab => Buffer.from(new Uint8Array(ab)).toString('base64url');
@@ -216,6 +224,44 @@ const b64 = ab => Buffer.from(new Uint8Array(ab)).toString('base64url');
   const despues = m.llamadas.fetch.filter(f => f.url.endsWith('/login/opciones')).length;
   await m.w.entrar('/');
   resultados.anticipado = { botonVisible: btnLogin.hidden === false, antesDelToque: antes, trasUnIntento: despues, trasOtroIntento: m.llamadas.fetch.filter(f => f.url.endsWith('/login/opciones')).length };
+  // 9. Face ID se pide SOLO al abrir donde la persona ya lo activó; el enlace queda de respaldo (Daniel: «más directo… el botón más sutil»)
+  const reposo = async () => { for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r)); };
+  function mundoLogin(extra) {
+    const btn = { hidden: true, disabled: false, classList: { add() {} }, getAttribute: () => '/', addEventListener(ev, fn) { if (ev === 'click') this._click = fn; } };
+    const msg = { textContent: '', className: '' };
+    const mm = crearMundo(Object.assign({ elementos: { pkLoginBtn: btn, pkLoginMsg: msg },
+      respuestas: { '/passkeys/login/opciones': opcLogin, '/passkeys/login/verificar': { ok: true, redirect: '/inicio' } }, asercion: aserc,
+      local: { ilus_pk_ok: '1', ilus_pk_cred: b64(buf(7, 7, 7)) } }, extra || {}));
+    return { mm, btn, msg };
+  }
+  let L = mundoLogin(); await reposo();
+  resultados.auto = { gets: L.mm.llamadas.get.length, destino: L.mm.window.location.href, msg: L.msg.textContent, enlaceVisible: L.btn.hidden === false };
+  resultados.noAuto = {};
+  const noCasos = { sinActivar: { local: {} }, cerroSesion: { sesion: { ilus_pk_noauto: '1' } }, correoEscrito: { usuario: { value: 'a@b.cl' } }, enSegundoPlano: { enSegundoPlano: true }, sinSoporte: { plataforma: false } };
+  for (const k of Object.keys(noCasos)) {
+    const x = mundoLogin(noCasos[k]); await reposo();
+    resultados.noAuto[k] = { gets: x.mm.llamadas.get.length, enlaceVisible: x.btn.hidden === false, marcaDeCierre: x.mm.sesion.ilus_pk_noauto === undefined ? 'borrada' : 'sigue' };
+  }
+  L = mundoLogin({ getFalla: { name: 'NotAllowedError' } }); await reposo();
+  const trasAuto = { gets: L.mm.llamadas.get.length, msg: L.msg.textContent, botonActivo: !L.btn.disabled, opciones: L.mm.llamadas.fetch.filter(f => f.url.endsWith('/login/opciones')).length };
+  await L.btn._click(); await reposo();
+  resultados.autoCancelado = { trasAuto, trasToque: { gets: L.mm.llamadas.get.length, msg: L.msg.textContent, clase: L.msg.className } };
+  L = mundoLogin({ respuestas: { '/passkeys/login/opciones': opcLogin, '/passkeys/login/verificar': { ok: false, error: 'Este dispositivo no tiene Face ID activado en ILUS.', error_codigo: 'DESCONOCIDA', status: 401 } } }); await reposo();
+  resultados.desconocida = { local: L.mm.guardado, msg: L.msg.textContent, clase: L.msg.className };
+  L = mundoLogin({ local: {} }); await reposo();
+  await L.btn._click(); await reposo();
+  resultados.toqueSinActivar = { gets: L.mm.llamadas.get.length, destino: L.mm.window.location.href };
+  L = mundoLogin({ getColgado: true }); await reposo();
+  await L.btn._click(); await L.btn._click(); await reposo();
+  resultados.unIntentoALaVez = { gets: L.mm.llamadas.get.length, msg: L.msg.textContent, botonDeshabilitado: L.btn.disabled };
+  L = mundoLogin(); await reposo();
+  const manejadores = L.mm.llamadas.handlers.submit || [];
+  resultados.cierreDeSesion = { hayManejador: manejadores.length > 0 };
+  const m2 = crearMundo({ local: {} });
+  (m2.llamadas.handlers.submit || []).forEach(h => h({ target: { getAttribute: () => '/otra-ruta' } }));
+  const sinMarca = m2.sesion.ilus_pk_noauto === undefined;
+  (m2.llamadas.handlers.submit || []).forEach(h => h({ target: { getAttribute: () => '/logout' } }));
+  resultados.cierreDeSesion.otraRuta = sinMarca; resultados.cierreDeSesion.logout = m2.sesion.ilus_pk_noauto;
   console.log(JSON.stringify(resultados));
 })();
 '''
@@ -298,6 +344,45 @@ class TestEjecutado(unittest.TestCase):
         self.assertEqual((a["no"], a["diasDespues"]), ("1", 14))
         self.assertEqual(a["texto"], {"t": "¿Entrar con Face ID?", "ok": "Activar", "no": "Ahora no"})
         self.assertTrue(self.r["activar"]["pidioOpciones"])
+
+    def test_si_ya_lo_activo_en_este_telefono_se_pide_solo_al_abrir(self):
+        a = self.r["auto"]
+        self.assertEqual((a["gets"], a["destino"], a["msg"]), (1, "/inicio", "Listo. Entrando…"))
+        self.assertTrue(a["enlaceVisible"])                                           # el enlace chico queda de respaldo
+
+    def test_no_se_pide_solo_cuando_no_corresponde(self):
+        for k in ("sinActivar", "cerroSesion", "correoEscrito", "enSegundoPlano"):
+            n = self.r["noAuto"][k]
+            self.assertEqual(n["gets"], 0, k)
+            self.assertTrue(n["enlaceVisible"], k)                                    # pero el enlace sigue disponible
+        self.assertFalse(self.r["noAuto"]["sinSoporte"]["enlaceVisible"])             # teléfono que no puede: ni enlace
+        self.assertEqual(self.r["noAuto"]["sinSoporte"]["gets"], 0)
+        self.assertEqual(self.r["noAuto"]["cerroSesion"]["marcaDeCierre"], "borrada")  # la marca vale UNA vez: la siguiente visita vuelve a pedirlo
+
+    def test_si_lo_cierra_o_el_telefono_pide_un_toque_no_insiste_ni_reclama(self):
+        c = self.r["autoCancelado"]
+        self.assertEqual(c["trasAuto"], {"gets": 1, "msg": "", "botonActivo": True, "opciones": 2})   # sin mensaje; ya pidió otro desafío para el toque
+        self.assertEqual(c["trasToque"]["gets"], 2)                                   # el enlace sigue sirviendo
+        self.assertIn("Se canceló", c["trasToque"]["msg"])                            # y con el toque sí se explica con calma
+
+    def test_si_lo_quitaron_en_otro_lado_deja_de_pedirse_solo(self):
+        d = self.r["desconocida"]
+        self.assertEqual(d["local"], {})
+        self.assertIn("no tiene Face ID activado", d["msg"])
+        self.assertIn("pk-msg--mal", d["clase"])
+        self.assertEqual(self.r["toqueSinActivar"], {"gets": 1, "destino": "/inicio"})  # sin haberlo activado aquí, el enlace igual funciona
+
+    def test_un_solo_intento_a_la_vez_aunque_toquen_varias_veces(self):
+        u = self.r["unIntentoALaVez"]
+        self.assertEqual(u["gets"], 1)                                                # el automático sigue esperando: los toques no abren otro Face ID
+        self.assertEqual(u["msg"], "Verificando con Face ID…")
+        self.assertTrue(u["botonDeshabilitado"])
+
+    def test_cerrar_sesion_a_proposito_marca_para_no_pedirlo_solo(self):
+        c = self.r["cierreDeSesion"]
+        self.assertTrue(c["hayManejador"])
+        self.assertTrue(c["otraRuta"])
+        self.assertEqual(c["logout"], "1")
 
     def test_el_desafio_se_pide_antes_del_toque_y_se_reutiliza(self):
         """Safari (iPhone) se niega si entre el toque y la llamada al teléfono hay una espera de red: el desafío ya tiene que estar pedido."""
