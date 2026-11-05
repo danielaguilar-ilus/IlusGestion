@@ -514,3 +514,36 @@ table.tk-table tbody tr.sla-rojo{background:#fffafa;}
   table.tk-table .tk-badge,table.tk-table .tk-origen-pill,table.tk-table .tk-unread,table.tk-table .tk-gar-badge,table.tk-table .tkc-urg,
   table.tk-table .tkc-hace,table.tk-table .tk-num,table.tk-table .tkc-sla .sub,table.tk-table .tkc-fecha .hora,table.tk-table .tk-mini-extra{font-size:.75rem;}
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LA TABLA CABE EN PANTALLAS DE ESCRITORIO (2026-11-05, REGLA #61 y #4.3)
+   Medido en producción con los 50 tickets reales: la tabla medía 1144-1285 px y su caja 980 a 1280 px, 1066 a 1366 y 1140 a 1440: 258, 172 y 98 px de scroll
+   lateral dentro de la caja. Es la MISMA tabla (8 columnas, nada se quita, el orden por columna sigue): solo se acotan los anchos máximos y se deja
+   partir en líneas lo que iba en una sola (tipo, estado, barra del SLA). Probado inyectando este CSS en producción: a 1366 y 1440 px el desborde queda
+   en 0 con filas de ≈152 px; a 1280 px también (la tabla mide lo mismo que su caja), con filas algo más altas (≈178 px) porque ahí se parte más. */
+@media (min-width:768px) and (max-width:1599.98px){
+  .tkc-cliente,.tkc-titulo{max-width:190px;}
+  .tkc-act{max-width:170px;}
+  .tkc-sla{min-width:130px;max-width:170px;}
+  .tkc-sla .barra{max-width:150px;}
+  .tkc-tipo{white-space:normal;}
+  .tkc-tipo .lbl{max-width:84px;}
+  .tk-mini-wrap{flex-wrap:wrap;}
+  .tkc-resp{font-size:.8rem;}
+  .tk-acciones{gap:2px;}
+  table.tk-table .tk-badge{white-space:normal;display:inline-block;max-width:118px;line-height:1.25;text-align:center;}
+  table.tk-table td{padding:10px 8px;}
+  table.tk-table thead th{padding:11px 8px;}
+}
+@media (min-width:768px) and (max-width:1365.98px){
+  /* a 1280 px la caja mide 980: se quita el mínimo de 1040 px y se aprietan un poco más los anchos */
+  table.tk-table{min-width:0;}
+  .tkc-cliente,.tkc-titulo{max-width:170px;}
+  .tkc-act{max-width:150px;}
+  .tkc-sla{min-width:0;max-width:150px;}
+  .tkc-sla .barra{max-width:130px;}
+  .tkc-tipo .lbl{max-width:80px;}
+  table.tk-table .tk-badge{max-width:110px;}
+  table.tk-table td{padding:10px 6px;}
+  table.tk-table thead th{padding:11px 6px;}
+}
