@@ -6451,6 +6451,27 @@ def _inject_csrf_token():
     return {"csrf_token": _csrf_get_token, "ilus_uid": _ilus_uid_actual}
 
 
+def _csrf_token_de_cabecera(valor):
+    """El token que viaja en la cabecera X-CSRF-Token, con UNA salvedad.
+
+    Cuando el MISMO encabezado se pone dos veces, el navegador lo junta en
+    «token, token» (XMLHttpRequest.setRequestHeader suma los valores). Pasó el
+    05-nov-2026: la subida de fotos de Flota (JS viejo, abierto en una pestaña
+    que no se había recargado) mandaba «T, T» y el servidor rechazaba CADA
+    registro de chofer y CADA devolución de llaves, aunque T fuera el token
+    exacto de la sesión (Daniel estaba en plena operación).
+
+    Si TODAS las partes son idénticas se usa una sola: sigue exigiendo el
+    token exacto de la sesión (quien no lo conoce no puede repetirlo), así que
+    no debilita la protección. Si las partes difieren, el valor queda tal cual
+    y no coincidirá con el de la sesión."""
+    v = str(valor or "")
+    if "," not in v:
+        return v
+    partes = [p.strip() for p in v.split(",")]
+    return partes[0] if partes[0] and all(p == partes[0] for p in partes) else v
+
+
 def _csrf_check_request():
     """Helper: valida CSRF de la request actual. Devuelve un Response
     (jsonify/redirect) si hay que rechazar, None si pasa. Se llama desde
@@ -6461,7 +6482,7 @@ def _csrf_check_request():
     if _csrf_is_exempt(path):
         return None
     token_session = session.get("csrf_token")
-    token_req = (request.headers.get("X-CSRF-Token")
+    token_req = (_csrf_token_de_cabecera(request.headers.get("X-CSRF-Token"))
                  or request.form.get("csrf_token")
                  or "")
     # Comparación constante de tiempo
