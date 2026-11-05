@@ -1275,6 +1275,7 @@ td > .fl-resp,td > .fl-dsv{display:flex}
 .fl-btn-esc{min-height:46px;display:inline-flex;align-items:center;justify-content:center;flex:1 1 190px;font-weight:700}
 .fl-escaner-off{display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;padding:9px 12px;border-radius:10px;background:#fff8e1;border:1px solid #fcd34d;color:#92400e;font-size:.84rem;line-height:1.4}
 .fl-escaner-off[hidden]{display:none}
+#flChGuardar:disabled{opacity:.55;cursor:not-allowed}
 .fl-escaner-off i{flex:0 0 auto;margin-top:2px}
 .fl-escaner-nota{background:#f3f4f6;border-color:#d1d5db;color:#374151}
 .fl-lectura{margin-top:12px;border-radius:12px;border:1.5px solid #e5e7eb;background:#f9fafb;padding:12px}

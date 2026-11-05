@@ -859,6 +859,8 @@
                   <button type="button" class="btn btn-outline-secondary fl-btn-esc" id="flChBtnSubir"><i class="bi bi-upload me-1"></i>Subir foto o PDF</button>
                   <input type="file" id="flChCamara" accept="image/*" capture="environment" hidden tabindex="-1" aria-hidden="true">
                 </div>
+                {# La puerta (Daniel, 05-nov-2026): sin la licencia subida no se puede crear al chofer. Se muestra mientras el botón Guardar está cerrado. #}
+                <p class="fl-escaner-off fl-escaner-puerta" id="flChPuertaLic" role="status"><i class="bi bi-lock-fill" aria-hidden="true"></i><span>Sin la licencia no se puede crear al chofer. Sube la licencia (foto o PDF).</span></p>
                 <p class="fl-escaner-off" id="flChLectorOff" hidden><i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>El lector de licencias no está disponible en este momento: no se puede registrar a un chofer hasta que vuelva. Avisa a soporte.</p>
                 <p class="fl-escaner-off fl-escaner-nota" id="flChBloqueoNota" hidden><i class="bi bi-lock-fill" aria-hidden="true"></i>El RUT, las clases y el vencimiento salen de la licencia ya escaneada: para cambiarlos, escanea la licencia nueva.</p>
                 <div class="fl-lectura" id="flChLectura" aria-live="polite" hidden></div>

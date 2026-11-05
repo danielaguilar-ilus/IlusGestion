@@ -1997,6 +1997,27 @@
     if (visible && r.estado) el.classList.add(r.estado);
     escribir(el.querySelector('.fl-msg'), visible ? r.msg : '');
   }
+  /* PUERTA DE LA LICENCIA (Daniel, 05-nov-2026: «que quede estricto que tienen que subir la licencia para poder avanzar a la creación del chofer;
+     está prohibido crear choferes sin licencia»). Sin la licencia subida —y, si se subió, sin que la lectura la dé por buena (o sin la fecha que
+     sale de ella)— el botón «Guardar chofer» queda CERRADO y el aviso dice qué falta. Ni siquiera el superadministrador la salta: «Registrar sin
+     comprobar» omite la comprobación, no el archivo. El servidor lo exige igual (sin archivo no se crea, 400). Es pura: recibe las reglas. */
+  function puertaLicencia(r) {
+    var mala = ['licencia_archivo', 'licencia_vence'].filter(function (c) { return r[c] && r[c].estado === 'bad'; });
+    if (!mala.length) return { abierta: true, texto: '' };
+    var msg = r[mala[0]].msg || 'Sube la licencia (foto o PDF).';
+    return { abierta: false, texto: 'Sin la licencia no se puede crear al chofer. ' + msg };
+  }
+  function aplicarPuertaLicencia(r) {
+    var p = puertaLicencia(r || reglasCh());
+    $('flChGuardar').disabled = !p.abierta || !!S.guardandoCh;
+    var n = $('flChPuertaLic');
+    if (n) {
+      n.hidden = p.abierta;
+      var t = n.querySelector('span');
+      if (t) t.textContent = p.texto;
+    }
+    return p;
+  }
   function evaluarCh() {
     var r = reglasCh();
     Object.keys(r).forEach(function (c) { marcarCh(c, r[c]); });
@@ -2015,6 +2036,7 @@
     var pie = $('flChPieForm');
     pie.className = 'fl-pie-form' + (faltan.length && S.chIntento ? ' bad' : '');
     escribir(pie, faltan.length ? 'Falta: ' + faltan.map(function (c) { return NOMBRES_CH[c]; }).join(', ') + '.' : 'Todo listo para guardar.');
+    aplicarPuertaLicencia(r);
     return { reglas: r, faltan: faltan };
   }
   var agendarCh;
@@ -2328,6 +2350,8 @@
     if (S.guardandoCh) return;
     S.chIntento = true;
     var ev = evaluarCh();
+    var puerta = puertaLicencia(ev.reglas);
+    if (!puerta.abierta) { toast(puerta.texto, 'warning'); return; }           // también si llegó por la tecla Enter: el botón cerrado no basta
     if (ev.faltan.length) {
       toast('Falta: ' + ev.faltan.map(function (c) { return NOMBRES_CH[c]; }).join(', ') + '.', 'warning');
       var malo = document.querySelector('#flFormCh .fl-campo.bad');
@@ -2371,7 +2395,7 @@
       }).then(function (r) {
         pbc.ocultar();
         if (!r.ok) {
-          S.guardandoCh = false; $('flChGuardar').disabled = false;
+          S.guardandoCh = false; aplicarPuertaLicencia();
           Object.keys(r.errores || {}).forEach(function (c) {
             var el = campoCh(c);
             if (!el) return;
@@ -2389,7 +2413,7 @@
           return;
         }
         var terminar = function () {
-          S.guardandoCh = false; $('flChGuardar').disabled = false;
+          S.guardandoCh = false; $('flChGuardar').disabled = false;           // se cierra el formulario: la próxima apertura vuelve a evaluar la puerta
           cerrarModal('flModalChofer');
           toast(r.sin_cambios && !archivo ? 'No había cambios que guardar.' : (editando ? 'Chofer actualizado.' : 'Chofer agregado y habilitado.'), 'success');
           cargarChof();
