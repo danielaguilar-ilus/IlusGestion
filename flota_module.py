@@ -28,6 +28,7 @@ import json
 import os
 import re
 import secrets
+import threading
 from datetime import date, datetime, time, timedelta, timezone
 from functools import wraps
 
@@ -690,7 +691,7 @@ def register_flota_routes(app, ctx):
     _TITULOS_HISTORIAL = {
         "creado": "Registrado", "editado": "Datos modificados", "inhabilitado": "Inhabilitado", "habilitado": "Habilitado",
         "archivado": "Archivado", "desarchivado": "Desarchivado", "eliminado": "Borrado definitivo",
-        "archivo_subido": "Archivo guardado", "archivo_quitado": "Archivo quitado", "licencia_verificada": "Licencia verificada con el escáner",
+        "archivo_subido": "Archivo guardado", "archivo_quitado": "Archivo quitado", "licencia_verificada": "Licencia verificada con el escáner", "licencia_sin_verificar": "Licencia registrada SIN comprobar",
     }
 
     def _lineas_licencia(det):
@@ -735,8 +736,8 @@ def register_flota_routes(app, ctx):
                 lineas = [f"{fr.ETIQUETAS_ARCHIVO.get(det.get('tipo'), det.get('tipo') or 'Archivo')}: {det.get('nombre') or ''}".strip(": ")]
             else:
                 lineas = []
-            if chofer and acc in ("creado", "editado", "licencia_verificada"):
-                lineas = list(lineas) + _lineas_licencia(det)
+            if chofer and acc in ("creado", "editado", "licencia_verificada", "licencia_sin_verificar") and _flota_docs():
+                lineas = list(lineas) + _lineas_licencia(det)           # RUT, fechas y nombres de la licencia: solo quien ve los documentos
             eventos.append({"accion": acc, "titulo": _TITULOS_HISTORIAL.get(acc, acc), "lineas": lineas,
                             "usuario": f.get("usuario") or "", "fecha": _hora_chile(f.get("created_at"))})
         return eventos
@@ -807,6 +808,11 @@ def register_flota_routes(app, ctx):
             return _error("Faltan datos para guardar el archivo.", 400)
         if not _entidad_existe(entidad, ident):
             return _error("No encontré a quién pertenece ese archivo.", 404)
+        if entidad == "chofer" and tipo == "licencia" and _lic_verificar():
+            # La licencia de un chofer solo entra por «Editar chofer», donde se LEE y se comprueba que sea de esa persona: esta ruta genérica
+            # guardaría cualquier PDF y dejaría al chofer «reservable» sin pasar por el escáner (revisión de seguridad, 05-nov-2026).
+            return _error("La licencia de un chofer se sube desde «Editar chofer», donde se lee y se comprueba que sea de esa persona.", 409,
+                          error_codigo="LICENCIA_SOLO_POR_FORMULARIO")
         data = archivo.read(max(fr.ARCHIVO_MAX_BYTES.values()) + 1)
         err = _guardar_archivo(entidad, ident, tipo, data, getattr(archivo, "filename", ""))
         if err:
@@ -1108,8 +1114,22 @@ def register_flota_routes(app, ctx):
         _lic_golpes[k] = lista
         return ok
 
+    _lic_cupo = threading.BoundedSemaphore(2)      # a lo más 2 lecturas a la vez en este proceso: cada una gasta CPU y memoria (la app tiene 2 vCPU)
+
+    def _estado_http(r):
+        """Código HTTP de una lectura que no salió bien."""
+        return {"archivo": 400, "ocupado": 429}.get(r["estado"], 500)
+
     def _lic_leer_seguro(data):
-        """{'estado': 'ok'|'sin_motor'|'archivo'|'error', 'lectura', 'meta', 'mensaje'}. Nunca lanza."""
+        """{'estado': 'ok'|'sin_motor'|'archivo'|'ocupado'|'error', 'lectura', 'meta', 'mensaje'}. Nunca lanza."""
+        if not _lic_cupo.acquire(blocking=False):
+            return {"estado": "ocupado", "mensaje": "El lector está atendiendo otras licencias. Espera unos segundos e inténtalo de nuevo."}
+        try:
+            return _lic_leer_con_cupo(data)
+        finally:
+            _lic_cupo.release()
+
+    def _lic_leer_con_cupo(data):
         try:
             lectura, meta = _lic_leer(data)
             return {"estado": "ok", "lectura": lectura, "meta": meta or {}}
@@ -1122,15 +1142,18 @@ def register_flota_routes(app, ctx):
             print(f"[flota] leer licencia: {type(e).__name__}: {e}", flush=True)
             return {"estado": "error", "mensaje": "No pude leer la licencia por un problema del servidor. Intenta de nuevo en un momento."}
 
+    class _UsuarioNoLeido(Exception):
+        """La base no respondió al buscar al usuario: NO se puede dar por buena la comparación (no se salta en silencio)."""
+
     def _lic_usuario(uid):
-        """{'nombre', 'rut'} del usuario de ILUS elegido, o None."""
+        """{'nombre', 'rut'} del usuario ACTIVO de ILUS elegido, o None si no existe o está desactivado. Si la base falla, lanza _UsuarioNoLeido."""
         if not uid:
             return None
         try:
-            u = mysql_fetchone("SELECT id, nombre, rut FROM `" + _AUTH + "` WHERE id=%s", (uid,))
+            u = mysql_fetchone("SELECT id, nombre, rut FROM `" + _AUTH + "` WHERE id=%s AND active=1", (uid,))
         except Exception as e:
             print(f"[flota] usuario para comparar la licencia: {type(e).__name__}", flush=True)
-            return None
+            raise _UsuarioNoLeido() from e
         return {"nombre": u.get("nombre"), "rut": u.get("rut")} if u else None
 
     def _lic_verificacion(lectura, campos):
@@ -1143,9 +1166,13 @@ def register_flota_routes(app, ctx):
             declarada = fr.fecha_o_none(campos.get("licencia_vence"))
         except ValueError:
             declarada = None
+        try:
+            usuario = _lic_usuario(uid)
+        except _UsuarioNoLeido:
+            return {"ok": False, "errores": {"usuario_id": "No pude comprobar el usuario en este momento. Intenta de nuevo."}, "avisos": []}
         errores, avisos = licl.evaluar(
             lectura, rut_chofer=(campos.get("rut") or None), nombre_chofer=(campos.get("nombre_completo") or None),
-            usuario=_lic_usuario(uid), clases_declaradas=(clases or None), hoy=_hoy(), vence_declarado=declarada)
+            usuario=usuario, clases_declaradas=(clases or None), hoy=_hoy(), vence_declarado=declarada)
         return {"ok": not errores, "errores": errores, "avisos": avisos}
 
     def _id_o_none(v):
@@ -1157,8 +1184,8 @@ def register_flota_routes(app, ctx):
 
     def _lic_motivo_omitir(payload):
         """Motivo escrito para saltarse la comprobación: SOLO lo vale si lo pide el superadministrador y trae al menos 20 caracteres."""
-        motivo = re.sub(r"\s+", " ", str((payload or {}).get("licencia_sin_verificar_motivo") or "")).strip()
-        return motivo if (_es_superadmin() and len(motivo) >= _LIC_OMITIR_MIN) else None
+        motivo = re.sub(r"\s+", " ", str((payload or {}).get("licencia_sin_verificar_motivo") or "")).strip()[:300]
+        return motivo if (_es_superadmin() and len(motivo) >= _LIC_OMITIR_MIN and len(motivo.split()) >= 3) else None
 
     def _licencia_exigir(data_lic, payload, datos, usuario_id):
         """(respuesta_de_error | None, detalle_para_la_bitácora). Con una licencia nueva en la mano, el servidor la LEE de nuevo (no confía en lo
@@ -1172,12 +1199,19 @@ def register_flota_routes(app, ctx):
         r = _lic_leer_seguro(data_lic)
         if r["estado"] == "sin_motor":
             return _error(r["mensaje"], 503, error_codigo="LECTOR_NO_DISPONIBLE", puede_omitir=_es_superadmin()), {}
+        if r["estado"] == "ocupado":
+            return _error(r["mensaje"], 429, error_codigo="LECTOR_OCUPADO"), {}
         if r["estado"] != "ok":
-            return _error(r["mensaje"], 400 if r["estado"] == "archivo" else 500, errores={"licencia_archivo": r["mensaje"]},
+            return _error(r["mensaje"], _estado_http(r), errores={"licencia_archivo": r["mensaje"]},
                           error_codigo="LICENCIA_ILEGIBLE", puede_omitir=_es_superadmin()), {}
         lectura = r["lectura"]
+        try:
+            usuario = _lic_usuario(usuario_id)
+        except _UsuarioNoLeido:
+            return _error("No pude comprobar el usuario de ILUS en este momento: no se registra al chofer. Intenta de nuevo en unos segundos.", 503,
+                          error_codigo="USUARIO_NO_COMPROBADO"), {}
         errores, avisos = licl.evaluar(lectura, rut_chofer=datos.get("rut"), nombre_chofer=datos.get("nombre_completo"),
-                                       usuario=_lic_usuario(usuario_id), clases_declaradas=datos.get("licencia_clases"), hoy=_hoy(),
+                                       usuario=usuario, clases_declaradas=datos.get("licencia_clases"), hoy=_hoy(),
                                        vence_declarado=datos.get("licencia_vence"))
         if errores:
             codigo = "LICENCIA_ILEGIBLE" if "licencia_archivo" in errores else "LICENCIA_NO_COINCIDE"
@@ -1209,18 +1243,23 @@ def register_flota_routes(app, ctx):
         r = _lic_leer_seguro(data)
         if r["estado"] == "sin_motor":
             return _error(r["mensaje"], 503, error_codigo="LECTOR_NO_DISPONIBLE", puede_omitir=_es_superadmin())
+        if r["estado"] == "ocupado":
+            return _error(r["mensaje"], 429, error_codigo="LECTOR_OCUPADO")
         if r["estado"] != "ok":
-            return _error(r["mensaje"], 400 if r["estado"] == "archivo" else 500, errores={"licencia_archivo": r["mensaje"]},
-                          puede_omitir=_es_superadmin())
+            return _error(r["mensaje"], _estado_http(r), errores={"licencia_archivo": r["mensaje"]}, puede_omitir=_es_superadmin())
         meta = r["meta"] or {}
-        return jsonify({"ok": True, "lectura": licl.lectura_a_json(r["lectura"]), "verificacion": _lic_verificacion(r["lectura"], request.form),
+        resp = jsonify({"ok": True, "lectura": licl.lectura_a_json(r["lectura"]), "verificacion": _lic_verificacion(r["lectura"], request.form),
                         "motor": meta.get("motor"), "ms": meta.get("ms"), "puede_omitir": _es_superadmin()})
+        resp.headers["Cache-Control"] = "no-store"               # lleva RUT y nombre del titular: que ningún caché lo guarde
+        return resp
 
     @app.route("/flota/api/licencia/comparar", methods=["POST"])
     @_flota_admin_required
     def flota_api_licencia_comparar():
         """Vuelve a comparar una lectura YA hecha con lo que se está escribiendo (cambió el usuario, el RUT o las clases): sin repetir el OCR.
         Es solo la vista previa de la pantalla; la comprobación que vale es la del guardado, que lee la licencia otra vez."""
+        if not _lic_ritmo_ok():
+            return _error("Estás comparando muy seguido. Espera un momento.", 429, error_codigo="LECTURA_MUY_SEGUIDA")
         p = request.get_json(silent=True) or {}
         l = p.get("lectura") or {}
         try:
@@ -1241,7 +1280,9 @@ def register_flota_routes(app, ctx):
         lectura = {"rut": rut, "vence": vence, "clases": fr.normalizar_clases(l.get("clases")), "nombre": (str(l.get("nombre") or "").strip() or None),
                    "palabras": [str(x) for x in (l.get("palabras") or [])][:400], "ruts_leidos": leidos, "fechas": sorted(set(fechas)), "avisos": [],
                    "legible": bool((rut or leidos) and (vence or fechas))}
-        return jsonify({"ok": True, "verificacion": _lic_verificacion(lectura, p)})
+        resp = jsonify({"ok": True, "verificacion": _lic_verificacion(lectura, p)})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.route("/flota/api/licencia/estado", methods=["GET"])
     @_flota_admin_required
@@ -1342,7 +1383,7 @@ def register_flota_routes(app, ctx):
                                 "chofer": _chofer_json(dict(actual), _hoy(), _archivos_activos("chofer").get(cid))})
             err_subida = _guardar_archivo("chofer", cid, "licencia", data_lic, getattr(archivo, "filename", ""))
             if det_lic and not err_subida:
-                _clog(cid, "licencia_verificada", det_lic)
+                _clog(cid, "licencia_sin_verificar" if det_lic.get("licencia_sin_verificar") else "licencia_verificada", det_lic)
             return err_subida if err_subida else _chofer_respuesta(cid)
         try:
             if datos["direccion_accion"] == "mantener":       # misma dirección de antes: su ubicación no se toca

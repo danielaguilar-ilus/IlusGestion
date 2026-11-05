@@ -235,6 +235,50 @@ class TestLeerLaLicencia(unittest.TestCase):
         self.assertTrue(lectura["legible"])
 
 
+def pdf_con_pagina(ancho, alto):
+    """Un PDF mínimo (menos de 1 KB) que DECLARA una página del tamaño que se pida: así se prueba el ataque de la página gigante."""
+    cabeza = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    pagina = ("3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 %d %d]>>endobj\ntrailer<</Root 1 0 R>>\n" % (ancho, alto)).encode("ascii")
+    return cabeza + pagina + b"%%EOF"
+
+
+@unittest.skipIf(Image is None, "sin Pillow")
+class TestRevisionDeSeguridad(unittest.TestCase):
+    def test_un_pdf_diminuto_con_una_pagina_gigante_nunca_se_dibuja_a_su_tamano_real(self):
+        # 20.000 × 20.000 pt dibujados a escala 2,5 serían 50.000 × 50.000 px (10 GB): la escala se baja ANTES de dibujar.
+        pdf = pdf_con_pagina(20000, 20000)
+        self.assertLess(len(pdf), 1024)
+        img = O.abrir_imagen(pdf)
+        self.assertLessEqual(max(img.size), 3001)
+        self.assertLessEqual(img.size[0] * img.size[1], 9_100_000)
+
+    def test_la_escala_solo_se_baja_cuando_hace_falta(self):
+        import inspect
+        fuente = inspect.getsource(O.abrir_imagen)
+        self.assertIn("escala = min(2.5, 3000.0 / max(ancho, alto))", fuente)
+        self.assertIn("ancho * escala * alto * escala > MAX_PIXELES", fuente)           # y si aun así pasara del tope, se rechaza
+
+    def test_una_hoja_normal_se_sigue_leyendo(self):
+        img = O.abrir_imagen(pdf_con_pagina(595, 842))
+        self.assertGreater(img.size[0], 1000)
+
+    def test_una_pagina_enorme_pero_dentro_del_tope_se_reduce_en_vez_de_rechazarse(self):
+        img = O.abrir_imagen(pdf_con_pagina(3000, 4000))
+        self.assertLessEqual(img.size[0] * img.size[1], O.MAX_PIXELES)
+
+    def test_el_tope_de_pixeles_de_una_foto_es_bajo(self):
+        self.assertLessEqual(O.MAX_PIXELES, 25_000_000)
+
+    def test_solo_se_abren_jpeg_png_y_webp(self):
+        import inspect
+        self.assertIn('formats=("JPEG", "PNG", "WEBP")', inspect.getsource(O.abrir_imagen))
+
+    def test_pdfium_se_usa_de_a_uno(self):
+        import inspect
+        self.assertIn("with _PDFIUM:", inspect.getsource(O.abrir_imagen))
+        self.assertIn("pdf.close()", inspect.getsource(O.abrir_imagen))
+
+
 class TestElMotorDisponible(unittest.TestCase):
     def test_no_lanza_y_devuelve_el_estado(self):
         ok, info = O.motor_disponible()

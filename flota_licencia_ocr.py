@@ -16,6 +16,7 @@ Cómo se lee (lo aprendido leyendo una licencia REAL con Tesseract el 05-nov-202
 Nada se guarda aquí: leer no escribe en ninguna parte.
 """
 import io
+import threading
 import time
 
 import flota_licencia_lector as lector
@@ -24,7 +25,8 @@ import flota_reglas as fr
 TIEMPO_MAX_S = 28            # tope total de la lectura (varias pasadas del OCR)
 TIEMPO_PASADA_S = 14         # tope de UNA pasada de Tesseract
 LADO_LARGO = 2000            # a este largo (px) se lleva la tarjeta para leerla
-MAX_PIXELES = 50_000_000     # una imagen más grande se rechaza (protege la memoria del servidor)
+MAX_PIXELES = 25_000_000     # una imagen más grande se rechaza (protege la memoria del servidor: 25 MP ya son ~75 MB por copia)
+_PDFIUM = threading.Lock()   # PDFium no es seguro con varios hilos a la vez: se usa de a uno
 SOLO_DIGITOS = "-c tessedit_char_whitelist=0123456789./-K"
 # (lado largo en px, filtro, modo de Tesseract, configuración extra). 11 = texto suelto: lee mejor la tarjeta que 6 = un bloque, porque las
 # etiquetas están desordenadas. «Solo dígitos» acierta mucho más el RUT y las fechas. Dos tamaños: en la licencia real una cifra salía bien a
@@ -110,14 +112,28 @@ def abrir_imagen(data):
     try:
         if det[0] == "pdf":
             import pypdfium2 as pdfium
-            pdf = pdfium.PdfDocument(bytes(data))
-            if len(pdf) < 1:
-                raise ArchivoIlegible("El PDF no tiene páginas.")
-            img = pdf[0].render(scale=2.5).to_pil()
+            with _PDFIUM:
+                pdf = pdfium.PdfDocument(bytes(data))
+                try:
+                    if len(pdf) < 1:
+                        raise ArchivoIlegible("El PDF no tiene páginas.")
+                    pagina = pdf[0]
+                    ancho, alto = pagina.get_size()
+                    if ancho <= 0 or alto <= 0:
+                        raise ArchivoIlegible("La página del PDF no tiene un tamaño válido.")
+                    # Un PDF de 1 KB puede declarar una página de 20.000 pt por lado y pedir GB de memoria al dibujarla: se mide ANTES.
+                    escala = min(2.5, 3000.0 / max(ancho, alto))
+                    if ancho * escala * alto * escala > MAX_PIXELES:
+                        raise ArchivoIlegible("La página del PDF es demasiado grande para leerla.")
+                    img = pagina.render(scale=escala).to_pil()
+                finally:
+                    pdf.close()
         else:
-            img = Image.open(io.BytesIO(bytes(data)))
+            img = Image.open(io.BytesIO(bytes(data)), formats=("JPEG", "PNG", "WEBP"))
             if img.size[0] * img.size[1] > MAX_PIXELES:
                 raise ArchivoIlegible("La foto es demasiado grande para leerla.")
+            if img.format == "JPEG":
+                img.draft("RGB", (2600, 2600))                 # el JPEG se decodifica ya reducido: menos memoria y más rápido
             img.load()
             img = ImageOps.exif_transpose(img)
     except ArchivoIlegible:

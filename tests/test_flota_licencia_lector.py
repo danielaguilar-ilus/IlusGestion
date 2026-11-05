@@ -364,6 +364,54 @@ class TestLoQueSeVioEnLaFoto(unittest.TestCase):
         self.assertEqual(errores, {})
 
 
+class TestRevisionDeSeguridad(unittest.TestCase):
+    def test_si_se_leyo_un_rut_valido_manda_ese_y_no_otro_que_se_le_parezca(self):
+        otro = L.interpretar_texto("N DE LICENCIA 12.345.678-5\nFECHA DE CONTROL 29/10/2029\n12.345.679-3")
+        self.assertEqual(otro["rut"], "12345678-5")
+        self.assertFalse(L.rut_coincide(otro, "12.345.679-3"))          # el RUT de OTRA persona que aparece al lado no sirve
+
+    def test_la_tolerancia_de_una_cifra_solo_vale_cuando_no_se_leyo_ningun_rut_valido(self):
+        l = L.interpretar_texto("N DE LICENCIA 25.647.065-5\nFECHA DE CONTROL 29/10/2029")
+        self.assertIsNone(l["rut"])
+        self.assertTrue(L.rut_coincide(l, "25.547.065-5"))
+
+    def test_dos_rut_validos_distintos_leidos_por_varias_pasadas_es_un_error(self):
+        dos = "N DE LICENCIA 12.345.678-5\nFECHA DE CONTROL 29/10/2029\n" + R.rut_formato(PEDRO)
+        f = L.fusionar([L.interpretar_texto(dos), L.interpretar_texto(dos)])
+        self.assertIn("varios_rut_fuerte", f["avisos"])
+        errores, _ = L.evaluar(f, rut_chofer=MARIA, hoy=HOY)
+        self.assertIn("licencia_archivo", errores)
+        self.assertIn("más de un RUT", errores["licencia_archivo"])
+
+    def test_un_rut_ajeno_leido_por_una_sola_pasada_no_bloquea(self):
+        base = "N DE LICENCIA 12.345.678-5\nFECHA DE CONTROL 29/10/2029"
+        f = L.fusionar([L.interpretar_texto(base), L.interpretar_texto(base), L.interpretar_texto(base + "\n" + R.rut_formato(PEDRO))])
+        self.assertNotIn("varios_rut_fuerte", f["avisos"])
+
+    def test_sin_rut_en_el_perfil_el_nombre_pide_tres_palabras(self):
+        l = L.interpretar_texto(LIMPIO)
+        errores, _ = L.evaluar(l, rut_chofer=MARIA, usuario={"nombre": "María Pérez", "rut": ""}, hoy=HOY)       # solo 2 palabras en común
+        self.assertIn("usuario_id", errores)
+        errores, avisos = L.evaluar(l, rut_chofer=MARIA, usuario={"nombre": "María Elena Pérez", "rut": ""}, hoy=HOY)
+        self.assertEqual(errores, {})
+        self.assertTrue(any("sin RUT" in a or "no tiene RUT" in a for a in avisos))
+
+    def test_el_mensaje_de_otro_usuario_no_repite_el_rut_de_su_perfil(self):
+        l = L.interpretar_texto(LIMPIO)
+        errores, _ = L.evaluar(l, rut_chofer=MARIA, usuario={"nombre": "Milagros Salazar", "rut": PEDRO}, hoy=HOY)
+        self.assertNotIn(R.rut_formato(PEDRO), errores["usuario_id"])
+        self.assertNotIn(PEDRO, errores["usuario_id"])
+        self.assertIn("Milagros Salazar", errores["usuario_id"])
+
+    def test_una_fecha_de_control_a_mas_de_siete_anos_se_rechaza(self):
+        l = L.interpretar_texto(LIMPIO.replace("29/10/2029", "29/10/2040"))
+        errores, _ = L.evaluar(l, rut_chofer=MARIA, hoy=HOY)
+        self.assertIn("demasiado lejana", errores["licencia_vence"])
+        l = L.interpretar_texto(LIMPIO.replace("29/10/2029", "29/10/2032"))
+        errores, _ = L.evaluar(l, rut_chofer=MARIA, hoy=HOY)
+        self.assertEqual(errores, {})
+
+
 class TestJsonParaElNavegador(unittest.TestCase):
     def test_las_fechas_leidas_viajan_para_que_la_persona_elija(self):
         f = L.fusionar([L.interpretar_texto(LIMPIO)] * 2)

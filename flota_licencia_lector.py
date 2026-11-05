@@ -22,7 +22,7 @@ Correr las pruebas:  python -m pytest tests/test_flota_licencia_lector.py -q -p 
 import re
 import unicodedata
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 
 import flota_reglas as fr
 
@@ -42,6 +42,7 @@ AVISOS_TEXTO = {
     "clase_inferida": "No vi la palabra «Clase»: la clase puede estar mal leída.",
     "sin_nombre": "No pude leer el nombre.",
     "fecha_poco_segura": "Solo una lectura vio la fecha de control: compárala con la foto antes de guardar.",
+    "varios_rut_fuerte": "Hay más de un RUT distinto en la foto (¿más de una licencia o un papel al lado?): escanea solo la licencia de esta persona.",
 }
 
 
@@ -149,8 +150,8 @@ def rut_coincide(lectura, esperado):
     if not esp:
         return False
     l = lectura or {}
-    if l.get("rut") == esp:
-        return True
+    if l.get("rut"):
+        return l["rut"] == esp                 # se leyó un RUT que EXISTE: manda ese (otro RUT cercano en la foto no vale)
     return any(rut_parecido(r, esp) for r in (l.get("ruts_leidos") or []))
 
 
@@ -237,10 +238,10 @@ def nombre_en_palabras(palabras, nombre, minimo=2):
     return len(palabras_del_nombre(nombre) & set(palabras or ())) >= minimo
 
 
-def _nombre_coincide(lectura, nombre):
+def _nombre_coincide(lectura, nombre, minimo=2):
     """El nombre leído en la licencia (o las palabras sueltas que se leyeron) coincide con el de esta persona."""
     l = lectura or {}
-    return bool((l.get("nombre") and nombres_parecidos(l["nombre"], nombre)) or nombre_en_palabras(l.get("palabras"), nombre))
+    return bool((l.get("nombre") and nombres_parecidos(l["nombre"], nombre, minimo)) or nombre_en_palabras(l.get("palabras"), nombre, minimo))
 
 
 def nombres_parecidos(a, b, minimo=2):
@@ -363,6 +364,9 @@ def fusionar(lecturas):
     if not nombre:
         avisos.append("sin_nombre")
     palabras = sorted({p for l in lecturas for p in (l.get("palabras") or ())})
+    votos_rut = Counter(r for l in lecturas for r in set(l.get("ruts_leidos") or ()) if fr.rut_valido(r))
+    if len([r for r, n in votos_rut.items() if n >= 2]) >= 2:
+        avisos.append("varios_rut_fuerte")        # dos licencias en la foto, o un papel con otro RUT al lado: no se sabe de cuál es
     vistas = sorted({f for l in lecturas for f in (l.get("fechas") or ())})
     leidos = sorted({r for l in lecturas for r in (l.get("ruts_leidos") or ())})
     if vence is None and len(vistas) >= 2:
@@ -440,6 +444,9 @@ def evaluar(lectura, rut_chofer=None, nombre_chofer=None, usuario=None, clases_d
         if faltan:
             errores["licencia_archivo"] += " (" + " ".join(faltan) + ")"
         return errores, avisos
+    if "varios_rut_fuerte" in (l.get("avisos") or []):
+        errores["licencia_archivo"] = AVISOS_TEXTO["varios_rut_fuerte"]
+        return errores, avisos
     leido = _rut_leido_texto(l)
     if rut_chofer:
         if not rut_coincide(l, rut_chofer):
@@ -452,12 +459,12 @@ def evaluar(lectura, rut_chofer=None, nombre_chofer=None, usuario=None, clases_d
         nombre_u = (usuario or {}).get("nombre") or "ese usuario"
         if rut_u:
             if not rut_coincide(l, rut_u):
-                errores["usuario_id"] = (f"{nombre_u} tiene otro RUT ({fr.rut_formato(rut_u)}) que la licencia ({leido}): "
+                errores["usuario_id"] = (f"El RUT de la licencia ({leido}) no es el del perfil de {nombre_u}: "
                                          "la licencia no es de esa persona. Cada chofer se registra con SU propio usuario de ILUS.")
-        elif not _nombre_coincide(l, nombre_u):
-            errores["usuario_id"] = (f"{nombre_u} no tiene RUT en su perfil y su nombre no coincide con el de la licencia "
-                                     f"({l.get('nombre') or 'no se leyó'}): no puedo comprobar que sea su licencia. Elige el usuario de la "
-                                     "persona dueña de la licencia, o pídele que complete su RUT en Mi cuenta.")
+        elif not _nombre_coincide(l, nombre_u, minimo=3):
+            # Sin RUT en el perfil la única prueba es el nombre, y es débil (nombres de pila repetidos, y cada persona edita el suyo): se piden 3 palabras.
+            errores["usuario_id"] = (f"{nombre_u} no tiene RUT en su perfil y su nombre no alcanza para comprobar que la licencia es suya "
+                                     f"({l.get('nombre') or 'no se leyó'}). Que complete su RUT en Mi cuenta, o elige el usuario de la persona dueña de la licencia.")
         else:
             avisos.append(f"{nombre_u} no tiene RUT en su perfil: se comprobó por el nombre. Conviene que lo complete en Mi cuenta.")
     if nombre_chofer and (l.get("nombre") or l.get("palabras")) and not _nombre_coincide(l, nombre_chofer):
@@ -467,6 +474,9 @@ def evaluar(lectura, rut_chofer=None, nombre_chofer=None, usuario=None, clases_d
         errores["licencia_vence"] = err_fecha
     elif fecha < hoy:
         errores["licencia_vence"] = f"La licencia venció el {fr.fecha_corta(fecha)}: no se puede registrar con una licencia vencida. Hay que renovarla y escanearla de nuevo."
+    elif fecha > hoy + timedelta(days=366 * 7):
+        errores["licencia_vence"] = (f"La fecha de control {fr.fecha_corta(fecha)} es demasiado lejana para una licencia (duran hasta 6 años): "
+                                     "revisa que sea la «Fecha de control» tal como está en la foto.")
     else:
         dias = (fecha - hoy).days
         if dias <= fr.DIAS_ALERTA:

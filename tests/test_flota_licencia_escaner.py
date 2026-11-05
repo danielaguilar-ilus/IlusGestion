@@ -187,7 +187,7 @@ class TestRegistroLeeYExige(BaseEscaner):
         self.assertIn("usuario_id", r.get_json()["errores"])
 
     def test_usuario_sin_rut_en_el_perfil_pero_con_el_mismo_nombre_pasa_y_deja_aviso(self):
-        self.base.usr[4].update(rut=None, nombre="Daniela Mora")
+        self.base.usr[4].update(rut=None, nombre="Daniela Mora Vega")          # sin RUT en el perfil se piden 3 palabras del nombre
         self.lee(texto_licencia(_datos_chofer(4)["rut"], nombres="DANIELA", apellidos="MORA VEGA"))
         r = self.crear()
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
@@ -306,7 +306,7 @@ class TestEditar(BaseEscaner):
 
     def test_renovar_escaneando_la_licencia_nueva_actualiza_el_vencimiento(self):
         cid = self.registrar_daniela()
-        nueva = dt.date.fromisoformat(FUTURO) + dt.timedelta(days=1800)
+        nueva = dt.date.today() + dt.timedelta(days=1800)
         self.lee(texto_licencia(_datos_chofer(4)["rut"], vence=nueva))
         r = self.editar(cid, archivo=(PDF_LICENCIA, "licencia2.pdf", "application/pdf"), licencia_vence=nueva.isoformat())
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
@@ -314,7 +314,7 @@ class TestEditar(BaseEscaner):
 
     def test_al_renovar_la_fecha_vieja_ya_no_vale_porque_no_esta_en_la_licencia_nueva(self):
         cid = self.registrar_daniela()
-        nueva = dt.date.fromisoformat(FUTURO) + dt.timedelta(days=1800)
+        nueva = dt.date.today() + dt.timedelta(days=1800)
         self.lee(texto_licencia(_datos_chofer(4)["rut"], vence=nueva))
         r = self.editar(cid, archivo=(PDF_LICENCIA, "licencia2.pdf", "application/pdf"), licencia_vence=FUTURO)    # quedó la fecha de la licencia anterior
         self.assertEqual(r.status_code, 400)
@@ -447,6 +447,139 @@ class TestHistorial(BaseEscaner):
 
 
 # ══════════════════════════════════════════════════════════════════
+#  7. Revisión de seguridad independiente (05-nov-2026)
+# ══════════════════════════════════════════════════════════════════
+class TestRevisionDeSeguridad(BaseEscaner):
+    def test_la_ruta_generica_de_archivos_no_sirve_para_saltarse_el_escaner(self):
+        cid = self.registrar_daniela()
+        r = self.c.post("/flota/api/archivos", headers=SUPER, content_type="multipart/form-data",
+                        data={"entidad": "chofer", "entidad_id": str(cid), "tipo": "licencia", "archivo": (io.BytesIO(PDF_LICENCIA), "otra.pdf", "application/pdf")})
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.get_json()["error_codigo"], "LICENCIA_SOLO_POR_FORMULARIO")
+        self.assertEqual(len([a for a in self.base.arch.values() if a["entidad"] == "chofer" and a["tipo"] == "licencia" and a["activo"]]), 1)
+
+    def test_los_demas_archivos_siguen_subiendose_por_esa_ruta(self):
+        r = self.c.post("/flota/api/vehiculos", json={"patente": "ZZ9999", "tipo": "Furgón", "marca": "X", "modelo": "Y", "licencia_clases": ["B"],
+                        "revision_tecnica_vence": FUTURO, "permiso_circulacion_vence": FUTURO, "soap_vence": FUTURO, "seguro_vence": FUTURO}, headers=SUPER)
+        vid = r.get_json()["vehiculo"]["id"]
+        r = self.c.post("/flota/api/archivos", headers=SUPER, content_type="multipart/form-data",
+                        data={"entidad": "vehiculo", "entidad_id": str(vid), "tipo": "soap", "archivo": (io.BytesIO(PDF_LICENCIA), "soap.pdf", "application/pdf")})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+
+    def test_si_la_base_falla_al_buscar_al_usuario_no_se_salta_la_comprobacion(self):
+        original = self.base.fetchone
+
+        def falla(q, p=None):
+            if "SELECT id, nombre, rut FROM" in q:
+                raise RuntimeError("base caída")
+            return original(q, p)
+        self.app = _app(self.base, self.bucket, extra={"licencia_verificar": True, "licencia_leer": self._lector, "mysql_fetchone": falla})
+        self.c = self.app.test_client()
+        self.lee(texto_licencia(_datos_chofer(4)["rut"]))
+        n = len(self.base.cho)
+        r = self.crear()
+        self.assertEqual(r.status_code, 503)
+        self.assertEqual(r.get_json()["error_codigo"], "USUARIO_NO_COMPROBADO")
+        self.assertEqual(len(self.base.cho), n)
+
+    def test_el_lector_ocupado_responde_429_y_no_cuelga_la_aplicacion(self):
+        import threading
+        espera, dentro = threading.Event(), threading.Barrier(3, timeout=10)
+        self.lee(texto_licencia(_datos_chofer(4)["rut"]))
+        original = self._lector
+        resultados = []
+
+        def lento(data):
+            try:
+                dentro.wait()
+            except threading.BrokenBarrierError:
+                pass
+            espera.wait(10)
+            return original(data)
+        self.app = _app(self.base, self.bucket, extra={"licencia_verificar": True, "licencia_leer": lento})
+
+        def pedir():
+            c = self.app.test_client()
+            r = c.post("/flota/api/licencia/leer", data={"archivo": (io.BytesIO(PDF_LICENCIA), "l.pdf", "application/pdf")},
+                       content_type="multipart/form-data", headers=ADMIN)
+            resultados.append(r.status_code)
+        hilos = [threading.Thread(target=pedir) for _ in range(2)]
+        for h in hilos:
+            h.start()
+        try:
+            dentro.wait()                                              # las dos lecturas ya están dentro del lector
+        except threading.BrokenBarrierError:
+            pass
+        c3 = self.app.test_client()
+        r3 = c3.post("/flota/api/licencia/leer", data={"archivo": (io.BytesIO(PDF_LICENCIA), "l.pdf", "application/pdf")},
+                     content_type="multipart/form-data", headers={"X-Rol": "admin", "X-Flota": "flota_administrar"})
+        espera.set()
+        for h in hilos:
+            h.join(15)
+        self.assertEqual(r3.status_code, 429)
+        self.assertEqual(r3.get_json()["error_codigo"], "LECTOR_OCUPADO")
+        self.assertEqual(sorted(resultados), [200, 200])
+
+    def test_comparar_tiene_ritmo_maximo_y_no_guarda_cache(self):
+        lectura = {"rut": _datos_chofer(4)["rut"], "vence": FUTURO, "clases": ["B"]}
+        codigos = []
+        for _ in range(14):
+            r = self.c.post("/flota/api/licencia/comparar", json={"lectura": lectura, "usuario_id": 4}, headers=SUPER)
+            codigos.append(r.status_code)
+        self.assertEqual(codigos[:12], [200] * 12)
+        self.assertEqual(codigos[12:], [429, 429])
+        r = self.c.post("/flota/api/licencia/leer", data={"archivo": (io.BytesIO(PDF_LICENCIA), "l.pdf", "application/pdf")},
+                        content_type="multipart/form-data", headers=SUPER)
+        self.assertEqual(r.status_code, 429)                           # el ritmo es el mismo para leer y comparar
+
+    def test_las_respuestas_con_rut_no_se_guardan_en_cache(self):
+        self.lee(texto_licencia(_datos_chofer(4)["rut"]))
+        r = self.c.post("/flota/api/licencia/leer", data={"archivo": (io.BytesIO(PDF_LICENCIA), "l.pdf", "application/pdf")},
+                        content_type="multipart/form-data", headers=SUPER)
+        self.assertEqual(r.headers.get("Cache-Control"), "no-store")
+        r = self.c.post("/flota/api/licencia/comparar", json={"lectura": {"rut": _datos_chofer(4)["rut"], "vence": FUTURO}}, headers=SUPER)
+        self.assertEqual(r.headers.get("Cache-Control"), "no-store")
+
+    def test_el_mensaje_no_repite_el_rut_del_perfil_de_otra_persona(self):
+        self.base.usr[4]["rut"] = _rut(9000001)
+        lectura = {"rut": _datos_chofer(4)["rut"], "vence": FUTURO, "clases": ["B"]}
+        r = self.c.post("/flota/api/licencia/comparar", json={"lectura": lectura, "usuario_id": 4, "rut": _datos_chofer(4)["rut"]}, headers=SUPER)
+        msg = r.get_json()["verificacion"]["errores"]["usuario_id"]
+        self.assertNotIn(L.fr.rut_formato(_rut(9000001)), msg)
+        self.assertNotIn(_rut(9000001), msg)
+
+    def test_un_usuario_desactivado_no_se_usa_para_comparar(self):
+        self.assertIn("WHERE id=%s AND active=1", MODULO[MODULO.index("def _lic_usuario"):MODULO.index("def _lic_usuario") + 900])
+
+    def test_el_historial_no_cuenta_lo_leido_a_quien_solo_gestiona(self):
+        cid = self.registrar_daniela()
+        gestor = {"X-Rol": "admin", "X-Flota": "flota_gestionar"}
+        ev = self.c.get(f"/flota/api/choferes/{cid}/historial", headers=gestor).get_json()["eventos"]
+        self.assertTrue(ev)
+        self.assertNotIn("escáner", " ".join(" ".join(e["lineas"]) for e in ev))
+        self.assertNotIn(L.fr.rut_formato(_datos_chofer(4)["rut"]), " ".join(" ".join(e["lineas"]) for e in ev))
+        ev_admin = self.c.get(f"/flota/api/choferes/{cid}/historial", headers=SUPER).get_json()["eventos"]
+        self.assertIn("escáner", " ".join(" ".join(e["lineas"]) for e in ev_admin))
+
+    def test_omitir_la_comprobacion_exige_un_motivo_razonable_y_queda_con_su_propio_nombre(self):
+        self.lee("borroso")
+        for motivo in ("a" * 25, "abcdefghijklmnopqrstu vwxyz"):               # 25 letras seguidas · dos palabras largas: no es una explicación
+            self.assertEqual(self.crear(licencia_sin_verificar_motivo=motivo).status_code, 400, motivo)
+        largo = "motivo largo " * 40
+        cid = self.crear(licencia_sin_verificar_motivo=largo).get_json()["chofer"]["id"]
+        det = [x for x in self.log(cid) if x[0] == "creado"][0][1]
+        self.assertLessEqual(len(det["licencia_sin_verificar"]), 300)
+        self.assertIn("Licencia registrada SIN comprobar", MODULO)
+
+    def test_una_fecha_de_control_demasiado_lejana_se_rechaza(self):
+        lejana = dt.date.today() + dt.timedelta(days=366 * 9)
+        self.lee(texto_licencia(_datos_chofer(4)["rut"], vence=lejana))
+        r = self.crear(licencia_vence=lejana.isoformat())
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("demasiado lejana", r.get_json()["errores"]["licencia_vence"])
+
+
+# ══════════════════════════════════════════════════════════════════
 #  5. Cableado
 # ══════════════════════════════════════════════════════════════════
 class TestCableado(unittest.TestCase):
@@ -478,8 +611,8 @@ class TestCableado(unittest.TestCase):
             self.assertNotIn("mysql_execute", cuerpo, ruta)
 
     def test_el_error_no_filtra_el_detalle_interno(self):
-        i = MODULO.index("def _lic_leer_seguro")
-        bloque = MODULO[i:i + 1100]
+        i = MODULO.index("def _lic_leer_con_cupo")
+        bloque = MODULO[i:i + 1300]
         self.assertIn('"No pude leer la licencia por un problema del servidor', bloque)
         self.assertNotIn("str(e)", bloque.split("except Exception as e:")[1])
 
