@@ -363,6 +363,11 @@ class Falsa(BaseFalsa):
             assert "s.inicio < %s AND s.fin > %s" in s, s[:140]
             return [self._ocupa_row(x) for x in self.sol.values()
                     if x[campo] == p[0] and x["estado"] in estados and x["inicio"] < p[1] and x["fin"] > p[2]]
+        if s.startswith("SELECT id FROM flota_solicitudes WHERE id=%s AND solicitante_id=%s AND vehiculo_id=%s"):
+            x = self.sol.get(p[0])          # guardia de reintento (05-nov-2026): ¿es la MISMA solicitud, de la misma persona?
+            igual = x is not None and x["estado"] in ("solicitada", "confirmada") and \
+                (x.get("solicitante_id"), x["vehiculo_id"], x["chofer_id"], x.get("area"), x.get("motivo"), x["inicio"], x["fin"]) == tuple(p[1:8])
+            return [{"id": x["id"]}] if igual else []
         if s.startswith("SELECT estado, COUNT(*) AS n FROM flota_solicitudes WHERE fin >= %s GROUP BY estado"):
             out = {}
             for x in self.sol.values():
@@ -855,7 +860,8 @@ class TestSolicitudes(Base):
         self.assertEqual(d["choques"][0]["numero"], primera["solicitud"]["numero"])
         self.assertEqual(len(self.base.sol), n)                              # NO se guardó nada
         self.assertEqual(self.base.rollbacks, 1)
-        self.assertEqual(self.base.cerradas, self.base.commits + self.base.rollbacks)      # la conexión siempre se cierra
+        # la conexión siempre se cierra (+1: la relectura fresca de la reserva recién guardada, también cerrada)
+        self.assertEqual(self.base.cerradas, self.base.commits + self.base.rollbacks + 1)
 
     def test_pegado_no_es_choque_y_el_otro_vehiculo_o_otra_hora_si_se_puede(self):
         self.pedir()                                                           # 08:00 a 12:30

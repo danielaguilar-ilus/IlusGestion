@@ -74,13 +74,28 @@ class TestElServidorAceptaCualquierHora(unittest.TestCase):
         self.assertTrue(R.se_cruzan(dt.datetime(2026, 11, 6, 15, 59), dt.datetime(2026, 11, 6, 16, 0), *otra))
 
 
-class TestLosCamposDesdeHastaEstanALaVista(unittest.TestCase):
+class TestDesdeHastaVivenPlegadosYLosBloquesSonLoUnicoVisible(unittest.TestCase):
+    """Daniel (05-nov, tras ver #256): «en el horario está uno como el de retiros y otro con bloques: dejemos solo como el de retiros».
+    Eligió «Bloques a la vista, Desde/Hasta plegadas»."""
     PLEGADO = re.compile(r'<details class="fl-pk-manual" id="flPkManual">.*?</details>', re.S)
 
-    def test_desde_y_hasta_ya_no_viven_en_el_bloque_plegado(self):
+    def test_desde_y_hasta_viven_dentro_del_bloque_plegado_y_no_en_otro_lado(self):
         plegado = self.PLEGADO.search(HTML).group(0)
-        self.assertNotIn('name="hora_desde"', plegado)
-        self.assertNotIn('name="hora_hasta"', plegado)
+        self.assertIn('name="hora_desde"', plegado)
+        self.assertIn('name="hora_hasta"', plegado)
+        self.assertEqual(HTML.count('name="hora_desde"'), 1)
+        self.assertEqual(HTML.count('name="hora_hasta"'), 1)
+
+    def test_el_bloque_plegado_nace_cerrado(self):
+        self.assertIn('<details class="fl-pk-manual" id="flPkManual">', HTML)          # sin `open`
+        self.assertIn("$('flPkManual').open = false;", JS_USO)                          # y cada vez que se abre el formulario
+
+    def test_la_columna_de_los_bloques_ya_no_trae_las_casillas(self):
+        i = HTML.index('<div class="fl-pk-der">')
+        j = HTML.index('id="flPkSel"', i)
+        self.assertNotIn("flPkHoras", HTML[i:j])
+        self.assertNotIn('type="time"', HTML[i:j])
+        self.assertLess(HTML.index('id="flPkBloques"'), HTML.index('id="flPkHoras"'))
 
     def test_cada_campo_existe_una_sola_vez_y_con_su_mensaje(self):
         # campoSol(c) busca por data-campo: un duplicado pintaría el error en el campo equivocado.
@@ -91,15 +106,6 @@ class TestLosCamposDesdeHastaEstanALaVista(unittest.TestCase):
         for ident in ("flSolDesde", "flSolHasta"):
             self.assertEqual(HTML.count('id="%s"' % ident), 1)
 
-    def test_el_bloque_de_horas_esta_en_el_paso_2_arriba_de_los_bloques_de_media_hora(self):
-        i = HTML.index('id="flPkHoras"')
-        paso2 = HTML.index('id="flSolOtroDia"')              # el interruptor «Lo devuelvo otro día» abre el paso 2 del formulario de solicitud
-        self.assertLess(paso2, i)
-        self.assertLess(i, HTML.index('id="flPkBloques"'))
-        self.assertLess(i, HTML.index('data-paso="3"', paso2))
-        self.assertGreater(HTML.index('id="flSolHasta"'), HTML.index('id="flSolDesde"'))
-        self.assertLess(HTML.index('id="flSolHasta"'), HTML.index('id="flPkBloques"'))
-
     def test_sin_paso_de_15_minutos_cualquier_minuto_es_valido_para_el_navegador(self):
         for ident in ("flSolDesde", "flSolHasta"):
             m = re.search(r'<input type="time" id="%s"[^>]*>' % ident, HTML)
@@ -108,22 +114,26 @@ class TestLosCamposDesdeHastaEstanALaVista(unittest.TestCase):
             self.assertNotIn('step="1800"', m.group(0))
             self.assertIn('step="60"', m.group(0))
 
-    def test_el_dia_sigue_plegado_a_mano_y_no_se_quito_nada(self):
+    def test_no_se_quito_nada_el_dia_los_bloques_y_el_calendario_siguen(self):
         plegado = self.PLEGADO.search(HTML).group(0)
         self.assertIn('name="fecha"', plegado)
         self.assertIn('name="fecha_hasta"', plegado)
-        self.assertIn("Ajustar el día a mano", plegado)
+        self.assertIn("Ajustar el día y la hora a mano", plegado)
         for ident in ("flPkBloques", "flPkSel", "flPkMes", "flSolOtroDia"):      # el calendario y los bloques siguen (REGLA #4.2)
             self.assertIn('id="%s"' % ident, HTML)
 
-    def test_la_ayuda_dice_que_se_escribe_la_hora_y_ya_no_promete_solo_bloques(self):
-        self.assertIn("escribe la hora de inicio y la de término", HTML)
-        self.assertNotIn("toca el bloque donde partes y el bloque donde terminas. Las llaves", HTML)
+    def test_la_ayuda_explica_que_el_bloque_termina_30_minutos_despues_y_manda_a_la_hora_exacta(self):
+        self.assertIn("para terminar a las 15:00, toca el de 14:30", HTML)
+        self.assertIn("Para una hora exacta, abre «Ajustar el día y la hora a mano»", HTML)
 
     def test_el_bloque_tiene_estilo_y_cabe_en_el_celular(self):
         self.assertRegex(CSS, r"\.fl-pk-horas\{[^}]*border-radius:14px")
         self.assertRegex(CSS, r"\.fl-pk-horas-g\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)")
         self.assertRegex(CSS, r"\.fl-pk-horas-g input\[type=time\]\{[^}]*min-height:44px")
+        self.assertIn(".fl-pk-manual .fl-pk-horas{margin:0 0 12px}", CSS)
+
+    def test_si_la_hora_a_mano_esta_mal_se_abre_el_bloque_para_que_se_vea_el_error(self):
+        self.assertIn("$('flPkManual').contains(malo)", JS_USO)
 
 
 class TestEscribirLaHoraNoDejaUnToqueATrasMano(unittest.TestCase):

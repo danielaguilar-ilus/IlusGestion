@@ -527,7 +527,7 @@
             <div class="fl-paso-n" aria-hidden="true">2</div>
             <div class="fl-paso-cont">
               <h6>¿Cuándo lo necesitas?</h6>
-              <p class="fl-ayuda">Elige el día y escribe la hora de inicio y la de término (la que necesites, mientras el término sea después del inicio), o toca los bloques. Las llaves se entregan de 08:00 a 13:00 y de 14:00 a 17:00. Se pide con al menos 24 horas de anticipación (la gestión puede reservar antes).</p>
+              <p class="fl-ayuda">Elige el día y toca el bloque donde partes y el bloque donde terminas (cada bloque dura 30 minutos: para terminar a las 15:00, toca el de 14:30). Para una hora exacta, abre «Ajustar el día y la hora a mano». Las llaves se entregan de 08:00 a 13:00 y de 14:00 a 17:00. Se pide con al menos 24 horas de anticipación (la gestión puede reservar antes).</p>
               <label class="fl-pk-switch" for="flSolOtroDia">
                 <input type="checkbox" id="flSolOtroDia">
                 <span class="fl-pk-sw-i" aria-hidden="true"></span>
@@ -547,32 +547,33 @@
                   <div class="fl-pk-nota" id="flPkNota" aria-live="polite"></div>
                 </div>
                 <div class="fl-pk-der">
-                  {# Hora de inicio y de término ESCRITAS: cualquiera (Daniel, 05-nov-2026: «de 12:30 a 15:00 y no me deja»). Son los mismos
-                     campos de siempre (hora_desde / hora_hasta); los bloques de abajo solo ayudan a llenarlos y los muestran. #}
-                  <div class="fl-pk-horas" id="flPkHoras">
-                    <div class="fl-pk-horas-t"><i class="bi bi-clock"></i>Hora de inicio y de término</div>
-                    <div class="fl-pk-horas-g">
-                      <div class="fl-campo" data-campo="hora_desde">
-                        <label for="flSolDesde">Desde <span class="fl-req">*</span></label>
-                        <input type="time" id="flSolDesde" name="hora_desde" step="60">
-                        <div class="fl-msg" aria-live="polite"></div>
-                      </div>
-                      <div class="fl-campo" data-campo="hora_hasta">
-                        <label for="flSolHasta">Hasta <span class="fl-req">*</span></label>
-                        <input type="time" id="flSolHasta" name="hora_hasta" step="60">
-                        <div class="fl-msg" aria-live="polite"></div>
-                      </div>
-                    </div>
-                    <p class="fl-pk-horas-a">Escribe la hora que quieras, por ejemplo de 12:30 a 15:00. También puedes tocar los bloques de abajo.</p>
-                  </div>
                   <div id="flPkBloques"></div>
                   <div class="fl-pk-sel" id="flPkSel" aria-live="polite"></div>
                 </div>
               </div>
               {# Día / Desde / Hasta: son los MISMOS datos que se eligen en el calendario (Daniel, 03-nov: «¿la fecha de abajo qué
-                 hace?»). El día queda plegado para ajustarlo a mano; Desde / Hasta (05-nov) van a la vista, arriba de los bloques, con cualquier hora. #}
+                 hace?»). Quedan plegados para ajustar a mano; Desde / Hasta (05-nov) aceptan CUALQUIER hora, sin paso de 15 minutos. Los
+                 bloques de media hora (como Retiros) son lo único visible (Daniel, 05-nov: «dejemos solo como el de retiros»). #}
               <details class="fl-pk-manual" id="flPkManual">
-                <summary><i class="bi bi-sliders"></i>Ajustar el día a mano</summary>
+                <summary><i class="bi bi-sliders"></i>Ajustar el día y la hora a mano (por ejemplo, 12:10 o fuera del horario de llaves)</summary>
+              {# Hora de inicio y de término ESCRITAS: cualquiera (Daniel, 05-nov-2026: «de 12:30 a 15:00 y no me deja»). Son los mismos
+                 campos de siempre (hora_desde / hora_hasta); los bloques de media hora solo ayudan a llenarlos y los muestran. #}
+              <div class="fl-pk-horas" id="flPkHoras">
+                <div class="fl-pk-horas-t"><i class="bi bi-clock"></i>Hora de inicio y de término</div>
+                <div class="fl-pk-horas-g">
+                  <div class="fl-campo" data-campo="hora_desde">
+                    <label for="flSolDesde">Desde <span class="fl-req">*</span></label>
+                    <input type="time" id="flSolDesde" name="hora_desde" step="60">
+                    <div class="fl-msg" aria-live="polite"></div>
+                  </div>
+                  <div class="fl-campo" data-campo="hora_hasta">
+                    <label for="flSolHasta">Hasta <span class="fl-req">*</span></label>
+                    <input type="time" id="flSolHasta" name="hora_hasta" step="60">
+                    <div class="fl-msg" aria-live="polite"></div>
+                  </div>
+                </div>
+                <p class="fl-pk-horas-a">Escribe la hora que quieras, por ejemplo de 12:30 a 15:00 o de 12:10 a 15:07. El término tiene que ser después del inicio.</p>
+              </div>
               <div class="fl-grid fl-grid--3 fl-pk-campos">
                 <div class="fl-campo" data-campo="fecha">
                   <label for="flSolFecha">Día <span class="fl-req">*</span></label>

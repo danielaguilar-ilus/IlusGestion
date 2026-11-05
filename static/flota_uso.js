@@ -1787,12 +1787,18 @@
       S.guardandoSol = false; $('flSolGuardar').disabled = false;
       if (!d.ok) {
         if (d.errores) marcarErroresSol(d.errores);
+        if (!editando && d.status === 0) {          // se cortó la conexión: puede que el servidor sí la haya guardado
+          toast('Se cortó la conexión y no sé si tu solicitud se guardó. Revisa la lista de solicitudes antes de volver a pedirla.', 'warning');
+          recargarSol();
+          return;
+        }
         toast(d.error || 'No se pudo guardar la solicitud.', 'error');
         if (d.error_codigo === 'CHOQUE_VEHICULO' || d.error_codigo === 'CHOQUE_CHOFER') refrescarOcup().then(evaluarSol);
         return;
       }
       cerrarModal('flModalSol');
-      toast(editando ? 'Reserva actualizada.' : 'Solicitud ' + d.solicitud.numero + ' enviada. Quedó sellada a tu nombre.', 'success');
+      toast(editando ? 'Reserva actualizada.' : (d.repetida ? 'Tu solicitud ' + d.solicitud.numero + ' ya estaba guardada: quedó sellada a tu nombre.'
+        : 'Solicitud ' + d.solicitud.numero + ' enviada. Quedó sellada a tu nombre.'), 'success');
       (d.avisos || []).slice(0, 3).forEach(function (a) { toast(a, 'warning'); });
       recargarSol();
     });

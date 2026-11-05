@@ -1376,6 +1376,30 @@ def register_flota_routes(app, ctx):
     def _sol_fila(sid):
         return mysql_fetchone(_SQL_SOL + " WHERE s.id=%s", (sid,))
 
+    def _sol_fila_fresca(sid):
+        """Relee una reserva RECIÉN guardada por `_reservar`, que escribe por OTRA conexión (get_mysql). `mysql_fetchone` usa la conexión del
+        pool de la petición, que puede traer abierto desde antes un snapshot REPEATABLE READ y NO ver la fila nueva: devolvía None aunque
+        estaba guardada (caso real del 05-nov: a Víctor le dijo que no se reservó y sí se reservó, y la gestión no recibió el correo).
+        Una conexión nueva siempre ve lo comiteado. Si no se puede abrir, cae a la lectura de siempre."""
+        conn = None
+        try:
+            if get_mysql is not None:
+                conn = get_mysql()
+                cur = conn.cursor()
+                cur.execute(_SQL_SOL + " WHERE s.id=%s", (sid,))
+                fila = cur.fetchone()
+                if fila:
+                    return fila
+        except Exception as e:
+            print(f"[flota] relectura fresca de la reserva: {type(e).__name__}", flush=True)
+        finally:
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+        return _sol_fila(sid)
+
     def _slog(sid, accion, detalle=None, cur=None):
         """Bitácora de la solicitud: solo se agrega. Con `cur` va dentro de la misma transacción que la reserva."""
         sql = "INSERT INTO flota_solicitud_log (solicitud_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s)"
@@ -1482,6 +1506,18 @@ def register_flota_routes(app, ctx):
             cur.execute(_SQL_OCUPA + " WHERE s.vehiculo_id=%s AND s.estado IN " + estados_sql + " AND s.inicio < %s AND s.fin > %s",
                         (datos["vehiculo_id"], fin, inicio))
             choque_v = fr.conflictos(inicio, fin, [dict(x) for x in (cur.fetchall() or [])], excluir_id=sid)
+            if choque_v and sid is None and not ot:
+                # Reintento de la MISMA solicitud (05-nov-2026): si la primera vez se guardó pero la persona no vio la confirmación (se cortó la
+                # conexión, falló la respuesta) y vuelve a tocar «Solicitar», lo que choca es su propia reserva idéntica. No es un choque: es la
+                # misma solicitud. Se devuelve esa, sin crear otra ni mostrarle un error de algo que sí quedó guardado.
+                quien0 = solicitante[0] if solicitante else _uid()
+                for c_ig in choque_v:
+                    cur.execute("SELECT id FROM flota_solicitudes WHERE id=%s AND solicitante_id=%s AND vehiculo_id=%s AND chofer_id=%s "
+                                "AND area=%s AND motivo=%s AND inicio=%s AND fin=%s AND estado IN ('solicitada','confirmada')",
+                                (c_ig["id"], quien0, datos["vehiculo_id"], datos["chofer_id"], datos["area"], datos["motivo"], inicio, fin))
+                    if cur.fetchone():
+                        conn.rollback()
+                        return {"ok": True, "id": int(c_ig["id"]), "avisos": [], "repetida": True}, 200
             if choque_v:
                 conn.rollback()
                 c0 = choque_v[0]
@@ -1554,13 +1590,23 @@ def register_flota_routes(app, ctx):
             except Exception:
                 pass
 
-    def _respuesta_reserva(cuerpo, http):
+    def _respuesta_reserva(cuerpo, http, fila=None):
         if not cuerpo.get("ok"):
             return jsonify(cuerpo), http
-        fila = _sol_fila(cuerpo["id"])
+        extra = {"repetida": True} if cuerpo.get("repetida") else {}
+        fila = fila or _sol_fila_fresca(cuerpo["id"])        # `fila`: la que el llamador ya releyó (una sola lectura por reserva)
         if not fila:
-            return _error("La solicitud se guardó pero no se pudo leer de vuelta. Recarga la pantalla.", 500)
-        return jsonify({"ok": True, "solicitud": _sol_json(dict(fila)), "avisos": cuerpo.get("avisos") or []})
+            # Ya se guardó (el commit pasó): jamás decirle a la persona que falló. Respuesta mínima con su número; la pantalla recarga la lista.
+            numero = fr.numero_solicitud(cuerpo["id"], _ahora_chile().year)
+            return jsonify({"ok": True, "solicitud": {"id": cuerpo["id"], "numero": numero, "estado": "solicitada"},
+                            "avisos": cuerpo.get("avisos") or [], **extra})
+        try:
+            solicitud = _sol_json(dict(fila))
+        except Exception as e:
+            print(f"[flota] armar la respuesta de la reserva {cuerpo['id']}: {type(e).__name__}: {e}", flush=True)
+            solicitud = {"id": cuerpo["id"], "numero": fila.get("numero") or fr.numero_solicitud(cuerpo["id"], _ahora_chile().year),
+                         "estado": fila.get("estado")}
+        return jsonify({"ok": True, "solicitud": solicitud, "avisos": cuerpo.get("avisos") or [], **extra})
 
     # ── Reserva desde «Nueva OT» (Daniel, 04-nov-2026) ──────────────────────────
     # «Cuando se seleccionen los técnicos internos al crear una OT nueva, que pueda dejar agendada la solicitud del camión y/o el furgón».
@@ -1675,7 +1721,7 @@ def register_flota_routes(app, ctx):
         avisos = list(cuerpo.get("avisos") or [])
         if datos["inicio"] < _ahora_chile() + timedelta(hours=fr.MIN_ANTELACION_H):
             avisos.append(f"Faltan menos de {fr.MIN_ANTELACION_H} horas para esta reserva: avísale a la gestión de flota para que la confirme a tiempo.")
-        fila = _sol_fila(cuerpo["id"])
+        fila = _sol_fila_fresca(cuerpo["id"])
         info = _ot_fila_json(dict(fila)) if fila else {"id": cuerpo["id"]}
         return {"ok": True, "solicitud": info, "avisos": avisos}
 
@@ -1911,14 +1957,15 @@ def register_flota_routes(app, ctx):
         cuerpo, http = _reservar(datos)
         if cuerpo.get("ok") and puede_antes and datos["inicio"] < _ahora_chile() + timedelta(hours=fr.MIN_ANTELACION_H):
             cuerpo.setdefault("avisos", []).append(f"Faltan menos de {fr.MIN_ANTELACION_H} horas para esta reserva: quien pide debe hacerlo con ese aviso, pero la gestión puede reservar antes.")
-        if cuerpo.get("ok") and not desde_ot:
-            r = _sol_fila(cuerpo["id"])
+        fila_nueva = None
+        if cuerpo.get("ok") and not desde_ot and not cuerpo.get("repetida"):
+            fila_nueva = r = _sol_fila_fresca(cuerpo["id"])        # recién guardada por otra conexión: la del pool puede no verla (ver _sol_fila_fresca)
             if r:
                 r = dict(r)
                 _correo_flota("flota_solicitud_nueva", [u for u in _gestores_flota() if u != _uid()],
                               f"Nueva solicitud {r.get('numero') or ''}: {fr.patente_con_guion(r.get('v_patente'))}",
                               _cuerpo_correo(r, "Pidieron un vehículo de la flota. Revísala y confírmala en Solicitudes de vehículo."), sid=r.get("id"))
-        return _respuesta_reserva(cuerpo, http)
+        return _respuesta_reserva(cuerpo, http, fila=fila_nueva)
 
     @app.route("/flota/api/solicitudes/<int:sid>", methods=["GET"])
     @_flota_required

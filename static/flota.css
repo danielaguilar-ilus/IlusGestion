@@ -745,6 +745,7 @@
 .fl-pk-horas-g .fl-campo{margin:0}
 .fl-pk-horas-g input[type=time]{width:100%;min-height:44px}
 .fl-pk-horas-a{margin:8px 0 0;font-size:.78rem;color:#6b7280;line-height:1.4}
+.fl-pk-manual .fl-pk-horas{margin:0 0 12px}
 
 /* Tarjetas de chofer y de área */
 .fl-lbl{display:block;font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:#4b5563;margin:0 0 6px}
