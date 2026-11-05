@@ -2369,7 +2369,11 @@
 
     /* Formulario de solicitud */
     var fs = $('flFormSol');
-    fs.addEventListener('input', function (e) { if (e.target.name) S.solTocados[e.target.name] = true; evaluarSolLuego(); });
+    fs.addEventListener('input', function (e) {
+      if (e.target.name) S.solTocados[e.target.name] = true;
+      if (e.target.name === 'hora_desde' || e.target.name === 'hora_hasta') S.pk.ancla = null;      // escribió la hora: ya no espera el segundo toque del bloque
+      evaluarSolLuego();
+    });
     fs.addEventListener('change', function (e) {
       if (e.target.name) S.solTocados[e.target.name] = true;
       if (e.target.name === 'fecha' && e.target.value && e.target.value.slice(0, 7) !== S.pk.mes) pkCargar(e.target.value.slice(0, 7));

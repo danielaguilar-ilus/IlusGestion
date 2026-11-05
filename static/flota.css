@@ -737,6 +737,14 @@
 .fl-pk-sel-est{font-weight:800;white-space:nowrap;display:inline-flex;gap:5px;align-items:center}
 .fl-pk-sel.ok .fl-pk-sel-est{color:#86efac}.fl-pk-sel.bad .fl-pk-sel-est{color:#fde68a;white-space:normal}
 .fl-pk-campos{margin-top:4px}
+/* Hora de inicio y de término escritas a mano: cualquiera (Daniel, 05-nov-2026) */
+.fl-pk-horas{margin:0 0 12px;padding:10px 12px 12px;border:1.5px solid #e5e7eb;border-radius:14px;background:#fff}
+.fl-pk-horas-t{display:flex;align-items:center;gap:8px;font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:#374151;margin:0 0 8px}
+.fl-pk-horas-t i{color:#dc2626}
+.fl-pk-horas-g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.fl-pk-horas-g .fl-campo{margin:0}
+.fl-pk-horas-g input[type=time]{width:100%;min-height:44px}
+.fl-pk-horas-a{margin:8px 0 0;font-size:.78rem;color:#6b7280;line-height:1.4}
 
 /* Tarjetas de chofer y de área */
 .fl-lbl{display:block;font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:#4b5563;margin:0 0 6px}
