@@ -2418,16 +2418,36 @@
     var esperado = c.nombre_completo || c.nombre;
     window.ilusPrompt({
       title: 'Borrar definitivo a ' + c.nombre,
-      message: 'Se borra para siempre y no se puede deshacer. Solo se puede si nunca tuvo reservas; si no, archívalo. Para confirmar escribe su nombre completo.',
+      message: 'Se borra para siempre y no se puede deshacer. Si ya tuvo reservas, lo normal es archivarlo. Para confirmar escribe su nombre completo.',
       placeholder: esperado, okLabel: 'Borrar definitivo', type: 'danger', required: true
     }).then(function (txt) {
       if (txt == null) return;
-      api(API + '/choferes/' + c.id, { method: 'DELETE', body: { confirmacion: txt } }).then(function (d) {
-        if (!d.ok) { toast(d.error || 'No se pudo borrar.', 'error'); return; }
-        toast(c.nombre + ' se borró definitivamente.', 'success');
+      borrarCh(c, txt, false);
+    });
+  }
+  /* Borrar un chofer que YA tiene reservas (Daniel, 05-nov-2026: «necesito eliminar choferes así tengan agendas»): solo el superadministrador.
+     El servidor responde TIENE_HISTORIAL con `puede_forzar`; aquí se le dice con números qué pasará y, si acepta, se repite el borrado con
+     `forzar`. El servidor lo vuelve a exigir: este paso solo ordena la conversación. Con una llave afuera no hay segunda pregunta: el servidor lo explica. */
+  function borrarCh(c, txt, forzar) {
+    return api(API + '/choferes/' + c.id, { method: 'DELETE', body: { confirmacion: txt, forzar: !!forzar } }).then(function (d) {
+      if (d.ok) {
+        var n = d.reservas_canceladas || 0;
+        toast(c.nombre + ' se borró definitivamente.' + (n ? ' Se cancelaron ' + n + ' reserva' + (n === 1 ? '' : 's') + ' que no habían empezado.' : ''), 'success');
         cerrarModal('flModalChofer');
         cargarChof();
-      });
+        return;
+      }
+      if (d.error_codigo === 'TIENE_HISTORIAL' && d.puede_forzar && !forzar) {
+        var tot = d.reservas || 0, ab = d.abiertas || 0;
+        return window.ilusConfirm({
+          title: 'Borrar igual a ' + c.nombre,
+          message: 'Tiene ' + tot + ' reserva' + (tot === 1 ? '' : 's') + (ab ? ' (' + ab + ' sin empezar)' : '') + '.',
+          sub: (ab ? 'Se cancelan las ' + ab + ' que no han empezado y se avisa a quien las pidió. ' : '') +
+            'Las que ya pasaron se conservan, pero quedan sin el nombre de este chofer. Queda anotado que lo borraste tú y qué reservas tenía.',
+          okLabel: 'Borrar igual', cancelLabel: 'No borrar', danger: true
+        }).then(function (ok) { if (ok) return borrarCh(c, txt, true); });
+      }
+      toast(d.error || 'No se pudo borrar.', 'error');
     });
   }
   function historialCh(c) {
