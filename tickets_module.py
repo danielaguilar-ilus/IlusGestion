@@ -48,6 +48,7 @@ import tickets_nuevo_motivos as _tkmotivos
 import tickets_guia as _tkguia
 import tickets_firma_correo as _tkfirma
 import cot_composicion as _cotcomp
+import cot_sin_saldo as _cotsinsaldo
 from retiros_monitor import hace as rm_hace
 
 # Validacion server-side del "correo que da la cara" (Reply-To de tickets).
@@ -3468,6 +3469,15 @@ def register_tickets_routes(app, ctx):
         except Exception:
             pass
 
+    def _tk_cotiz_log_sin_saldo(cid, items, user=None):
+        """2026-11-06 (Daniel): los productos de documentos SIN SALDO que se desbloquearon con un comentario quedan en la actividad de la
+        cotización (acción «sin_saldo»: quién, cuándo y por qué). Nunca lanza: una falla del registro no tumba el guardado."""
+        try:
+            for ev in _cotsinsaldo.eventos_sin_saldo(items):
+                _tk_cotiz_log(cid, "sin_saldo", ev, user)
+        except Exception as _e:
+            print(f"[_tk_cotiz_log_sin_saldo] cid={cid}: {_e}", flush=True)
+
     def _tk_cotiz_recalcular(cid, user=None):
         """Recalcula ítems + totales de una cotización según la
         clasificación actual de cada ítem. Persiste en tk_cotizacion_items
@@ -5457,7 +5467,7 @@ def register_tickets_routes(app, ctx):
                         maquina_id_it = int(_mid) if _mid not in (None, "") else None
                     except (TypeError, ValueError):
                         maquina_id_it = None
-                    aplica_mantencion_it = (1 if it.get("aplica_mantencion") else 0) if maquina_id_it else None
+                    aplica_mantencion_it = 1 if it.get("aplica_mantencion") else (0 if maquina_id_it else None)   # 2026-11-06: marcado en el plan también sin equipo en la ficha
                     cur.execute(
                         "INSERT INTO tk_cotizacion_items "
                         "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, "
@@ -5500,6 +5510,7 @@ def register_tickets_routes(app, ctx):
                           {"numero": numero, "items": len(items), "origen": origen_in}, user)
         except Exception:
             pass
+        _tk_cotiz_log_sin_saldo(cot_id, items, user)
         # 🔒 Auditoría del descuento por garantía (quién/cuándo/monto) --
         # Daniel: "en las cotizaciones solo yo puedo aplicar descuentos de
         # garantías". Solo se registra cuando el superadmin de verdad lo
@@ -6540,7 +6551,7 @@ def register_tickets_routes(app, ctx):
                         maquina_id_it = int(_mid) if _mid not in (None, "") else None
                     except (TypeError, ValueError):
                         maquina_id_it = None
-                    aplica_mantencion_it = (1 if it.get("aplica_mantencion") else 0) if maquina_id_it else None
+                    aplica_mantencion_it = 1 if it.get("aplica_mantencion") else (0 if maquina_id_it else None)   # 2026-11-06: marcado en el plan también sin equipo en la ficha
                     cur.execute(
                         "INSERT INTO tk_cotizacion_items "
                         "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, precio_unitario, "
@@ -6581,6 +6592,7 @@ def register_tickets_routes(app, ctx):
         _diff = {k: [_antes.get(k), _despues.get(k)] for k in _despues if _antes.get(k) != _despues.get(k)}
         _tk_cotiz_log(cid, "editar_aprobada" if _estaba_aprobada else "editar",
                       {"cambios": _diff}, user)
+        _tk_cotiz_log_sin_saldo(cid, items, user)   # 2026-11-06: comentario de los documentos sin saldo desbloqueados
         # 🔒 Auditoría del descuento por garantía (quién/cuándo/monto) --
         # Daniel: "en las cotizaciones solo yo puedo aplicar descuentos de
         # garantías". Solo registra si el superadmin introdujo AHORA un

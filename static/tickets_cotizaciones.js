@@ -892,12 +892,16 @@ async function _cotWizAsignarDesdeDocumento(items, header){
     return { sku: it.sku || '', nombre: it.nombre || '', qty: (it.qty == null ? 1 : it.qty),
              // Multidocumento (2026-07-22): cada ítem conserva su documento
              // ERP de origen (tido+nudo) para la columna "Documento".
-             tido: it.tido || null, nudo: it.nudo || null, koen: it.koen, clase_producto: null };
+             tido: it.tido || null, nudo: it.nudo || null, koen: it.koen, clase_producto: null,
+             // 2026-11-06: una línea de un documento SIN SALDO que se desbloqueó en el buscador viaja con su comentario: queda en el
+             // historial de la cotización (quién, cuándo y por qué).
+             marcada_sin_saldo: !!it.marcada_sin_saldo, motivo_sin_saldo: it.motivo_sin_saldo || '' };
   });
   _WIZ.items = _WIZ.items.concat(nuevos);
   await cotWizClasificar();
   await cotWizRender();
   await cotWizPrecios();
+  await _cotWizReconocerPlan();      // 2026-11-06: el plan de la ficha del cliente se reconoce también en lo que vino de un documento
 }
 
 // ── Sección 1: "Desde otra fuente" -- abre DIRECTO el modal compartido
@@ -1409,11 +1413,16 @@ async function cotWizRender(){
       // eqTogPlan en templates/ot2/_modal_crear.html. Filas sin equipo real
       // (documento ERP, bodega, manual) muestran un guion, nunca un ícono
       // deshabilitado que parezca roto.
-      '<td class="cot-rev-plan-cell" data-label="Plan">' + (it.maquina_id != null
-        ? '<button type="button" class="cot-rev-plan-btn' + (it.aplica_mantencion ? ' on' : '') + '" ' +
-          'title="' + (it.aplica_mantencion ? 'Quitar del plan de mantención de este cliente' : 'Agregar al plan de mantención de este cliente') + '" ' +
-          'onclick="cotWizTogPlan(' + i + ')"><i class="bi ' + (it.aplica_mantencion ? 'bi-shield-check' : 'bi-shield-slash') + '"></i></button>'
-        : '<span class="text-muted">—</span>') + '</td>' +
+      // 2026-11-06 (Daniel: «es una mantención y debería estar dentro del plan… el botón debería estar igual»): el escudo sale SIEMPRE, también
+      // en una instalación y también en un producto que vino de un documento. Si el equipo está en la ficha del cliente (se reconoce por SKU,
+      // ver _cotWizReconocerPlan) el cambio queda en su ficha; si no, queda marcado solo en esta cotización.
+      '<td class="cot-rev-plan-cell" data-label="Plan">' +
+        '<button type="button" class="cot-rev-plan-btn' + (it.aplica_mantencion ? ' on' : '') + '" ' +
+          'title="' + (it.maquina_id != null
+            ? (it.aplica_mantencion ? 'Quitar del plan de mantención de este cliente' : 'Agregar al plan de mantención de este cliente')
+            : (it.aplica_mantencion ? 'Quitar del plan (solo en esta cotización: el equipo no está en la ficha del cliente)'
+                                    : 'Marcar en el plan (solo en esta cotización: el equipo no está en la ficha del cliente)')) + '" ' +
+          'onclick="cotWizTogPlan(' + i + ')"><i class="bi ' + (it.aplica_mantencion ? 'bi-shield-check' : 'bi-shield-slash') + '"></i></button></td>' +
       // 2026-08-28 (Daniel, causa raíz de OT-2026-00125: "que no se
       // eliminen productos, a menos que sea el superadministrador"): sin
       // el botón, un ítem "Sin clasificar" ya no tiene escapatoria -- el
@@ -1435,11 +1444,56 @@ async function cotWizRender(){
   // muestra si hay al menos un ítem con equipo real (maquina_id); nunca
   // toca las filas sin equipo detrás.
   const btnTodos = document.getElementById('btnCotWizTogPlanTodos');
-  const _hayEquipos = _WIZ.items.some(function(it){ return it.maquina_id != null; });
+  const _hayEquipos = _WIZ.items.length > 0;          // 2026-11-06: el plan se puede marcar en cualquier producto
   if (btnTodos) btnTodos.style.display = _hayEquipos ? '' : 'none';
   // 2026-10-15: el mismo toggle, visible en celular (el encabezado de la tabla se oculta).
   const btnTodosM = document.getElementById('btnCotWizTogPlanTodosM');
   if (btnTodosM) btnTodosM.hidden = !_hayEquipos;
+}
+// 2026-11-06 (Daniel: «es una mantención, debería estar dentro del plan… sí lo tiene pero no reconoce el plan»): un producto que llegó de un
+// DOCUMENTO no traía su equipo de la ficha, así que el plan nunca se reconocía. Se enlaza por SKU con los equipos de la ficha del cliente:
+// cada producto toma UN equipo distinto con el mismo SKU (si hay 3 trotadoras iguales en la ficha, las 3 filas toman 3 equipos distintos).
+function _cotWizEnlazarPlanItem(it){
+  if (!_WIZ || !it || it.maquina_id != null || !it.sku) return false;
+  const usados = {};
+  (_WIZ.items || []).forEach(function(x){ if (x.maquina_id != null) usados[x.maquina_id] = true; });
+  const sku = String(it.sku).trim().toUpperCase();
+  const m = (_WIZ.fichaMaquinas || []).find(function(x){
+    return x.id != null && !usados[x.id] && String(x.sku || '').trim().toUpperCase() === sku;
+  });
+  if (!m) return false;
+  it.maquina_id = m.id;
+  it.aplica_mantencion = !!m.en_plan;
+  return true;
+}
+function _cotWizRutLimpio(v){ return String(v || '').replace(/[^0-9kK]/g, '').toUpperCase(); }
+async function _cotWizReconocerPlan(){
+  if (!_WIZ) return;
+  try{
+    // 1) ¿qué cliente de Mantenciones es? Si el wizard aún no lo sabe, se busca por el RUT del documento (solo si coincide exacto).
+    if (!_WIZ.clienteId){
+      const rut = (document.getElementById('cotWizRut') || {}).value || '';
+      if (_cotWizRutLimpio(rut).length >= 7){
+        const r = await fetch('/tickets/api/erp/buscar-cliente?q=' + encodeURIComponent(rut));
+        const d = await r.json();
+        const c = ((d && d.resultados) || []).find(function(x){ return x.cliente_id && _cotWizRutLimpio(x.rut) === _cotWizRutLimpio(rut); });
+        if (c) _WIZ.clienteId = c.cliente_id;
+      }
+    }
+    // 2) sus equipos (solo se piden los equipos: no se toca el banner ni los contactos del Paso 1)
+    if (_WIZ.clienteId && !(_WIZ.fichaMaquinas || []).length){
+      const r2 = await fetch('/tickets/api/clientes-ficha/' + _WIZ.clienteId + '/resumen');
+      const d2 = await r2.json();
+      if (d2 && d2.ok) _WIZ.fichaMaquinas = d2.maquinas || [];
+    }
+    // 3) cada producto sin equipo toma el de la ficha con su mismo SKU
+    let n = 0;
+    (_WIZ.items || []).forEach(function(it){ if (_cotWizEnlazarPlanItem(it)) n++; });
+    if (n){
+      await cotWizRender();
+      ilusToast('✓ ' + n + ' producto(s) reconocido(s) en la ficha del cliente: el plan ya viene marcado como está en su ficha', {type:'info'});
+    }
+  }catch(e){ /* silencioso: el plan se puede marcar a mano con el escudo */ }
 }
 // PLAN (2026-09-01): toggle individual -- mismo endpoint/patrón que
 // eqTogPlan (templates/ot2/_modal_crear.html): edita aplica_mantencion en
@@ -1448,10 +1502,20 @@ async function cotWizRender(){
 function cotWizTogPlan(i){
   if (!_WIZ || !_WIZ.items[i]) return;
   const it = _WIZ.items[i];
-  if (it.maquina_id == null) return;
+  if (it.maquina_id == null && _cotWizEnlazarPlanItem(it)){      // ¿el equipo está en la ficha del cliente? (por SKU)
+    cotWizRender();
+    ilusToast('Reconocido en la ficha del cliente: el plan viene como está en su ficha. Vuelve a pulsar para cambiarlo.', {type:'info'});
+    return;
+  }
   const antes = !!it.aplica_mantencion;
   const nuevo = !antes;
   it.aplica_mantencion = nuevo;
+  if (it.maquina_id == null){
+    // Sin equipo en la ficha: solo se marca en esta cotización (no se inventa un equipo en la ficha del cliente).
+    cotWizRender();
+    ilusToast(nuevo ? '✓ Marcado en el plan (solo en esta cotización)' : 'Quitado del plan (solo en esta cotización)', {type:'info'});
+    return;
+  }
   cotWizRender();
   fetch('/mantenciones/api/maquinas/' + it.maquina_id + '/aplica-mantencion', {
     method: 'PUT', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
@@ -1476,7 +1540,7 @@ function cotWizTogPlan(i){
 function cotWizTogPlanTodos(){
   if (!_WIZ) return;
   const candidatos = [];
-  _WIZ.items.forEach(function(it, i){ if (it.maquina_id != null) candidatos.push(i); });
+  _WIZ.items.forEach(function(it, i){ candidatos.push(i); });     // 2026-11-06: todos los productos (con o sin equipo en la ficha)
   if (!candidatos.length) return;
   const faltaAlguno = candidatos.some(function(i){ return !_WIZ.items[i].aplica_mantencion; });
   candidatos.forEach(function(i){
@@ -1959,7 +2023,8 @@ function _cotWizInternoPintar(desc){
                                        // PLAN (2026-09-01): solo tiene sentido si el
                                        // ítem viene de un equipo real de la ficha.
                                        maquina_id: (it.maquina_id != null ? it.maquina_id : null),
-                                       aplica_mantencion: !!it.aplica_mantencion })),
+                                       aplica_mantencion: !!it.aplica_mantencion,
+                                       marcada_sin_saldo: !!it.marcada_sin_saldo, motivo_sin_saldo: it.motivo_sin_saldo || '' })),
         header: {
           cliente: empresa,
           rut: document.getElementById('cotWizRut').value.trim(),
@@ -2632,7 +2697,9 @@ const _COT_HIST_ICONOS = {
   enviar_correo:'bi-envelope', generar_ticket:'bi-ticket-perforated',
   generar_ot:'bi-clipboard-check', eliminar:'bi-trash',
   // 2026-09-05: vínculo con un ticket que ya existía (y su reverso).
-  asociar_ticket:'bi-link-45deg', desasociar_ticket:'bi-x-circle'
+  asociar_ticket:'bi-link-45deg', desasociar_ticket:'bi-x-circle',
+  // 2026-11-06: productos de documentos sin saldo que se desbloquearon con un comentario.
+  sin_saldo:'bi-unlock-fill'
 };
 const _COT_HIST_LABEL = {
   crear:'Creada', editar:'Editada', editar_aprobada:'Editada (estaba aprobada)',
@@ -2640,7 +2707,8 @@ const _COT_HIST_LABEL = {
   aprobar:'Aprobada', rechazar:'Rechazada', reabrir:'Reabierta',
   enviar_correo:'Enviada por correo', generar_ticket:'Ticket generado',
   generar_ot:'OT generada', eliminar:'Eliminada',
-  asociar_ticket:'Asociada a un ticket', desasociar_ticket:'Desasociada del ticket'
+  asociar_ticket:'Asociada a un ticket', desasociar_ticket:'Desasociada del ticket',
+  sin_saldo:'Documentos sin saldo desbloqueados'
 };
 async function cotVerHistorial(cid, numero){
   document.getElementById('cotHistNum').textContent = numero || '';
@@ -2673,6 +2741,11 @@ function _cotHistDetalle(accion, o){
   // secas no permite reconstruir la historia meses después.
   if (accion === 'asociar_ticket' && o.numero_ticket) return '→ ' + _cotEsc(o.numero_ticket);
   if (accion === 'desasociar_ticket' && o.numero_ticket) return '← ' + _cotEsc(o.numero_ticket);
+  // El comentario va COMPLETO (REGLA #15): es la razón por la que se incluyó algo que el ERP ya rebajó.
+  if (accion === 'sin_saldo' && o.comentario){
+    const docs = (o.documentos || []).map(_cotEsc).join(', ');
+    return '— «' + _cotEsc(o.comentario) + '»' + (o.total ? ' · ' + o.total + ' producto' + (o.total === 1 ? '' : 's') : '') + (docs ? ' de ' + docs : '');
+  }
   return '';
 }
 

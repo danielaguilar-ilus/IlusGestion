@@ -203,6 +203,8 @@
   .tka-doc-pick input{width:20px;height:20px;cursor:pointer;accent-color:#dc2626}
   .tka-doc-pick input:disabled{cursor:default}
   .tka-doc-card.is-picked{background:#fef2f2;border-color:#fecaca}
+  .tka-doc-card.is-unlocked{border-color:#f59e0b}
+  .badge-pill.badge-unlocked{background:#fff8e1;color:#92400e;border:1px solid #fde68a}
   .tka-doc-card.is-no-saldo{border-color:#fdba74;background:linear-gradient(180deg,#fff8e1 0%, #fff 80%)}
   .tka-doc-head{
     padding:14px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:12px;
@@ -2156,6 +2158,8 @@ function tkaRenderCliDocs(docs, modo, fetchMs){
       </button>
     </div>`;
   }
+  html += _tkaCliBarraOrden(docs);
+  html += _tkaCliBarraSinSaldo(docs);
   html += '<div class="tka-results">';
   docs.forEach((doc, i) => {
     const clsArr = [];
@@ -2183,8 +2187,8 @@ function tkaRenderCliDocs(docs, modo, fetchMs){
           : (doc.tiene_saldo
               ? `<label class="tka-doc-pick" title="Agregar todo este documento" onclick="event.stopPropagation()">
                    <input type="checkbox" id="tkaDocPick-${i}" onchange="tkaTogDocEntero(${i}, this)"></label>`
-              : `<label class="tka-doc-pick" title="Sin saldo: se eligen sus líneas una por una" onclick="event.stopPropagation()">
-                   <input type="checkbox" disabled></label>`)}
+              : `<label class="tka-doc-pick" title="Sin saldo: márcalo para desbloquearlo con un comentario (o elige sus líneas una por una)" onclick="event.stopPropagation()">
+                   <input type="checkbox" id="tkaDocPickSS-${i}" class="tka-ss-pick" onchange="tkaSSPick(${i}, this)"></label>`)}
         <div class="tka-doc-num">
           <span class="badge-tipo">${_tkaEsc(doc.tido_display)}</span>${_tkaEsc(doc.nudo_display)}
         </div>
@@ -2318,7 +2322,9 @@ async function tkaToggleDocCli(idx){
       const isZero = saldo <= 0;
       const lineKey = `CLI|${idx}|${sku}|${j}`;
       const initialMax = isZero ? qty : saldo;
-      const initialQty = isZero ? 0 : saldo;
+      // 2026-11-06: una línea sin saldo que ya se «desbloqueó» (tkaDesbloquearSinSaldo) llega marcada y con su cantidad.
+      const _selZ = isZero ? _TKA.selCli.get(lineKey) : null;
+      const initialQty = _selZ ? (_selZ.qty || 0) : (isZero ? 0 : saldo);
       // Ver comentario equivalente en la pestaña "por documento" (mismo
       // criterio, mismo motivo: Daniel, "así funcionaba la parte de Retiros").
       // 2026-08-17-b: mismo criterio que la pestaña "Por documento" (arriba)
@@ -2329,7 +2335,7 @@ async function tkaToggleDocCli(idx){
       const sinStockBod = stockEstado === 'sin';
       const rowStockClass = stockEstado === 'sin' ? 'is-no-stock'
                            : stockEstado === 'comprometido' ? 'is-stock-comprometido' : '';
-      const preChecked = !isZero && !sinStockBod;
+      const preChecked = !!_selZ || (!isZero && !sinStockBod);
       html += `<div class="tka-line ${isZero?'is-zero':''} ${rowStockClass} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}">
         <label class="tka-chk ${preChecked?'is-checked':''}">
           <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_tkaEsc(lineKey)}" data-doc-tido="${_tkaEsc(doc.tido_display)}" data-doc-nudo="${_tkaEsc(doc.nudo_display)}" data-sku="${_tkaEsc(sku)}" data-nombre="${_tkaEsc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" onchange="tkaToggleLineaCli(this)">
@@ -2456,7 +2462,8 @@ function _tkaYaAgregado(doc){
 /* Marca o desmarca TODAS las lineas con saldo de un documento, cargandolas
    si hace falta. Es el cuerpo que ya usaba "Asociar los N con saldo",
    extraido para que el checkbox por documento no lo duplique. */
-async function _tkaSelDocCompleto(doc, idxDoc, marcar){
+async function _tkaSelDocCompleto(doc, idxDoc, marcar, opts){
+  const sinSaldoMotivo = (opts && opts.sinSaldoMotivo) || '';
   if (!marcar){
     // Quitar todo lo de ese documento de la seleccion.
     const pref = 'CLI|' + idxDoc + '|';
@@ -2474,9 +2481,20 @@ async function _tkaSelDocCompleto(doc, idxDoc, marcar){
     const lineas = (d.lineas || []).filter(l => !_tkaEsServicio(l));
     lineas.forEach((l, j) => {
       const saldo = _tkaSaldoLinea(l);
-      if (saldo <= 0) return;
       const sku = (l.sku || '').toUpperCase();
       const nom = l.descripcion_erp || l.nombre_app || l.nombre || '';
+      if (saldo <= 0){
+        // Documento desbloqueado: la línea entra con el comentario de quien la desbloqueó (queda en la actividad de la cotización).
+        if (!sinSaldoMotivo) return;
+        const qDoc = parseFloat(l.cantidad) || 0;
+        _TKA.selCli.set(`CLI|${idxDoc}|${sku}|${j}`, {
+          tido: doc.tido_display, nudo: doc.nudo_display,
+          sku, nombre: nom, qty: Math.max(qDoc, 1), cantidad_doc: qDoc, saldo: 0,
+          marcada_sin_saldo: true, motivo_sin_saldo: sinSaldoMotivo,
+        });
+        n++;
+        return;
+      }
       _TKA.selCli.set(`CLI|${idxDoc}|${sku}|${j}`, {
         tido: doc.tido_display, nudo: doc.nudo_display,
         sku, nombre: nom, qty: saldo, saldo, marcada_sin_saldo: false,
@@ -2496,7 +2514,7 @@ async function tkaTogDocEntero(idx, el){
   if (el) el.disabled = true;
   const card = document.querySelector('.tka-doc-card[data-cli-idx="' + idx + '"]');
   if (card) card.classList.toggle('is-picked', marcar);
-  const n = await _tkaSelDocCompleto(doc, idx, marcar);
+  const n = await _tkaSelDocCompleto(doc, idx, marcar, doc._ssMotivo ? { sinSaldoMotivo: doc._ssMotivo } : null);
   if (el) el.disabled = false;
   if (marcar && !n && window.ilusToast){
     ilusToast('Ese documento no tiene líneas con saldo para agregar.', {type:'info'});
@@ -2504,6 +2522,177 @@ async function tkaTogDocEntero(idx, el){
     if (card) card.classList.remove('is-picked');
   }
   tkaUpdateCounter();
+  if (marcar && n) tkaCliAbrirDetalle(idx);     // 2026-11-06: marcar un documento abre su detalle con todas las líneas
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   2026-11-06 (Daniel, viendo «Por RUT / nombre» con 6 documentos sin saldo): «dejar un comentario que quede en la actividad de la cotización,
+   desbloquear una o varias en masa (las facturas sin saldo) y ordenar por fecha y por tipo de documento, por ejemplo por GDV».
+   - Orden y filtro SOLO reacomodan las tarjetas que ya están en pantalla (no se vuelven a pintar): lo expandido y lo marcado se conserva.
+   - Desbloquear = marcar uno o varios documentos sin saldo y pulsar el botón: pide UN comentario obligatorio y lo pone como motivo de cada
+     línea (el mismo motivo_sin_saldo de siempre, así viaja a la cotización, la OT o el ticket que use el modal y queda con quién y cuándo).
+   ══════════════════════════════════════════════════════════════════════ */
+function _tkaFechaTs(s){
+  s = String(s || '').trim();
+  let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  if (m) return Date.UTC(+m[3], +m[2] - 1, +m[1]);
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return Date.UTC(+m[1], +m[2] - 1, +m[3]);
+  return 0;
+}
+function _tkaCliBarraOrden(docs){
+  if (!docs || docs.length < 2) return '';
+  const cuenta = {};
+  docs.forEach(d => { const t = d.tido_display || '—'; cuenta[t] = (cuenta[t] || 0) + 1; });
+  const tipos = Object.keys(cuenta).sort((a, b) => cuenta[b] - cuenta[a] || a.localeCompare(b));
+  const sel = 'min-height:44px;border:1.5px solid #d1d5db;border-radius:10px;padding:0 10px;background:#fff;font-weight:600;font-size:.9rem';
+  return `<div class="tka-cli-orden" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+    <label style="display:flex;flex-direction:column;gap:3px;font-size:.78rem;font-weight:700;color:#374151">Tipo de documento
+      <select id="tkaCliTipo" onchange="tkaCliOrdenar()" style="${sel}">
+        <option value="">Todos (${docs.length})</option>
+        ${tipos.map(t => `<option value="${_tkaEsc(t)}">${_tkaEsc(t)} (${cuenta[t]})</option>`).join('')}
+      </select></label>
+    <label style="display:flex;flex-direction:column;gap:3px;font-size:.78rem;font-weight:700;color:#374151">Ordenar por
+      <select id="tkaCliOrden" onchange="tkaCliOrdenar()" style="${sel}">
+        <option value="">Como viene del ERP</option>
+        <option value="fecha_desc">Fecha: más recientes primero</option>
+        <option value="fecha_asc">Fecha: más antiguas primero</option>
+        <option value="tipo_fecha">Tipo y luego fecha (recientes primero)</option>
+      </select></label>
+    <span id="tkaCliOrdenN" style="font-size:.78rem;color:#6b7280;padding-bottom:12px"></span>
+  </div>`;
+}
+function tkaCliOrdenar(){
+  const docs = (_TKA.loaded.cliQuery && _TKA.loaded.cliQuery.docs) || [];
+  const res = document.querySelector('#tkaCliResult .tka-results');
+  if (!res) return;
+  const tipo = (document.getElementById('tkaCliTipo') || {}).value || '';
+  const orden = (document.getElementById('tkaCliOrden') || {}).value || '';
+  const num = i => parseInt(String(docs[i].nudo_display || '').replace(/\D/g, ''), 10) || 0;
+  const ts = i => _tkaFechaTs(docs[i].fecha);
+  const porFecha = dir => (a, b) => dir * (ts(a) - ts(b)) || dir * (num(a) - num(b));
+  const idxs = docs.map((_, i) => i);
+  if (orden === 'fecha_desc') idxs.sort(porFecha(-1));
+  else if (orden === 'fecha_asc') idxs.sort(porFecha(1));
+  else if (orden === 'tipo_fecha') idxs.sort((a, b) => String(docs[a].tido_display).localeCompare(String(docs[b].tido_display)) || porFecha(-1)(a, b));
+  let visibles = 0;
+  idxs.forEach(i => {
+    const card = res.querySelector('.tka-doc-card[data-cli-idx="' + i + '"]');
+    if (!card) return;
+    res.appendChild(card);
+    const ver = !tipo || docs[i].tido_display === tipo;
+    card.style.display = ver ? '' : 'none';
+    if (ver) visibles++;
+  });
+  const n = document.getElementById('tkaCliOrdenN');
+  if (n) n.textContent = 'Mostrando ' + visibles + ' de ' + docs.length;
+  tkaSSCambio();
+}
+
+function _tkaDocSinSaldoElegible(d){
+  return !d.tiene_saldo && !d.ya_asociado && !_tkaYaAgregado(d);
+}
+function _tkaCliBarraSinSaldo(docs){
+  const n = (docs || []).filter(_tkaDocSinSaldoElegible).length;
+  if (!n) return '';
+  return `<div id="tkaSSBar" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:10px 12px;border:1px solid #fde68a;background:#fff8e1;border-radius:10px">
+    <span style="flex:1 1 260px;font-size:.84rem;color:#92400e"><i class="bi bi-unlock-fill me-1"></i><strong>${n}</strong> documento${n === 1 ? '' : 's'} sin saldo.
+      Marca los que quieras usar y desbloquéalos con un comentario: queda en la actividad de lo que armes, con tu nombre y la hora.</span>
+    <button type="button" class="tka-doc-add-btn" style="background:#fff;color:#374151;border:1px solid #d1d5db;min-height:44px" onclick="tkaSSToggleTodos()">
+      <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todos los sin saldo</button>
+    <button type="button" id="tkaSSBtn" class="btn btn-sm fw-bold" disabled onclick="tkaDesbloquearSinSaldo()"
+      style="background:#f59e0b;color:#fff;border:none;border-radius:10px;padding:8px 14px;min-height:44px">
+      <i class="bi bi-unlock-fill me-1"></i>Desbloquear</button>
+  </div>`;
+}
+function _tkaSSMarcables(){
+  return Array.from(document.querySelectorAll('#tkaCliResult .tka-ss-pick')).filter(c => {
+    const card = c.closest('.tka-doc-card');
+    return card && card.style.display !== 'none' && !c.disabled;
+  });
+}
+function tkaSSCambio(){
+  const btn = document.getElementById('tkaSSBtn');
+  if (!btn) return;
+  const n = _tkaSSMarcables().filter(c => c.checked).length;
+  btn.disabled = n === 0;
+  btn.innerHTML = '<i class="bi bi-unlock-fill me-1"></i>' + (n ? `Desbloquear ${n} documento${n === 1 ? '' : 's'}` : 'Desbloquear');
+}
+// 2026-11-06 (Daniel: «ahora no me trae el detalle cuando selecciono las facturas, tráeme todo»): marcar un documento ABRE su detalle con todas
+// sus líneas. Solo abre (tkaToggleDocCli alterna: llamarlo con la tarjeta ya abierta la cerraría).
+async function tkaCliAbrirDetalle(idx){
+  const card = document.querySelector('#tkaCliResult .tka-doc-card[data-cli-idx="' + idx + '"]');
+  if (!card) return;
+  const body = card.querySelector('.tka-doc-body');
+  if (card.classList.contains('is-open') && body && body.dataset.loaded === '1') return;
+  if (card.classList.contains('is-open')) card.classList.remove('is-open');      // abierta pero sin líneas (falló o se reseteó): se vuelve a abrir
+  await tkaToggleDocCli(idx);
+}
+function tkaSSPick(idx, el){
+  tkaSSCambio();
+  if (el && el.checked) tkaCliAbrirDetalle(idx);
+}
+async function _tkaAbrirDetalleMarcados(selector){
+  const marcados = Array.from(document.querySelectorAll(selector)).filter(c => c.checked && !c.disabled);
+  for (const c of marcados){
+    const i = parseInt(String(c.id).replace(/^\D+/, ''), 10);
+    if (!isNaN(i)) await tkaCliAbrirDetalle(i);     // de a uno: no se le pide todo junto al ERP
+  }
+}
+function tkaSSToggleTodos(){
+  const cs = _tkaSSMarcables();
+  if (!cs.length) return;
+  const marcar = cs.some(c => !c.checked);
+  cs.forEach(c => { c.checked = marcar; });
+  tkaSSCambio();
+  if (marcar) _tkaAbrirDetalleMarcados('#tkaCliResult .tka-ss-pick');
+}
+async function tkaDesbloquearSinSaldo(){
+  const docs = (_TKA.loaded.cliQuery && _TKA.loaded.cliQuery.docs) || [];
+  const idxs = _tkaSSMarcables().filter(c => c.checked).map(c => parseInt(c.id.replace('tkaDocPickSS-', ''), 10)).filter(i => docs[i]);
+  if (!idxs.length){ ilusToast('Marca al menos un documento sin saldo.', { type:'info' }); return; }
+  const lista = idxs.map(i => docs[i].tido_display + ' ' + docs[i].nudo_display).join(', ');
+  const comentario = await ilusPrompt({
+    title: 'Desbloquear documentos sin saldo',
+    message: `Vas a usar ${idxs.length} documento${idxs.length === 1 ? '' : 's'} que ya no tiene${idxs.length === 1 ? '' : 'n'} saldo en el ERP (${lista}). ` +
+             'Escribe el comentario: por qué se incluyen. Queda en la actividad con tu nombre y la hora.',
+    placeholder: 'Ej: el cliente pidió cotizar de nuevo los mismos equipos',
+    required: true, type: 'warning',
+  });
+  if (!comentario) return;
+  const txt = String(comentario).trim();
+  if (txt.length < 10){
+    ilusToast('Cuéntanos un poco más: el comentario necesita al menos 10 caracteres.', { type:'warning' });
+    return;
+  }
+  const btn = document.getElementById('tkaSSBtn');
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Desbloqueando…'; }
+  let hechos = 0;
+  for (const i of idxs){
+    const doc = docs[i];
+    const n = await _tkaSelDocCompleto(doc, i, true, { sinSaldoMotivo: txt });
+    if (!n) continue;                       // sin líneas de producto (solo servicios): no hay nada que incluir
+    doc._ssMotivo = txt;
+    hechos++;
+    const card = document.querySelector('.tka-doc-card[data-cli-idx="' + i + '"]');
+    if (card){
+      card.classList.add('is-picked', 'is-unlocked');
+      const pick = card.querySelector('.tka-doc-pick');
+      if (pick) pick.innerHTML = `<input type="checkbox" id="tkaDocPick-${i}" checked onchange="tkaTogDocEntero(${i}, this)">`;
+      const tot = card.querySelector('.tka-doc-totals');
+      if (tot && !tot.querySelector('.badge-unlocked')){
+        tot.insertAdjacentHTML('afterbegin', '<span class="badge-pill badge-unlocked" title="' + _tkaEsc(txt) + '"><i class="bi bi-unlock-fill"></i>Desbloqueado</span>');
+      }
+      // Si ya estaba abierto con sus líneas pintadas, se repinta con las líneas ya marcadas.
+      const body = card.querySelector('.tka-doc-body');
+      if (body && body.dataset.loaded === '1'){ body.dataset.loaded = ''; card.classList.remove('is-open'); }
+    }
+    await tkaCliAbrirDetalle(i);               // el detalle completo a la vista, con lo desbloqueado marcado
+  }
+  tkaUpdateCounter();
+  tkaSSCambio();
+  if (hechos) ilusToast(`✓ ${hechos} documento${hechos === 1 ? '' : 's'} desbloqueado${hechos === 1 ? '' : 's'} con tu comentario`, { type:'success' });
+  else ilusToast('Esos documentos no tienen productos físicos para incluir (solo servicios).', { type:'info' });
 }
 
 async function tkaAsociarTodasConSaldo(){
