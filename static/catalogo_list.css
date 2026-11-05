@@ -487,3 +487,24 @@ table.cat-table tbody tr.seleccionada:hover{background:#fecaca;}
   table.cat-table .cat-chip-modelo,table.cat-table .cat-qc-quien,table.cat-table .cat-badge-fotos,table.cat-table .cat-badge-reg,
   table.cat-table .cat-badge-clase,table.cat-table .cat-sku{font-size:.75rem;}
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LA TABLA CABE EN PANTALLAS DE ESCRITORIO (2026-11-05, REGLA #61 y #4.3)
+   Medido en producción con los 50 productos reales: la tabla medía 1500 px y su caja 980 (1280 px) y 1066 (1366): 522 y 436 px de scroll lateral dentro de la
+   caja. Es la MISMA tabla (11 columnas, nada se quita, el orden por columna sigue): se quita el mínimo de 960 px, se acota el nombre y se deja partir lo que
+   iba en una sola línea (encabezados, clase, estado). Probado inyectando este CSS en producción: 0 px de desborde a 1280 y 1366 px, filas de ≈76 px. */
+@media (min-width:768px) and (max-width:1599.98px){
+  table.cat-table{min-width:0;}
+  .cat-nombre{min-width:140px;max-width:200px;}
+  .cat-qc{min-width:0;}
+  .cat-badge-clase,.cat-badge-reg{white-space:normal;display:inline-flex;max-width:110px;text-align:left;}
+  .cat-chip-modelo{white-space:normal;}
+  table.cat-table td{padding:8px 7px;}
+  table.cat-table thead th{padding:12px 7px;white-space:normal;}
+}
+@media (min-width:768px) and (max-width:1365.98px){
+  .cat-nombre{min-width:120px;max-width:165px;}
+  table.cat-table td{padding:8px 5px;}
+  table.cat-table thead th{padding:12px 5px;}
+  .cat-badge-clase,.cat-badge-reg{max-width:96px;}
+}
