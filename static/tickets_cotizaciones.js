@@ -1725,9 +1725,12 @@ function cotWizRecalcLocal(){
     suma += totBase || 0;
     it._int = null;
     if (!accesorio && totBase != null && totBase > 0){
-      if (it.precio_manual == null && it._costoUnit != null){
+      // 2026-11-06 (Daniel: «el cuadro de abajo indica que no hay margen, eso está mal, ¿no?»): si se conoce lo que cuesta el equipo, el margen es
+      // lo que se cobra MENOS lo que cuesta, también cuando el precio se escribió a mano (antes todo eso caía en «sin desglose» y el margen
+      // salía $0). Solo un precio fijo de la categoría, sin costo registrado, no se puede desglosar.
+      if (it._costoUnit != null){
         const c = Math.round(it._costoUnit * qty);
-        it._int = { costo: it._costoUnit, margen: pu - it._costoUnit };
+        it._int = { costo: it._costoUnit, margen: pu - it._costoUnit, manual: it.precio_manual != null };
         intCosto += c; intMargen += totBase - c;
       } else {
         intFijo += totBase;
@@ -1764,8 +1767,10 @@ function cotWizRecalcLocal(){
         desgloses[i].innerHTML = _wizCLP(pu) + ' base + ' + _wizCLP(rutaUnidad)
           + ' ruta = <b>' + _wizCLP(pu + rutaUnidad) + '/u</b>'
           + (sinRuta ? ' <span class="cot-ruta-sin-ruta">(repuesto, sin ruta)</span>' : '')
-          + (it._int ? '<span class="cot-int-linea">interno: costo ' + _wizCLP(it._int.costo) + ' + margen ' + _wizCLP(it._int.margen) + ' (no va al PDF)</span>'
-                     : (pu > 0 ? '<span class="cot-int-linea">interno: precio fijo o escrito a mano (no va al PDF)</span>' : ''));
+          + (it._int ? '<span class="cot-int-linea' + (it._int.margen < 0 ? ' perdida' : '') + '">interno: costo ' + _wizCLP(it._int.costo)
+                       + (it._int.margen < 0 ? ' · pierdes ' + _wizCLP(-it._int.margen) + ' por unidad' : ' + margen ' + _wizCLP(it._int.margen))
+                       + (it._int.manual ? ' (precio escrito a mano; no va al PDF)' : ' (no va al PDF)') + '</span>'
+                     : (pu > 0 ? '<span class="cot-int-linea">interno: precio fijo de la categoría, sin costo registrado: no se puede calcular el margen (no va al PDF)</span>' : ''));
       }
     }
     if (filasTot[i]) filasTot[i].innerHTML = (totConRuta != null)
@@ -1980,10 +1985,13 @@ function _cotWizInternoPintar(desc){
   if (!caja || !_WIZ) return;
   const it = _WIZ.interno || { costo: 0, margen: 0, fijo: 0 };
   const el = function(id){ return document.getElementById(id); };
-  el('cotWizIntCosto').textContent = _wizCLP(it.costo);
+  // Solo hay ítems de precio fijo (nada con costo conocido): el costo y el margen NO son $0, simplemente no se pueden calcular.
+  const sinDesglose = !(it.costo > 0) && it.fijo > 0;
+  el('cotWizIntCosto').textContent = sinDesglose ? 'sin desglose' : _wizCLP(it.costo);
   const pct = it.costo > 0 ? Math.round(it.margen / it.costo * 1000) / 10 : null;
   el('cotWizIntMargenTxt').textContent = 'Margen' + (pct !== null ? ' (' + String(pct).replace('.', ',') + '% sobre el costo)' : '');
-  el('cotWizIntMargen').textContent = _wizCLP(it.margen);
+  el('cotWizIntMargen').textContent = sinDesglose ? 'sin desglose' : ((it.margen < 0 ? '−' : '') + _wizCLP(Math.abs(it.margen)));
+  el('cotWizIntMargen').style.color = (!sinDesglose && it.margen < 0) ? '#dc2626' : '';
   el('cotWizIntFijoRow').style.display = it.fijo > 0 ? '' : 'none';
   el('cotWizIntFijo').textContent = _wizCLP(it.fijo);
   el('cotWizIntDescRow').style.display = desc > 0 ? '' : 'none';
