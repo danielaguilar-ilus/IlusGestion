@@ -38,7 +38,40 @@
     });
   }
 
+  /* AUTO-REPARADO DEL TOKEN (05-nov-2026, Daniel registrando un chofer con la llave por entregar: «CSRF token inválido. Recarga la página»).
+     window.__CSRF_TOKEN es una foto tomada al cargar la página: si la sesión rota su token (por ejemplo al volver a entrar en otra pestaña),
+     esta pestaña queda muerta para escribir hasta un F5. El fetch de base.html ya se repara solo; el XMLHttpRequest de la subida no. Mismo
+     criterio que ese: se reintenta UNA sola vez y solo ante 403 con error_codigo CSRF_INVALIDO, que el servidor emite desde before_request
+     (la vista nunca corrió: reenviar no puede duplicar nada); si la sesión murió o entró otra persona, NO se reintenta y se explica. */
+  function refrescarCsrf() {
+    return fetch('/api/csrf-token', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
+      return { alcanzado: true, token: d && d.csrf_token, autenticado: !!(d && d.autenticado), uid: (d && d.uid) || 0 };
+    }).catch(function () { return { alcanzado: false }; });
+  }
+
   function enviar(o) {
+    return enviarUna(o).then(function (d) {
+      if (!d || d.status !== 403 || d.error_codigo !== 'CSRF_INVALIDO' || o.__reintento || !window.fetch) return d;
+      return refrescarCsrf().then(function (info) {
+        if (!info.alcanzado) return d;
+        if (!info.autenticado) { d.error = 'Tu sesión expiró. Vuelve a iniciar sesión para continuar.'; return d; }
+        if (String(info.uid) !== String(window.__ILUS_UID)) { d.error = 'Entró otra persona en este navegador. Recarga la página para continuar.'; return d; }
+        if (!info.token || info.token === window.__CSRF_TOKEN) return d;
+        window.__CSRF_TOKEN = info.token;
+        try { var meta = document.querySelector('meta[name="csrf-token"]'); if (meta) meta.setAttribute('content', info.token); } catch (e) { /* nada */ }
+        var copia = {};
+        Object.keys(o).forEach(function (k) { copia[k] = o[k]; });
+        copia.__reintento = true;
+        return enviarUna(copia);
+      });
+    });
+  }
+
+  function tieneParcheCsrf() {
+    try { return String(XMLHttpRequest.prototype.send).indexOf('__csrf_method') >= 0; } catch (e) { return false; }
+  }
+
+  function enviarUna(o) {
     return new Promise(function (resolver) {
       var x = new XMLHttpRequest();
       var fin = function (d) { resolver(d); };
@@ -48,7 +81,10 @@
         x.timeout = o.timeoutMs || 180000;
         x.setRequestHeader('Accept', 'application/json');
         x.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-        if (window.__CSRF_TOKEN) x.setRequestHeader('X-CSRF-Token', window.__CSRF_TOKEN);
+        // El token lo agrega base.html a TODO XMLHttpRequest al enviarlo (parche global desde mayo). Si aquí se pusiera también, setRequestHeader
+        // JUNTA los dos valores («token, token») y el servidor rechaza TODA subida con «CSRF token inválido»: así fallaron la licencia del chofer y
+        // la devolución de llaves el 05-nov-2026. Solo se pone a mano cuando esa página no trae el parche.
+        if (window.__CSRF_TOKEN && !tieneParcheCsrf()) x.setRequestHeader('X-CSRF-Token', window.__CSRF_TOKEN);
         if (x.upload) {
           x.upload.onprogress = function (e) { if (e.lengthComputable && o.onProgreso) o.onProgreso(e.loaded / e.total, e.loaded, e.total); };
           x.upload.onload = function () { if (o.onSubido) o.onSubido(); };

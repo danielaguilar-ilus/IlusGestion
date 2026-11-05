@@ -540,8 +540,19 @@
             </div>
             <div class="cot-wiz-campo" id="campoContenidoPdfMantencion3"><label>Días hábiles estimados (opcional)</label>
               <input id="cotWizDiasHabiles" type="number" min="0" step="1" class="form-control"></div>
-            <div class="cot-wiz-campo" id="campoContenidoPdfMantencion4"><label>Mantenciones al año (opcional)</label>
-              <input id="cotWizFrecuenciaAnual" type="number" min="1" step="1" class="form-control" placeholder="2"></div>
+            {# 2026-11-06 (Daniel: «la frecuencia de mantención la podamos cambiar y que indique claramente que recomendamos una frecuencia pero la
+               cotización es por una visita»): editable (número o atajos) y con el aviso a la vista. Vacío = 2, como siempre. #}
+            <div class="cot-wiz-campo full" id="campoContenidoPdfMantencion4">
+              <label for="cotWizFrecuenciaAnual">Frecuencia de mantención que recomendamos (veces al año)</label>
+              <div class="d-flex gap-2 flex-wrap align-items-center">
+                <input id="cotWizFrecuenciaAnual" type="number" min="1" max="12" step="1" class="form-control" placeholder="2"
+                       style="max-width:110px;min-height:44px" oninput="cotWizFrecuenciaCambio()">
+                <div class="cot-wiz-frec-chips" role="group" aria-label="Atajos de frecuencia">
+                  {% for n in [1, 2, 3, 4, 6, 12] %}<button type="button" class="cot-wiz-frec-chip" data-n="{{ n }}" onclick="cotWizFrecuenciaElegir({{ n }})">{{ n }}</button>{% endfor %}
+                </div>
+              </div>
+              <div class="cot-wiz-hint" id="cotWizFrecuenciaHint" style="color:#92400e">Es una recomendación al cliente: esta cotización cubre UNA visita y no incluye la frecuencia anual. Así lo dirá el PDF.</div>
+            </div>
             <div class="cot-wiz-campo full"><label>Términos del PDF (uno por línea, formato "Clave: valor", opcional)</label>
               <textarea id="cotWizTerminos" class="form-control" rows="2"
                         placeholder="Ej: Precio: valores netos en UF.&#10;Plazo: según coordinación."></textarea>
@@ -644,7 +655,7 @@
         <div class="cot-wiz-interno-t"><i class="bi bi-eye-slash-fill" aria-hidden="true"></i> Costo y margen · solo para ti, no sale en el PDF ni lo ve el cliente</div>
         <div class="cot-wiz-interno-fila"><span>Costo de la mano de obra</span><b id="cotWizIntCosto">$0</b></div>
         <div class="cot-wiz-interno-fila"><span id="cotWizIntMargenTxt">Margen</span><b id="cotWizIntMargen">$0</b></div>
-        <div class="cot-wiz-interno-fila" id="cotWizIntFijoRow" style="display:none;"><span>Ítems con precio fijo o escrito a mano (sin desglose)</span><b id="cotWizIntFijo">$0</b></div>
+        <div class="cot-wiz-interno-fila" id="cotWizIntFijoRow" style="display:none;"><span>Ítems con precio fijo de la categoría (sin costo registrado: no se calcula su margen)</span><b id="cotWizIntFijo">$0</b></div>
         <div class="cot-wiz-interno-fila" id="cotWizIntDescRow" style="display:none;"><span>Margen después del descuento</span><b id="cotWizIntNeto">$0</b></div>
         <div class="cot-wiz-interno-nota">Los ítems se cobran al costo más el margen. La ruta se cobra aparte y no cuenta como margen.</div>
       </div>

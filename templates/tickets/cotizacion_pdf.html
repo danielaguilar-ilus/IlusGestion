@@ -265,6 +265,12 @@
   .valor-unit-box .vu-line { display: flex; justify-content: space-between; gap: 2mm; font-size: 7.5pt; margin-top: 1mm; }
   .valor-unit-box .vu-line span:last-child { white-space: nowrap; }
   .valor-unit-box .vu-total { font-weight: 900; font-size: 8pt; margin-top: 1.5mm; }
+  .aviso-una-visita { margin: 0 0 4mm; padding: 2.5mm 4mm; border: 1px solid #f59e0b; border-left: 1.2mm solid #f59e0b; background: #fff8e1;
+    color: #78350f; border-radius: 3px; font-size: 7.8pt; line-height: 1.5; page-break-inside: avoid; break-inside: avoid; }
+  .aviso-una-visita strong { color: #92400e; }
+  /* 2026-11-06: el título «Recomendación de Servicio» no queda solo al final de una página ni su lista se parte (salía 1 viñeta huérfana arriba de la página 2). */
+  .barra-titulo { page-break-after: avoid; break-after: avoid; }
+  .recomendacion-box { page-break-inside: avoid; break-inside: avoid; }
   .recomendacion-box ul { margin: 0 0 4mm; padding-left: 4mm; }
   .recomendacion-box li { font-size: 7.8pt; margin-bottom: 1.2mm; line-height: 1.4; }
 
@@ -612,10 +618,14 @@
     {% else %}
       <div class="kpi-card"><div class="kpi-num">{{ kpis.equipos }}</div><div class="kpi-lbl">Equipos considerados</div></div>
       <div class="kpi-card"><div class="kpi-num">{{ kpis.categorias }}</div><div class="kpi-lbl">Categorías de equipos</div></div>
-      {% if kpis.mantenciones_anio %}<div class="kpi-card"><div class="kpi-num">{{ kpis.mantenciones_anio }}</div><div class="kpi-lbl">Mantenciones al año</div></div>{% endif %}
+      {% if kpis.mantenciones_anio %}<div class="kpi-card kpi-recomendada"><div class="kpi-num">{{ kpis.mantenciones_anio }}</div><div class="kpi-lbl">Frecuencia recomendada (veces al año)</div></div>{% endif %}
       {% if kpis.dias_habiles %}<div class="kpi-card"><div class="kpi-num">{{ kpis.dias_habiles }}</div><div class="kpi-lbl">Días hábiles estimados</div></div>{% endif %}
     {% endif %}
   </div>
+  {# 2026-11-06 (Daniel): la frecuencia es una recomendación; la cotización cubre UNA visita. Va a la vista, en su propio recuadro. #}
+  {% if rico_textos.aviso_una_visita and kpis.mantenciones_anio %}
+  <div class="aviso-una-visita"><strong>Frecuencia recomendada: {{ rico_textos.frecuencia_texto }}.</strong> {{ rico_textos.aviso_una_visita }}</div>
+  {% endif %}
   <div class="rico-grid">
     <div class="alcance-box">
       <div class="ab-title">{{ rico_textos.alcance_titulo }}</div>

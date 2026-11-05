@@ -310,7 +310,7 @@ class BaseFalsa:
                 if (a["entidad"], a["entidad_id"], a["tipo"]) == (ent, eid, tipo) and a["activo"]:
                     a.update(activo=0, quitado_por=por)
             return
-        m = re.match(r"UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW\(\) WHERE entidad='(vehiculo|chofer)' AND entidad_id=%s AND activo=1", s)
+        m = re.match(r"UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW\(\) WHERE entidad='(vehiculo|chofer|solicitud)' AND entidad_id=%s AND activo=1$", s)
         if m:
             por, eid = p
             for a in self.arch.values():
@@ -680,11 +680,12 @@ class TestCableado(unittest.TestCase):
         self.assertNotRegex(self.MODULO, r"DELETE\s+FROM\s+flota_vehiculo_log")
 
     def test_borrar_es_solo_del_superadmin_y_solo_de_vehiculos_y_choferes(self):
-        # Daniel (02-nov-2026): «que yo pueda editar y borrar». Borrar definitivo existe, pero solo para vehículos y choferes, con puerta de
-        # administración; las bitácoras, las solicitudes y los archivos NUNCA se borran.
+        # Daniel (02-nov-2026): «que yo pueda editar y borrar». Borrar definitivo existe para vehículos y choferes, con puerta de
+        # administración; las bitácoras y los archivos NUNCA se borran. Desde el 05-nov-2026 (Daniel: «que el superadministrador pueda eliminar
+        # definitivamente cada reserva») también una reserva, y solo el superadministrador (la ruta lo exige además de la puerta).
         borrados = set(re.findall(r"DELETE\s+FROM\s+(\w+)", self.MODULO))
-        self.assertEqual(borrados, {"flota_vehiculos", "flota_choferes"})
-        self.assertEqual(self.MODULO.count('methods=["DELETE"]'), 2)
+        self.assertEqual(borrados, {"flota_vehiculos", "flota_choferes", "flota_solicitudes"})
+        self.assertEqual(self.MODULO.count('methods=["DELETE"]'), 3)
         for m in re.finditer(r'methods=\["DELETE"\]\)\s*\n\s*@(\w+)', self.MODULO):
             self.assertEqual(m.group(1), "_flota_admin_required")
 

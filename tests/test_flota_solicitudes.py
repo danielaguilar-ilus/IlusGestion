@@ -327,6 +327,9 @@ class Falsa(BaseFalsa):
                               key=lambda c: (-c["habilitado"], c["u_nombre"] or ""))
         if s == "SELECT COUNT(*) AS n FROM flota_choferes WHERE archivado=1":
             return [{"n": sum(1 for c in self.cho.values() if c.get("archivado"))}]
+        if s.startswith("SELECT id, nombre, rut FROM `app_users` WHERE id=%s"):
+            u = self.usr.get(p[0])
+            return [{"id": u["id"], "nombre": u["nombre"], "rut": u.get("rut")}] if u else []
         if s.startswith("SELECT id, nombre, active FROM `app_users` WHERE id=%s"):
             u = self.usr.get(p[0])
             return [{"id": u["id"], "nombre": u["nombre"], "active": u["active"]}] if u else []
@@ -378,6 +381,8 @@ class Falsa(BaseFalsa):
             return [{"n": sum(1 for x in self.sol.values() if x["estado"] == "devuelta" and not x.get("dev_confirmada_at"))}]
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado IN"):
             return [{"n": sum(1 for x in self.sol.values() if x["estado"] in R.ESTADOS_OCUPAN and x["inicio"] < p[0] and x["fin"] > p[1])}]
+        if s.startswith("SELECT id, numero, estado FROM flota_solicitudes WHERE chofer_id=%s"):
+            return [{"id": x["id"], "numero": x.get("numero"), "estado": x["estado"]} for x in self.sol.values() if x["chofer_id"] == p[0]]
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE vehiculo_id=%s") or \
                 s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE chofer_id=%s"):
             if " AND fin >=" in s:
@@ -455,6 +460,12 @@ class Falsa(BaseFalsa):
             if not c or not c.get("archivado"):
                 return 0, None
             c.update(archivado=0, archivado_motivo=None, archivado_por=None, archivado_at=None)
+            return 1, None
+        if s.startswith("DELETE FROM flota_solicitudes WHERE id=%s AND estado <> 'llave_entregada'"):
+            x = self.sol.get(p[0])
+            if not x or x["estado"] == "llave_entregada":
+                return 0, None
+            self.sol.pop(p[0])
             return 1, None
         if s.startswith("DELETE FROM flota_choferes WHERE id=%s"):
             self.cho.pop(p[0], None)
@@ -542,8 +553,14 @@ class Falsa(BaseFalsa):
             return 1, None
         if s.startswith("UPDATE flota_solicitudes SET estado='cancelada'"):
             por, motivo, sid = p
+            hook = getattr(self, "al_cancelar", None)           # una prueba puede mover otra reserva JUSTO antes (carrera de la llave)
+            if hook:
+                self.al_cancelar = None
+                hook()
             x = self.sol.get(sid)
-            if not x or x["estado"] not in R.ESTADOS_OCUPAN:
+            # como el SQL real: cancelar una reserva con la llave afuera solo si el SQL lo dice («llave_entregada» en el WHERE)
+            permitidos = R.ESTADOS_OCUPAN if "'llave_entregada'" in s else ("solicitada", "confirmada")
+            if not x or x["estado"] not in permitidos:
                 return 0, None
             x.update(estado="cancelada", cancelada_por=por, cancelada_at=dt.datetime.utcnow(), cancelada_motivo=motivo)
             return 1, None
@@ -681,7 +698,7 @@ def _app(base, bucket="auto", extra=None):
 
     ctx = {"mysql_fetchone": base.fetchone, "mysql_fetchall": base.fetchall, "mysql_execute": base.execute,
            "mysql_execute_returning_rowcount": base.rowcount, "get_mysql": base.conexion, "AUTH_TABLE": "app_users",
-           "login_required": login_required, "current_username": lambda: "Daniel Aguilar", "_gcs_bucket": lambda: bucket}
+           "login_required": login_required, "current_username": lambda: "Daniel Aguilar", "_gcs_bucket": lambda: bucket, "licencia_verificar": False}
     ctx.update(extra or {})
     import flota_module
     flota_module.register_flota_routes(app, ctx)
@@ -1103,7 +1120,7 @@ class TestCableado(unittest.TestCase):
 
     def test_solo_se_borran_vehiculos_y_choferes(self):
         # Las bitácoras, las solicitudes y los archivos NUNCA se borran (los archivos quedan como no vigentes).
-        self.assertEqual(set(re.findall(r"DELETE\s+FROM\s+(\w+)", self.MODULO)), {"flota_vehiculos", "flota_choferes"})
+        self.assertEqual(set(re.findall(r"DELETE\s+FROM\s+(\w+)", self.MODULO)), {"flota_vehiculos", "flota_choferes", "flota_solicitudes"})
 
     def test_ningun_sql_con_fstrings(self):
         for m in re.finditer(r"mysql_(?:execute|fetchone|fetchall|rowcount)\(\s*f[\"']", self.MODULO):
@@ -1138,6 +1155,7 @@ class TestCableado(unittest.TestCase):
                  '"/flota/api/choferes", methods=["POST"]', '"/flota/api/choferes/usuarios"', '"/flota/api/choferes/<int:cid>", methods=["PUT"]',
                  '"/flota/api/choferes/<int:cid>/inhabilitar"', '"/flota/api/choferes/<int:cid>/habilitar"', '"/flota/api/choferes/<int:cid>/archivar"',
                  '"/flota/api/choferes/<int:cid>/desarchivar"', '"/flota/api/choferes/<int:cid>", methods=["DELETE"]',
+                 '"/flota/api/solicitudes/<int:sid>", methods=["DELETE"]',
                  '"/flota/api/archivos", methods=["POST"]', '"/flota/api/archivos/<int:aid>/quitar"')
         for grupo, puerta in ((pedir, "@_flota_required"), (gestion, "@_flota_gestion_required"), (admin, "@_flota_admin_required")):
             for ruta in grupo:
