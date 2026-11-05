@@ -5467,7 +5467,7 @@ def register_tickets_routes(app, ctx):
                         maquina_id_it = int(_mid) if _mid not in (None, "") else None
                     except (TypeError, ValueError):
                         maquina_id_it = None
-                    aplica_mantencion_it = (1 if it.get("aplica_mantencion") else 0) if maquina_id_it else None
+                    aplica_mantencion_it = 1 if it.get("aplica_mantencion") else (0 if maquina_id_it else None)   # 2026-11-06: marcado en el plan también sin equipo en la ficha
                     cur.execute(
                         "INSERT INTO tk_cotizacion_items "
                         "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, "
@@ -6551,7 +6551,7 @@ def register_tickets_routes(app, ctx):
                         maquina_id_it = int(_mid) if _mid not in (None, "") else None
                     except (TypeError, ValueError):
                         maquina_id_it = None
-                    aplica_mantencion_it = (1 if it.get("aplica_mantencion") else 0) if maquina_id_it else None
+                    aplica_mantencion_it = 1 if it.get("aplica_mantencion") else (0 if maquina_id_it else None)   # 2026-11-06: marcado en el plan también sin equipo en la ficha
                     cur.execute(
                         "INSERT INTO tk_cotizacion_items "
                         "(cotizacion_id, item_tipo, erp_kopr, descripcion, cantidad, precio_unitario, "
