@@ -265,9 +265,13 @@
   .valor-unit-box .vu-line { display: flex; justify-content: space-between; gap: 2mm; font-size: 7.5pt; margin-top: 1mm; }
   .valor-unit-box .vu-line span:last-child { white-space: nowrap; }
   .valor-unit-box .vu-total { font-weight: 900; font-size: 8pt; margin-top: 1.5mm; }
-  .aviso-una-visita{margin:8px 0 10px;padding:8px 12px;border:1px solid #f59e0b;border-left:4px solid #f59e0b;background:#fff8e1;color:#78350f;border-radius:6px;font-size:10.5px;line-height:1.45}
-.aviso-una-visita strong{color:#92400e}
-.recomendacion-box ul { margin: 0 0 4mm; padding-left: 4mm; }
+  .aviso-una-visita { margin: 0 0 4mm; padding: 2.5mm 4mm; border: 1px solid #f59e0b; border-left: 1.2mm solid #f59e0b; background: #fff8e1;
+    color: #78350f; border-radius: 3px; font-size: 7.8pt; line-height: 1.5; page-break-inside: avoid; break-inside: avoid; }
+  .aviso-una-visita strong { color: #92400e; }
+  /* 2026-11-06: el título «Recomendación de Servicio» no queda solo al final de una página ni su lista se parte (salía 1 viñeta huérfana arriba de la página 2). */
+  .barra-titulo { page-break-after: avoid; break-after: avoid; }
+  .recomendacion-box { page-break-inside: avoid; break-inside: avoid; }
+  .recomendacion-box ul { margin: 0 0 4mm; padding-left: 4mm; }
   .recomendacion-box li { font-size: 7.8pt; margin-bottom: 1.2mm; line-height: 1.4; }
 
   /* ───── Tabla de ítems ───── */

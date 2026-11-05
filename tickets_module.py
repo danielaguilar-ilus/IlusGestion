@@ -4186,7 +4186,9 @@ def register_tickets_routes(app, ctx):
         # recurrente (cuenta cotizaciones/OT previas del mismo RUT). Así el
         # PDF de mantención SIEMPRE sale con el bloque rico, sin trabajo del
         # usuario, pero si escribe algo, lo suyo manda.
-        if cot.get("tipo_servicio") == "mantencion" and not alcance_lineas and not recomendacion_lineas:
+        # 2026-11-06 (Daniel, PDF con «Alcance de la mantención» vacío porque solo se escribió la recomendación): cada bloque se completa por
+        # separado; lo que la persona escribió manda y solo se rellena el que quedó vacío.
+        if cot.get("tipo_servicio") == "mantencion" and (not alcance_lineas or not recomendacion_lineas):
             _n_equipos = sum(it["cantidad"] for it in items) or len(items)
             _rut_cli = (cot.get("rut") or "").strip()
             _previas = 0
@@ -4204,7 +4206,7 @@ def register_tickets_routes(app, ctx):
                     _previas = int((_pr or {}).get("n") or 0)
                 except Exception:
                     _previas = 0
-            alcance_lineas = [
+            alcance_lineas = alcance_lineas or [
                 f"Mantención preventiva de {_n_equipos} equipo(s) del cliente.",
                 "Inspección funcional, ajustes, limpieza y lubricación.",
                 "Revisión de elementos mecánicos y eléctricos accesibles.",
@@ -4212,7 +4214,7 @@ def register_tickets_routes(app, ctx):
                 "Coordinación del servicio para reducir interrupciones operativas.",
             ]
             # 2026-11-06 (Daniel): la frecuencia recomendada la elige quien cotiza (antes decía siempre «dos»), y se aclara que lo cotizado es UNA visita.
-            recomendacion_lineas = _cotfrec.recomendaciones_por_defecto(cot.get("frecuencia_anual"), _previas)
+            recomendacion_lineas = recomendacion_lineas or _cotfrec.recomendaciones_por_defecto(cot.get("frecuencia_anual"), _previas)
         # 2026-07-24 (Daniel, mensaje de voz: "para cada visita, instalación o
         # mantención deberás tener un texto inteligente para que vaya en la
         # cotización"). Mismo patrón que mantención de arriba (NO tocado),
@@ -4221,7 +4223,7 @@ def register_tickets_routes(app, ctx):
         # instalacion (venta_repuesto/otro quedan fuera a propósito -- no son
         # visitas técnicas con equipos, y Daniel no las mencionó; se agregan
         # igual de fácil el día que se pidan, siguiendo este mismo patrón).
-        elif cot.get("tipo_servicio") == "visita_tecnica" and not alcance_lineas and not recomendacion_lineas:
+        elif cot.get("tipo_servicio") == "visita_tecnica" and (not alcance_lineas or not recomendacion_lineas):
             _n_equipos = sum(it["cantidad"] for it in items) or len(items)
             _rut_cli = (cot.get("rut") or "").strip()
             _previas = 0
@@ -4235,7 +4237,7 @@ def register_tickets_routes(app, ctx):
                     _previas = int((_pr or {}).get("n") or 0)
                 except Exception:
                     _previas = 0
-            alcance_lineas = [
+            alcance_lineas = alcance_lineas or [
                 f"Visita técnica para revisión y diagnóstico de {_n_equipos} equipo(s) del cliente.",
                 "Diagnóstico funcional y evaluación del estado general de cada equipo.",
                 "Detección de fallas, desgaste o condiciones que requieran intervención.",
@@ -4243,20 +4245,20 @@ def register_tickets_routes(app, ctx):
                 "Entrega de recomendaciones y presupuesto de los trabajos que se requieran.",
             ]
             if _previas > 0:
-                recomendacion_lineas = [
+                recomendacion_lineas = recomendacion_lineas or [
                     f"Cliente recurrente: ya registra {_previas} visita(s) técnica(s) previa(s) con nosotros — se dará continuidad al historial de revisiones de cada equipo.",
                     "Comparar los hallazgos actuales con visitas anteriores para anticipar fallas repetitivas.",
                     "Evaluar si corresponde avanzar a un plan de mantención preventiva periódica.",
                     "Cotizar por separado cualquier repuesto o reparación que se detecte durante la visita.",
                 ]
             else:
-                recomendacion_lineas = [
+                recomendacion_lineas = recomendacion_lineas or [
                     "Primera visita técnica registrada para este cliente: se levantará un diagnóstico inicial del estado de cada equipo.",
                     "Documentar el estado base de los equipos como referencia para futuras revisiones.",
                     "Emitir un informe con hallazgos y recomendaciones al término de la visita.",
                     "Cotizar por separado cualquier repuesto o reparación que se detecte durante la visita.",
                 ]
-        elif cot.get("tipo_servicio") == "instalacion" and not alcance_lineas and not recomendacion_lineas:
+        elif cot.get("tipo_servicio") == "instalacion" and (not alcance_lineas or not recomendacion_lineas):
             _rut_cli = (cot.get("rut") or "").strip()
             _previas = 0
             if _rut_cli:
@@ -4271,8 +4273,10 @@ def register_tickets_routes(app, ctx):
                     _previas = 0
             # 30-oct (Daniel, COT-000195: «dice 6 equipos y es un solo servicio»): el texto sale de lo que la cotización TIENE
             # (equipos / materiales / servicios, ver cot_composicion.py); con equipos conserva la redacción de siempre.
-            _inst_parrafo, alcance_lineas, recomendacion_lineas, _inst_servicio = _cotcomp.textos_instalacion(
+            _inst_parrafo, _a_inst2, _r_inst2, _inst_servicio = _cotcomp.textos_instalacion(
                 _comp_inst, uf_info=bool(uf_info), previas=_previas)
+            alcance_lineas = alcance_lineas or _a_inst2
+            recomendacion_lineas = recomendacion_lineas or _r_inst2
         modo_rico = (cot.get("tipo_servicio") in ("mantencion", "visita_tecnica", "instalacion")) and bool(alcance_lineas or recomendacion_lineas)
 
         kpis = None
