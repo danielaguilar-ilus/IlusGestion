@@ -2872,6 +2872,17 @@ def _resolve_comuna_erp(cmen_code: str, cien_code: str = "", pais_code: str = "C
             return nombre
     # 2) Fallback: solo por código de comuna
     candidates = _TABCM_CACHE["by_kocm_any"].get(c) or []
+    # 🔧 2026-11-06 (Daniel: «no trae la dirección, siempre trae La Serena»): el ERP guarda la comuna como código de 3 letras y varios
+    # comunas lo comparten («LAS» = La Serena, Las Cabras, Las Condes). Con 2 o más candidatas quedarse con la PRIMERA devolvía siempre
+    # La Serena aunque el cliente fuera de Las Condes (CIEN = 013 = Región Metropolitana). Si el código es ambiguo se desempata por la
+    # región del cliente con el mapa local (erp_engine.CMEN_MAP). Solo LEE: nada se escribe en el ERP.
+    if len(candidates) > 1 and cien:
+        try:
+            _por_region = (erp_engine.CMEN_MAP.get(cien.lstrip("0") or "0") or {}).get(c)
+        except Exception:
+            _por_region = None
+        if _por_region:
+            return _por_region
     if candidates:
         return candidates[0]
     # 3) No match: si parece nombre (>4 chars), devolver tal cual
