@@ -1263,3 +1263,57 @@ td > .fl-resp,td > .fl-dsv{display:flex}
 .fl-prog-bar.ind > i{width:40%;animation:fl-prog-ind 1.1s ease-in-out infinite}
 @keyframes fl-prog-ind{0%{margin-left:-40%}100%{margin-left:100%}}
 @media (prefers-reduced-motion: reduce){.fl-prog-bar > i{transition:none}.fl-prog-bar.ind > i{animation:none;width:100%;opacity:.6}}
+
+/* ═══ Escáner de licencias (Daniel, 05-nov-2026): tarjeta con semáforo, datos completos sin cortar (REGLA #15), botones de 46 px (REGLA #3) ═══ */
+.fl-escaner{margin:0 0 14px;padding:14px;border:1.5px solid #e5e7eb;border-radius:14px;background:#fff}
+.fl-escaner-cab{display:flex;gap:12px;align-items:flex-start}
+.fl-escaner-cab > i{flex:0 0 auto;display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#fee2e2;color:#dc2626;font-size:1.3rem}
+.fl-escaner-cab > div{min-width:0;display:flex;flex-direction:column;gap:2px}
+.fl-escaner-cab b{font-size:.98rem;color:#0a0a0a}
+.fl-escaner-cab span{font-size:.84rem;color:#4b5563;line-height:1.4}
+.fl-escaner-acc{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.fl-btn-esc{min-height:46px;display:inline-flex;align-items:center;justify-content:center;flex:1 1 190px;font-weight:700}
+.fl-escaner-off{display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;padding:9px 12px;border-radius:10px;background:#fff8e1;border:1px solid #fcd34d;color:#92400e;font-size:.84rem;line-height:1.4}
+.fl-escaner-off[hidden]{display:none}
+.fl-escaner-off i{flex:0 0 auto;margin-top:2px}
+.fl-escaner-nota{background:#f3f4f6;border-color:#d1d5db;color:#374151}
+.fl-lectura{margin-top:12px;border-radius:12px;border:1.5px solid #e5e7eb;background:#f9fafb;padding:12px}
+.fl-lectura[hidden]{display:none}
+.fl-lectura.ok{border-color:#16a34a;background:#f0fdf4}
+.fl-lectura.warn{border-color:#f59e0b;background:#fffbeb}
+.fl-lectura.bad{border-color:#dc2626;background:#fef2f2}
+.fl-lec-tit{display:flex;gap:8px;align-items:center;font-size:.92rem;margin-bottom:8px}
+.fl-lectura.ok .fl-lec-tit i{color:#16a34a}.fl-lectura.warn .fl-lec-tit i{color:#d97706}.fl-lectura.bad .fl-lec-tit i{color:#dc2626}
+.fl-lec-filas{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.fl-lec-fila{display:flex;gap:9px;align-items:flex-start;padding:9px 10px;border-radius:10px;background:#fff;border:1px solid #e5e7eb;min-width:0}
+.fl-lec-fila > i{flex:0 0 auto;margin-top:2px}
+.fl-lec-fila > div{min-width:0;display:flex;flex-direction:column;gap:1px}
+.fl-lec-fila.ok > i{color:#16a34a}.fl-lec-fila.warn > i{color:#d97706}.fl-lec-fila.bad > i{color:#dc2626}
+.fl-lec-fila.bad{border-color:#fca5a5;background:#fff5f5}
+.fl-lec-fila.warn{border-color:#fcd34d}
+.fl-lec-e{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:#6b7280}
+.fl-lec-v{font-size:.95rem;color:#111827;overflow-wrap:anywhere}
+.fl-lec-n{font-size:.8rem;color:#4b5563;line-height:1.35;overflow-wrap:anywhere}
+.fl-lec-fila.bad .fl-lec-n{color:#991b1b}
+.fl-lec-foto{display:block;max-width:100%;max-height:220px;margin:0 auto 10px;border-radius:10px;border:1px solid #e5e7eb;object-fit:contain;background:#fff}
+.fl-lec-fechas{margin-top:10px}
+.fl-lec-fechas > div{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.fl-lec-fecha{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:0 14px;border:1.5px solid #d1d5db;border-radius:999px;background:#fff;color:#111827;font-weight:700;font-size:.92rem;cursor:pointer}
+.fl-lec-fecha small{font-weight:600;font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.03em}
+.fl-lec-fecha.on{border-color:#16a34a;background:#dcfce7;color:#166534}
+.fl-lec-fecha:focus-visible{outline:3px solid #dc2626;outline-offset:2px}
+.fl-lec-por-que{margin:0 0 10px;font-size:.86rem;line-height:1.45;color:#991b1b}
+.fl-lec-avisos{margin:10px 0 0;padding:0 0 0 18px;font-size:.82rem;color:#92400e;line-height:1.4}
+.fl-lec-acc{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+.fl-lec-acc .btn{min-height:44px}
+.fl-lec-espera{display:flex;gap:12px;align-items:center}
+.fl-lec-espera > span:last-child{display:flex;flex-direction:column;gap:2px;min-width:0}
+.fl-lec-spin{flex:0 0 auto;width:22px;height:22px;border-radius:50%;border:3px solid rgba(220,38,38,.25);border-top-color:#dc2626;animation:flLecGiro .8s linear infinite}
+@keyframes flLecGiro{to{transform:rotate(360deg)}}
+.fl-lectura.leyendo{border-color:#d1d5db;background:#fafafa}
+input[readonly].fl-bloq,#flFormCh input[readonly]{background:#f3f4f6;color:#374151;cursor:not-allowed}
+@media (max-width: 640px){
+  .fl-lec-filas{grid-template-columns:1fr}
+  .fl-btn-esc{flex-basis:100%}
+}
+@media (prefers-reduced-motion: reduce){.fl-lec-spin{animation:none}}

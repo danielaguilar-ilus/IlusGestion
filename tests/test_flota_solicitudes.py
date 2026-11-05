@@ -327,6 +327,9 @@ class Falsa(BaseFalsa):
                               key=lambda c: (-c["habilitado"], c["u_nombre"] or ""))
         if s == "SELECT COUNT(*) AS n FROM flota_choferes WHERE archivado=1":
             return [{"n": sum(1 for c in self.cho.values() if c.get("archivado"))}]
+        if s.startswith("SELECT id, nombre, rut FROM `app_users` WHERE id=%s"):
+            u = self.usr.get(p[0])
+            return [{"id": u["id"], "nombre": u["nombre"], "rut": u.get("rut")}] if u else []
         if s.startswith("SELECT id, nombre, active FROM `app_users` WHERE id=%s"):
             u = self.usr.get(p[0])
             return [{"id": u["id"], "nombre": u["nombre"], "active": u["active"]}] if u else []
@@ -681,7 +684,7 @@ def _app(base, bucket="auto", extra=None):
 
     ctx = {"mysql_fetchone": base.fetchone, "mysql_fetchall": base.fetchall, "mysql_execute": base.execute,
            "mysql_execute_returning_rowcount": base.rowcount, "get_mysql": base.conexion, "AUTH_TABLE": "app_users",
-           "login_required": login_required, "current_username": lambda: "Daniel Aguilar", "_gcs_bucket": lambda: bucket}
+           "login_required": login_required, "current_username": lambda: "Daniel Aguilar", "_gcs_bucket": lambda: bucket, "licencia_verificar": False}
     ctx.update(extra or {})
     import flota_module
     flota_module.register_flota_routes(app, ctx)

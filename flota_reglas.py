@@ -729,12 +729,17 @@ def niveles(permisos):
     solicitar = entrar, ver la flota y pedir un vehículo (flota_solicitar; quien gestiona o administra también entra).
     Administrar NO da gestionar: no confirma ni entrega la llave, y sigue pidiendo con las 24 horas de aviso."""
     p = permisos or {}
-    superadmin = bool(p.get("superadmin"))
+    superadmin = es_superadmin(p)          # una sola lectura de «superadmin» en todo el módulo (la prueba de cableado la cuenta)
     admin = superadmin or bool(p.get("flota_administrar"))
     gestionar = superadmin or bool(p.get("flota_gestionar"))
     return {"admin": admin, "gestionar": gestionar,
             "documentos": admin,
             "solicitar": gestionar or admin or bool(p.get("flota_solicitar"))}
+
+
+def es_superadmin(permisos):
+    """El superadministrador: la única persona que puede saltarse la comprobación de la licencia, y solo con un motivo escrito."""
+    return bool((permisos or {}).get("superadmin"))
 
 
 # ── Patente con dígito verificador (TVDZ88-5) ──────────────────────────────
