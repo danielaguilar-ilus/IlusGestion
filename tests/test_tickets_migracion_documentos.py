@@ -206,6 +206,8 @@ ctx = {
     "mysql_execute": fake_execute,
     "get_mysql": lambda: _FakeConn(),
     "login_required": fake_login_required,
+    # Decorador de app.py que tk_list / tk_ficha exigen desde 2026-09-08/09; en producción el ctx es `globals()` de app.py (aquí, uno neutro).
+    "_no_tecnico_externo": fake_login_required,
     "current_username": lambda: "daniel.aguilar@sphs.cl",
 }
 
@@ -330,6 +332,19 @@ if fallos:
     print(f"RESULTADO: {len(fallos)} verificacion(es) FALLARON")
     for f_ in fallos:
         print(f"  - {f_}")
-    sys.exit(1)
-print("RESULTADO: todas las verificaciones pasaron")
-sys.exit(0)
+else:
+    print("RESULTADO: todas las verificaciones pasaron")
+
+import unittest  # noqa: E402
+
+
+class TestVerificacionesDelScript(unittest.TestCase):
+    """Estas verificaciones corren al IMPORTAR el módulo. Un `sys.exit` a nivel de módulo abortaba toda la recolección de `pytest tests`
+    (y quedaba como «error»); esta clase es la que cuenta bajo pytest/unittest. Como script el código de salida sigue siendo el de siempre."""
+
+    def test_todas_las_verificaciones_pasan(self):
+        self.assertFalse(fallos, "verificaciones que fallaron:\n  - " + "\n  - ".join(fallos))
+
+
+if __name__ == "__main__":
+    sys.exit(1 if fallos else 0)
