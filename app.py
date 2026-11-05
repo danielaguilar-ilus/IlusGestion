@@ -158338,6 +158338,13 @@ def repstock_crear():
                 # aparte con _repstock_mover(objetivo=...), que lee el saldo
                 # previo bajo FOR UPDATE y calcula el delta real.
                 cols_upd = [c for c in cols if c not in ("created_by", "cantidad")]
+                # 🔒 2026-11-06: reactivar solo puede SUBIR el saldo que dejó (entra mercadería); bajarlo sería una rebaja manual.
+                _saldo_prev = mysql_fetchone("SELECT cantidad FROM mant_repuestos_stock WHERE id=%s", (reactivar_id,)) or {}
+                if cantidad < float(_saldo_prev.get("cantidad") or 0) - 0.005:
+                    conn.rollback()
+                    return jsonify({"ok": False, "error_codigo": "AJUSTE_MANUAL_CERRADO", "error":
+                                    f"Este repuesto quedó con {float(_saldo_prev.get('cantidad') or 0):g} en bodega: no se puede reactivar con "
+                                    "menos. Para rebajar usa «Solicitar rebaja» (argumento + documento de Random)."}), 409
                 if _tecnico_sin_prov:
                     # 🔒 2026-10-01: reactivar un repuesto dado de baja NO debe
                     # pisar con NULL/0 el proveedor y el costo que gestión ya
@@ -158530,10 +158537,13 @@ def repstock_editar(rid):
                                 "recarga el repuesto para ver el valor actual."}), 409
         delta_estimado = round(cantidad_nueva - cantidad_bd, 2)
         motivo_ajuste = (d.get("motivo_ajuste") or "").strip()
-        if abs(delta_estimado) >= 0.005 and len(motivo_ajuste) < 5:
-            return jsonify({"ok": False, "error":
-                            "Indica el motivo del ajuste de cantidad (mínimo 5 caracteres) — "
-                            "queda registrado en el kardex del repuesto."}), 400
+        # 🔒 2026-11-06 (Daniel: «el ajuste manual es desorden y ya definitivamente no se va a volver a realizar»): la cantidad de un
+        # repuesto que YA EXISTE no se cambia a mano, ni hacia arriba ni hacia abajo. Entra por recepción de proveedor o alta, sale por
+        # instalación en OT, y una rebaja se pide con argumento + documento de Random (repreb_pedir, la autoriza el superadmin).
+        if abs(delta_estimado) >= 0.005:
+            return jsonify({"ok": False, "error_codigo": "AJUSTE_MANUAL_CERRADO", "error":
+                            "La cantidad ya no se ajusta a mano. Para rebajar, usa «Solicitar rebaja» (argumento + documento de Random, "
+                            "lo autoriza el superadmin). Las entradas llegan por recepción de proveedor."}), 409
     sets, vals = [], []
     for f in allowed:
         if f == "cantidad":
@@ -158575,16 +158585,8 @@ def repstock_editar(rid):
                     f"UPDATE mant_repuestos_stock SET {','.join(sets)} WHERE id=%s",
                     vals + [rid]
                 )
-            if ajusta_cantidad and abs(delta_estimado) >= 0.005:
-                # 🔒 BAJA #11 (revisión Fase 3): se pasa `objetivo` (la
-                # cantidad final que el usuario quiere), no un delta ya
-                # calculado -- _repstock_mover recalcula el delta real BAJO
-                # el FOR UPDATE, contra el valor que la fila tenga en ese
-                # instante (no contra `cantidad_bd`, leída antes del lock).
-                mov = _repstock_mover(
-                    rid, 0, "ajuste", "ajuste_manual", objetivo=cantidad_nueva,
-                    nota=motivo_ajuste, usuario=current_username(), cur=cur)
-                aviso = mov.get("aviso")
+            # 🔒 2026-11-06: aquí vivía el ajuste manual de cantidad (_repstock_mover con objetivo=). Se QUITÓ: un cambio de cantidad
+            # ya se rechazó arriba con AJUSTE_MANUAL_CERRADO; el stock solo se mueve por recepción, instalación o rebaja autorizada.
         conn.commit()
         _mant_log("repuesto_stock", rid, "editar")
         return jsonify({"ok": True, "aviso": aviso})
@@ -158592,6 +158594,269 @@ def repstock_editar(rid):
         conn.rollback()
         print(f"[repstock_editar] rid={rid} ERROR: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo guardar el repuesto."}), 400
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 🔒 2026-11-06 — REBAJAR UN REPUESTO QUE YA EXISTE = AUTORIZACIÓN + ARGUMENTO + DOCUMENTO DE RANDOM
+# Daniel: «los repuestos que están creados los están ajustando… necesita una autorización para rebajar, un argumento, una factura,
+# algo, porque el ajuste manual es desorden y ya definitivamente no se va a volver a realizar». Sus decisiones (6-nov): autoriza SOLO el
+# superadmin; el respaldo es argumento (≥ 30 caracteres) + un documento de Random que EXISTA; y se cierra TODO ajuste manual de cantidad
+# (repstock_editar rechaza cualquier cambio de `cantidad`: las entradas son recepción de proveedor o alta, las salidas son instalación en
+# OT, y una rebaja solo entra por acá). Quien pide es cualquier usuario de Bodega (menos el técnico externo); el superadmin que la pide la
+# aprueba en el acto, con la misma constancia. Todo queda en el kardex del repuesto con quién pidió, quién autorizó, el documento y el
+# argumento. Lógica pura y probada: repuestos_rebajas.py. Solo LEE el ERP (REGLA #4.1).
+# ══════════════════════════════════════════════════════════════════════
+import repuestos_rebajas as _repreb
+
+
+def _ensure_repuestos_rebajas():
+    """Tabla mant_repuestos_rebajas. Barata cuando ya existe (REGLA #18): un solo CREATE TABLE IF NOT EXISTS que la guarda de
+    mysql_execute salta sin pedir lock."""
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS mant_repuestos_rebajas ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  repuesto_id INT NOT NULL,"
+            "  sku VARCHAR(60) NULL,"
+            "  descripcion VARCHAR(400) NULL,"
+            "  cantidad DECIMAL(12,2) NOT NULL,"
+            "  saldo_al_pedir DECIMAL(12,2) NULL,"
+            "  argumento TEXT NULL,"
+            "  doc_tido VARCHAR(10) NULL,"
+            "  doc_nudo VARCHAR(30) NULL,"
+            "  doc_cliente VARCHAR(200) NULL,"
+            "  estado VARCHAR(12) NOT NULL DEFAULT 'pendiente',"
+            "  pedido_por VARCHAR(190) NULL,"
+            "  pedido_por_id INT NULL,"
+            "  pedido_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+            "  resuelto_por VARCHAR(190) NULL,"
+            "  resuelto_at DATETIME NULL,"
+            "  resolucion VARCHAR(500) NULL,"
+            "  saldo_resultante DECIMAL(12,2) NULL,"
+            "  KEY ix_repreb_estado (estado, pedido_at),"
+            "  KEY ix_repreb_repuesto (repuesto_id)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        return True
+    except Exception as e:
+        print(f"[ensure_repuestos_rebajas] {e}", flush=True)
+        return False
+
+
+def _repreb_ok():
+    """False si la tabla aún no existe: todo queda dormido sin romper el resto de Bodega."""
+    try:
+        return bool(mysql_fetchone("SELECT 1 AS x FROM information_schema.TABLES "
+                                   "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_repuestos_rebajas'"))
+    except Exception:
+        return False
+
+
+def _repreb_fila(r):
+    d = dict(r)
+    for k in ("cantidad", "saldo_al_pedir", "saldo_resultante"):
+        if d.get(k) is not None:
+            d[k] = float(d[k])
+    d["pedido_at"] = chile_fmt_filter(d.get("pedido_at")) if d.get("pedido_at") else ""
+    d["resuelto_at"] = chile_fmt_filter(d.get("resuelto_at")) if d.get("resuelto_at") else ""
+    d["doc_etiqueta"] = f"{_repreb.etiqueta_doc(d.get('doc_tido'))} {d.get('doc_nudo') or ''}".strip()
+    return d
+
+
+def _repreb_aplicar(rebaja_id, autoriza, auto_autorizada=False):
+    """Aprueba y APLICA la rebaja en UNA transacción: bloquea la solicitud y el repuesto (FOR UPDATE), vuelve a mirar el saldo, mueve el
+    stock con el MISMO motor de siempre (_repstock_mover) y deja constancia en el kardex. Devuelve (ok, mensaje, saldo)."""
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM mant_repuestos_rebajas WHERE id=%s FOR UPDATE", (rebaja_id,))
+            r = cur.fetchone()
+            if not r:
+                conn.rollback()
+                return False, "La solicitud no existe.", None
+            if r["estado"] != "pendiente":
+                conn.rollback()
+                return False, f"La solicitud ya está {r['estado']}.", None
+            cur.execute("SELECT cantidad, activo FROM mant_repuestos_stock WHERE id=%s FOR UPDATE", (r["repuesto_id"],))
+            rep = cur.fetchone()
+            if not rep or not rep.get("activo"):
+                conn.rollback()
+                return False, "El repuesto ya no está activo en bodega.", None
+            ok, msg = _repreb.puede_aplicarse(rep["cantidad"], r["cantidad"])
+            if not ok:
+                conn.rollback()
+                return False, msg, None
+            nota = _repreb.nota_kardex(rebaja_id, r["pedido_por"], autoriza, r["doc_tido"], r["doc_nudo"], r["argumento"],
+                                       auto_autorizada=auto_autorizada)
+            mov = _repstock_mover(r["repuesto_id"], -float(r["cantidad"]), "salida", "rebaja_autorizada",
+                                  nota=nota, usuario=autoriza, cur=cur)
+            cur.execute(
+                "UPDATE mant_repuestos_rebajas SET estado='aprobada', resuelto_por=%s, resuelto_at=NOW(), resolucion=%s, "
+                "       saldo_resultante=%s WHERE id=%s",
+                (autoriza, ("Pedida y autorizada por el superadmin." if auto_autorizada else "Autorizada por el superadmin.")[:500],
+                 mov.get("saldo"), rebaja_id))
+        conn.commit()
+        return True, "", mov.get("saldo")
+    except Exception as e:
+        conn.rollback()
+        print(f"[repreb_aplicar] #{rebaja_id}: {type(e).__name__}: {e}", flush=True)
+        return False, "No se pudo aplicar la rebaja.", None
+
+
+def _repreb_notificar(destinos, titulo, cuerpo, prioridad="media"):
+    """Avisos por la campana (sin correo, sin cliente). Nunca rompe la acción."""
+    try:
+        for uid in destinos:
+            _mant_notificar(uid, "otro", titulo, cuerpo, "/mantenciones/repuestos", prioridad)
+    except Exception as e:
+        print(f"[repreb_notificar] {type(e).__name__}: {e}", flush=True)
+
+
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/rebaja", methods=["POST"])
+@_mant_required
+@_no_tecnico_externo
+def repreb_pedir(rid):
+    """Pide rebajar unidades de un repuesto que ya existe. Body: {cantidad, argumento, tido, nudo}. Si quien pide es superadmin, la
+    rebaja se aprueba y aplica en el acto (con la misma constancia); si no, queda PENDIENTE y se avisa al superadmin."""
+    if not _repreb_ok():
+        return jsonify({"ok": False, "error": "La función de rebajas todavía se está preparando. Reintenta en un minuto."}), 503
+    d = request.get_json(silent=True) or {}
+    rep = mysql_fetchone("SELECT id, sku, descripcion, cantidad, activo FROM mant_repuestos_stock WHERE id=%s", (rid,))
+    if not rep or not rep.get("activo"):
+        return jsonify({"ok": False, "error": "Repuesto no encontrado."}), 404
+    err = _repreb.validar_pedido(rep["cantidad"], d.get("cantidad"), d.get("argumento"), d.get("tido"), d.get("nudo"))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    tido, nudo = _repreb.normalizar_doc(d.get("tido"), d.get("nudo"))
+    es_super = bool(g.permissions.get("superadmin"))
+    if not es_super and mysql_fetchone(
+            "SELECT id FROM mant_repuestos_rebajas WHERE repuesto_id=%s AND estado='pendiente' LIMIT 1", (rid,)):
+        return jsonify({"ok": False, "error": "Este repuesto ya tiene una rebaja esperando autorización. "
+                                              "Cuando se resuelva puedes pedir otra."}), 409
+    # El documento tiene que EXISTIR en Random (solo lectura). «No responde» no es «no existe»: no se culpa a quien pide.
+    doc, _via, respondio, _e = _erp_doc_lookup(tido, nudo)
+    if not doc:
+        if not respondio:
+            return jsonify({"ok": False, "error": "No se pudo consultar Random ahora. Reintenta en un momento."}), 503
+        return jsonify({"ok": False, "error": f"El documento {tido} {nudo} no existe en Random. Revisa el tipo y el número."}), 400
+    hdr = doc.get("hdr") if isinstance(doc.get("hdr"), dict) else doc
+    cliente = ""
+    for k in ("cliente_nombre", "razon_social", "NOKOEN", "cliente", "nombre_cliente"):
+        if hdr.get(k):
+            cliente = str(hdr[k]).strip()[:200]
+            break
+    usuario = current_username() or "sistema"
+    try:
+        uid = int((g.user or {}).get("id"))
+    except Exception:
+        uid = None
+    cant = round(float(d.get("cantidad")), 2)
+    argumento = str(d.get("argumento") or "").strip()[:_repreb.ARGUMENTO_MAX]
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_repuestos_rebajas (repuesto_id, sku, descripcion, cantidad, saldo_al_pedir, argumento, doc_tido, "
+                "doc_nudo, doc_cliente, pedido_por, pedido_por_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (rid, rep.get("sku"), (rep.get("descripcion") or "")[:400], cant, rep.get("cantidad"), argumento, tido, nudo,
+                 cliente or None, usuario, uid))
+            nuevo = cur.lastrowid
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[repreb_pedir] rid={rid}: {type(e).__name__}: {e}", flush=True)
+        nuevo = None
+    if not nuevo:
+        return jsonify({"ok": False, "error": "No se pudo registrar el pedido."}), 500
+    _mant_log("repuesto_stock", rid, "rebaja_pedida", f"#{nuevo}: {cant:g} u. · {tido} {nudo}")
+    if es_super:
+        ok, msg, saldo = _repreb_aplicar(nuevo, usuario, auto_autorizada=True)
+        if not ok:
+            mysql_execute("UPDATE mant_repuestos_rebajas SET estado='anulada', resolucion=%s, resuelto_por=%s, resuelto_at=NOW() "
+                          "WHERE id=%s AND estado='pendiente'", (msg[:500], usuario, nuevo))
+            return jsonify({"ok": False, "error": msg}), 409
+        _mant_log("repuesto_stock", rid, "rebaja_aprobada", f"#{nuevo}: {cant:g} u. (superadmin)")
+        return jsonify({"ok": True, "id": nuevo, "estado": "aprobada", "saldo": saldo,
+                        "mensaje": f"Rebaja aplicada: quedan {saldo:g} en bodega."})
+    try:
+        supers = [int(x["id"]) for x in (mysql_fetchall(
+            "SELECT id FROM app_users WHERE active=1 AND role='superadmin'") or [])]
+    except Exception:
+        supers = []
+    pend = (mysql_fetchone("SELECT COUNT(*) AS n FROM mant_repuestos_rebajas WHERE estado='pendiente'") or {}).get("n", 1)
+    _repreb_notificar(supers, f"Rebajas de repuestos por autorizar ({pend})",
+                      f"{usuario} pide rebajar {cant:g} u. de {rep.get('sku')} ({tido} {nudo}).", "alta")
+    return jsonify({"ok": True, "id": nuevo, "estado": "pendiente",
+                    "mensaje": "Pedido enviado. El stock no cambia hasta que el superadmin lo autorice."})
+
+
+@app.route("/mantenciones/api/repuestos-rebajas", methods=["GET"])
+@_mant_required
+@_no_tecnico_externo
+def repreb_listar():
+    """Superadmin: todas (por defecto las pendientes). Cualquier otro usuario: solo las que él pidió."""
+    if not _repreb_ok():
+        return jsonify({"ok": True, "rebajas": [], "pendientes": 0})
+    es_super = bool(g.permissions.get("superadmin"))
+    estado = (request.args.get("estado") or "pendiente").strip().lower()
+    where, params = [], []
+    if estado in _repreb.ESTADOS:
+        where.append("estado=%s"); params.append(estado)
+    if not es_super:
+        where.append("pedido_por=%s"); params.append(current_username() or "")
+    sql = "SELECT * FROM mant_repuestos_rebajas" + (" WHERE " + " AND ".join(where) if where else "") + \
+          " ORDER BY id DESC LIMIT 200"
+    filas = [_repreb_fila(r) for r in (mysql_fetchall(sql, tuple(params)) or [])]
+    if es_super:
+        pend = (mysql_fetchone("SELECT COUNT(*) AS n FROM mant_repuestos_rebajas WHERE estado='pendiente'") or {}).get("n", 0)
+    else:
+        pend = (mysql_fetchone("SELECT COUNT(*) AS n FROM mant_repuestos_rebajas WHERE estado='pendiente' AND pedido_por=%s",
+                               (current_username() or "",)) or {}).get("n", 0)
+    return jsonify({"ok": True, "rebajas": filas, "pendientes": int(pend or 0), "es_superadmin": es_super,
+                    "tipos_doc": [{"codigo": c, "nombre": n} for c, n in _repreb.TIPOS_DOC]})
+
+
+@app.route("/mantenciones/api/repuestos-rebajas/<int:bid>/resolver", methods=["POST"])
+@_mant_required
+@_no_tecnico_externo
+def repreb_resolver(bid):
+    """El superadmin aprueba (y se aplica) o rechaza con motivo. Quien pidió puede ANULAR la suya mientras esté pendiente."""
+    if not _repreb_ok():
+        return jsonify({"ok": False, "error": "La función de rebajas todavía se está preparando."}), 503
+    d = request.get_json(silent=True) or {}
+    accion = str(d.get("accion") or "").strip().lower()
+    r = mysql_fetchone("SELECT * FROM mant_repuestos_rebajas WHERE id=%s", (bid,))
+    if not r:
+        return jsonify({"ok": False, "error": "La solicitud no existe."}), 404
+    usuario = current_username() or "sistema"
+    if accion == "anular":
+        if r["pedido_por"] != usuario and not g.permissions.get("superadmin"):
+            return jsonify({"ok": False, "error": "Solo quien la pidió puede anularla."}), 403
+        n = mysql_execute("UPDATE mant_repuestos_rebajas SET estado='anulada', resuelto_por=%s, resuelto_at=NOW(), resolucion=%s "
+                          "WHERE id=%s AND estado='pendiente'", (usuario, "Anulada por quien la pidió.", bid))
+        _mant_log("repuesto_stock", r["repuesto_id"], "rebaja_anulada", f"#{bid}")
+        return jsonify({"ok": True, "estado": "anulada"})
+    if not g.permissions.get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo el superadmin autoriza o rechaza una rebaja."}), 403
+    err = _repreb.validar_resolucion(accion, d.get("comentario"))
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    if accion == "aprobar":
+        ok, msg, saldo = _repreb_aplicar(bid, usuario)
+        if not ok:
+            return jsonify({"ok": False, "error": msg}), 409
+        _mant_log("repuesto_stock", r["repuesto_id"], "rebaja_aprobada", f"#{bid}: {float(r['cantidad']):g} u.")
+        if r.get("pedido_por_id") and r["pedido_por"] != usuario:
+            _repreb_notificar([int(r["pedido_por_id"])], "Rebaja de repuesto autorizada",
+                              f"Se rebajaron {float(r['cantidad']):g} u. de {r.get('sku')}. Quedan {saldo:g} en bodega.")
+        return jsonify({"ok": True, "estado": "aprobada", "saldo": saldo})
+    motivo = str(d.get("comentario") or "").strip()[:500]
+    n = mysql_execute("UPDATE mant_repuestos_rebajas SET estado='rechazada', resuelto_por=%s, resuelto_at=NOW(), resolucion=%s "
+                      "WHERE id=%s AND estado='pendiente'", (usuario, motivo, bid))
+    _mant_log("repuesto_stock", r["repuesto_id"], "rebaja_rechazada", f"#{bid}: {motivo}")
+    if r.get("pedido_por_id") and r["pedido_por"] != usuario:
+        _repreb_notificar([int(r["pedido_por_id"])], "Rebaja de repuesto rechazada",
+                          f"No se rebajó {r.get('sku')}. Motivo: {motivo}")
+    return jsonify({"ok": True, "estado": "rechazada"})
 
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/movimientos", methods=["GET"])
@@ -184808,6 +185073,13 @@ try:
         _ensure_ot_sin_saldo()
 except Exception as _ensure_sin_saldo_err:
     print(f"[ILUS][WARN] _ensure_ot_sin_saldo: {_ensure_sin_saldo_err}", flush=True)
+
+# 🔒 2026-11-06: rebajas de repuestos con autorización (tabla barata si ya existe, REGLA #18). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_repuestos_rebajas()
+except Exception as _ensure_rebajas_err:
+    print(f"[ILUS][WARN] _ensure_repuestos_rebajas: {_ensure_rebajas_err}", flush=True)
 
 # 🎛️ 2026-10-20 (REGLA #32): acá vivió el ajuste automático «Foto de entrega» en las plantillas de instalación. Ya no se
 # toca ninguna plantilla existente en el arranque: es una PROPUESTA que una persona aplica en /mantenciones/plantillas

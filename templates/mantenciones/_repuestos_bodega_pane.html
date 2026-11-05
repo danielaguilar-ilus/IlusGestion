@@ -601,6 +601,9 @@
             <li><button type="button" class="dropdown-item" onclick="rbmAbrir({{ r.id }}, '{{ r.sku }}')">
               <i class="bi bi-clock-history me-1"></i>Movimientos
             </button></li>
+            <li><button type="button" class="dropdown-item" onclick='rbRebajaAbrir({{ r.id }}, {{ r.sku|tojson }}, {{ (r.descripcion or "")|tojson }}, {{ r.cantidad|float }})'>
+              <i class="bi bi-arrow-down-circle me-1 text-warning"></i>Solicitar rebaja
+            </button></li>
             <li><hr class="dropdown-divider"></li>
             <li><button type="button" class="dropdown-item text-danger" onclick="rbEliminar({{ r.id }}, '{{ r.sku }}')">
               <i class="bi bi-trash me-1"></i>Eliminar
@@ -721,6 +724,16 @@
                  solo aparece cuando la cantidad de un repuesto YA EXISTENTE
                  cambia (rbCantidadCambio) -- un alta nueva no pide motivo,
                  es carga inicial, no un ajuste sobre algo que ya había. #}
+              {# 🔒 2026-11-06 (Daniel: «el ajuste manual es desorden y no se va a volver a realizar»): la cantidad de un repuesto que ya
+                 existe NO se escribe a mano. Para rebajar se pide con argumento + documento de Random y lo autoriza el superadmin. #}
+              <div class="col-12" id="rbRebajaWrap" style="display:none">
+                <div class="d-flex align-items-center flex-wrap gap-2 p-2" style="background:#fff8e1;border:1px solid #fde68a;border-radius:10px">
+                  <span class="flex-grow-1" style="font-size:.84rem;color:#92400e"><i class="bi bi-lock-fill me-1"></i>La cantidad ya no se ajusta a mano.
+                    Para rebajar, pide la autorización con su argumento y el documento de Random.</span>
+                  <button type="button" class="btn btn-sm btn-warning fw-bold" style="min-height:44px" onclick="rbRebajaDesdeModal()">
+                    <i class="bi bi-arrow-down-circle me-1"></i>Solicitar rebaja</button>
+                </div>
+              </div>
               <div class="col-12" id="rbMotivoAjusteWrap" style="display:none">
                 <label class="form-label small fw-semibold">Motivo del ajuste de cantidad <span class="rb-req">*</span></label>
                 <input type="text" class="form-control" id="rbMotivoAjuste" maxlength="500"
@@ -1858,6 +1871,8 @@ async function rbAbrirNuevo(mantenerContexto, opts){
   // 2026-09-26 (kardex): un alta nueva nunca pide motivo de ajuste -- es
   // carga inicial, no un cambio sobre algo que ya existía.
   RB_CANTIDAD_ORIGINAL = null;
+  document.getElementById('rbCantidad').readOnly = false;          // 2026-11-06: solo un repuesto NUEVO escribe su cantidad
+  document.getElementById('rbRebajaWrap').style.display = 'none';
   document.getElementById('rbMotivoAjusteWrap').style.display = 'none';
   document.getElementById('rbMotivoAjuste').value = '';
   // Medidas físicas: SIEMPRE se limpian, incluso con mantenerContexto --
@@ -1959,6 +1974,8 @@ function rbAbrirEditar(r, modelos, fotos){
   // 2026-09-26 (kardex): guarda con QUÉ cantidad se abrió -- si el usuario
   // la cambia antes de guardar, rbCantidadCambio() pide el motivo.
   RB_CANTIDAD_ORIGINAL = r.cantidad != null ? Number(r.cantidad) : null;
+  document.getElementById('rbCantidad').readOnly = true;           // 2026-11-06: la cantidad de un repuesto que ya existe no se ajusta a mano
+  document.getElementById('rbRebajaWrap').style.display = '';
   document.getElementById('rbMotivoAjusteWrap').style.display = 'none';
   document.getElementById('rbMotivoAjuste').value = '';
   document.getElementById('rbStockMinimo').value = r.stock_minimo != null ? r.stock_minimo : 1;
@@ -2231,6 +2248,161 @@ async function rbGuardarDesdeSolicitud(){
   if (typeof sol.onCreado === 'function') sol.onCreado(j);
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   🔒 2026-11-06 — REBAJAS DE REPUESTOS CON AUTORIZACIÓN (Daniel: «necesita una autorización para rebajar, un argumento, una factura…»).
+   Pedir: cantidad + argumento (≥ 30 caracteres) + documento de Random. El superadmin lo autoriza en la bandeja «Rebajas»; si quien pide
+   es superadmin se aplica en el acto. El servidor valida todo otra vez (repreb_pedir / repreb_resolver).
+   ══════════════════════════════════════════════════════════════════════ */
+const RB_REBAJA_TIPOS = [['FCV','Factura'],['BLV','Boleta'],['GDV','Guía de despacho'],['NVV','Nota de venta'],['FCC','Factura de compra'],['GRC','Guía de recepción']];
+let RB_REBAJA = null, RB_REBAJA_MODAL = null;
+function _rbEsc(t){ return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function rbRebajaDesdeModal(){
+  const id = document.getElementById('rbId').value;
+  if (!id) return;
+  rbRebajaAbrir(Number(id), document.getElementById('rbSku').value, document.getElementById('rbDescripcion').value, RB_CANTIDAD_ORIGINAL || 0);
+}
+function rbRebajaAbrir(id, sku, descripcion, saldo){
+  RB_REBAJA = { id, sku, descripcion, saldo: Number(saldo) || 0 };
+  let el = document.getElementById('modalRebaja');
+  if (!el){
+    el = document.createElement('div');
+    el.className = 'modal fade'; el.id = 'modalRebaja'; el.tabIndex = -1;
+    el.innerHTML = `<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable"><div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff"><h5 class="modal-title fw-bold"><i class="bi bi-arrow-down-circle me-2"></i>Solicitar rebaja</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+      <div class="modal-body">
+        <div id="rbRebajaRes" class="mb-3" style="font-size:.9rem"></div>
+        <div class="mb-3"><label class="form-label small fw-semibold">Unidades a rebajar <span class="rb-req">*</span></label>
+          <input type="number" class="form-control" id="rbRebajaCant" min="1" step="1" inputmode="numeric"></div>
+        <div class="row g-2 mb-3">
+          <div class="col-5"><label class="form-label small fw-semibold">Documento de Random <span class="rb-req">*</span></label>
+            <select class="form-select" id="rbRebajaTido">${RB_REBAJA_TIPOS.map(t => `<option value="${t[0]}">${t[1]} (${t[0]})</option>`).join('')}</select></div>
+          <div class="col-7"><label class="form-label small fw-semibold">Número <span class="rb-req">*</span></label>
+            <input type="text" class="form-control" id="rbRebajaNudo" maxlength="30" placeholder="Ej: 34190" autocomplete="off"></div>
+        </div>
+        <div class="mb-1"><label class="form-label small fw-semibold">Argumento <span class="rb-req">*</span></label>
+          <textarea class="form-control" id="rbRebajaArg" rows="4" maxlength="1000" oninput="rbRebajaContar()"
+            placeholder="Qué pasó, con qué equipo o cliente, quién lo constató. Mínimo 30 caracteres."></textarea>
+          <div class="rb-input-help mb-0" id="rbRebajaContador">0 / 30 caracteres mínimos</div></div>
+        <div class="rb-input-help mt-2 mb-0">El stock no cambia hasta que el superadmin lo autorice. Queda en el kardex con quién pidió, quién autorizó, el documento y el argumento.</div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal" style="min-height:44px">Cancelar</button>
+        <button type="button" class="btn btn-danger fw-bold" id="rbRebajaEnviar" onclick="rbRebajaEnviar()" style="min-height:44px"><i class="bi bi-send me-1"></i>Enviar pedido</button></div>
+    </div></div>`;
+    document.body.appendChild(el);
+    RB_REBAJA_MODAL = new bootstrap.Modal(el);
+  }
+  document.getElementById('rbRebajaRes').innerHTML = `<strong>${_rbEsc(sku)}</strong> — ${_rbEsc(descripcion)}<br><span class="text-muted">En bodega hoy: <strong>${RB_REBAJA.saldo}</strong> u.</span>`;
+  document.getElementById('rbRebajaCant').value = '';
+  document.getElementById('rbRebajaCant').max = RB_REBAJA.saldo;
+  document.getElementById('rbRebajaNudo').value = '';
+  document.getElementById('rbRebajaArg').value = '';
+  rbRebajaContar();
+  RB_REBAJA_MODAL.show();
+}
+function rbRebajaContar(){
+  const n = document.getElementById('rbRebajaArg').value.trim().length;
+  const c = document.getElementById('rbRebajaContador');
+  c.textContent = n + ' / 30 caracteres mínimos';
+  c.style.color = n >= 30 ? '#166534' : '#6b7280';
+}
+async function rbRebajaEnviar(){
+  if (!RB_REBAJA) return;
+  const cant = Number(document.getElementById('rbRebajaCant').value);
+  const nudo = document.getElementById('rbRebajaNudo').value.trim();
+  const arg = document.getElementById('rbRebajaArg').value.trim();
+  if (!(cant > 0)){ ilusToast('Indica cuántas unidades se rebajan', {type:'warning'}); return; }
+  if (cant > RB_REBAJA.saldo){ ilusToast('No puedes rebajar más de lo que hay en bodega (' + RB_REBAJA.saldo + ')', {type:'warning'}); return; }
+  if (!nudo){ ilusToast('Indica el número del documento de Random', {type:'warning'}); return; }
+  if (arg.length < 30){ ilusToast('El argumento necesita al menos 30 caracteres', {type:'warning'}); return; }
+  const btn = document.getElementById('rbRebajaEnviar'); btn.disabled = true;
+  try{
+    const r = await fetch('/mantenciones/api/repuestos-stock/' + RB_REBAJA.id + '/rebaja', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cantidad: cant, argumento: arg, tido: document.getElementById('rbRebajaTido').value, nudo})});
+    const d = await r.json().catch(() => ({}));
+    if (!(r.ok && d.ok)){ await ilusAlert({title:'No se pudo enviar', message: d.error || 'Reintenta en un momento.', type:'warning'}); return; }
+    RB_REBAJA_MODAL.hide();
+    await ilusAlert({title: d.estado === 'aprobada' ? 'Rebaja aplicada' : 'Pedido enviado', message: d.mensaje || '', type:'success'});
+    if (d.estado === 'aprobada') location.reload(); else rbRebajasContar();
+  }catch(e){ ilusToast('Error de conexión', {type:'error'}); }
+  finally{ btn.disabled = false; }
+}
+async function rbRebajasContar(){
+  try{
+    const d = await (await fetch('/mantenciones/api/repuestos-rebajas?estado=pendiente')).json();
+    const b = document.getElementById('rbRebajasN');
+    if (b && d.ok){ b.textContent = d.pendientes; b.style.display = d.pendientes ? '' : 'none'; }
+  }catch(_){}
+}
+async function rbRebajasAbrir(){
+  let el = document.getElementById('modalRebajas');
+  if (!el){
+    el = document.createElement('div');
+    el.className = 'modal fade'; el.id = 'modalRebajas'; el.tabIndex = -1;
+    el.innerHTML = `<div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable"><div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff"><h5 class="modal-title fw-bold"><i class="bi bi-arrow-down-circle me-2"></i>Rebajas de repuestos</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+      <div class="modal-body"><div class="d-flex gap-2 mb-3 flex-wrap">
+        <select class="form-select" id="rbRebajasEstado" onchange="rbRebajasCargar()" style="max-width:220px;min-height:44px">
+          <option value="pendiente">Por autorizar</option><option value="aprobada">Aprobadas</option><option value="rechazada">Rechazadas</option><option value="anulada">Anuladas</option><option value="todas">Todas</option></select></div>
+        <div id="rbRebajasLista"></div></div></div></div>`;
+    document.body.appendChild(el);
+  }
+  bootstrap.Modal.getOrCreateInstance(el).show();
+  rbRebajasCargar();
+}
+async function rbRebajasCargar(){
+  const cont = document.getElementById('rbRebajasLista');
+  cont.innerHTML = '<div class="text-muted py-3">Cargando…</div>';
+  try{
+    const est = document.getElementById('rbRebajasEstado').value;
+    const d = await (await fetch('/mantenciones/api/repuestos-rebajas?estado=' + encodeURIComponent(est))).json();
+    if (!d.ok){ cont.innerHTML = '<div class="text-danger py-3">No se pudo cargar.</div>'; return; }
+    const b = document.getElementById('rbRebajasN'); if (b){ b.textContent = d.pendientes; b.style.display = d.pendientes ? '' : 'none'; }
+    if (!d.rebajas.length){ cont.innerHTML = '<div class="text-muted py-3">No hay rebajas en este estado.</div>'; return; }
+    const colores = {pendiente:['#fff8e1','#92400e'], aprobada:['#dcfce7','#166534'], rechazada:['#fee2e2','#991b1b'], anulada:['#f3f4f6','#4b5563']};
+    cont.innerHTML = d.rebajas.map(r => {
+      const c = colores[r.estado] || colores.anulada;
+      let acc = '';
+      if (r.estado === 'pendiente'){
+        acc = d.es_superadmin
+          ? `<button class="btn btn-success fw-bold" style="min-height:44px" onclick="rbRebajaResolver(${r.id},'aprobar')"><i class="bi bi-check2-circle me-1"></i>Autorizar</button>
+             <button class="btn btn-outline-danger fw-bold" style="min-height:44px" onclick="rbRebajaResolver(${r.id},'rechazar')"><i class="bi bi-x-circle me-1"></i>Rechazar</button>`
+          : `<button class="btn btn-outline-secondary" style="min-height:44px" onclick="rbRebajaResolver(${r.id},'anular')">Anular mi pedido</button>`;
+      }
+      return `<div class="p-3 mb-2" style="border:1px solid #eaecf0;border-left:4px solid ${c[1]};border-radius:10px">
+        <div class="d-flex justify-content-between flex-wrap gap-2"><div><strong>${_rbEsc(r.sku)}</strong> — ${_rbEsc(r.descripcion)}</div>
+          <span class="badge" style="background:${c[0]};color:${c[1]};font-size:.75rem">${_rbEsc(r.estado.toUpperCase())}</span></div>
+        <div class="mt-1">Rebajar <strong>${r.cantidad}</strong> u. (había ${r.saldo_al_pedir})${r.saldo_resultante != null ? ' · quedaron ' + r.saldo_resultante : ''}</div>
+        <div class="text-muted" style="font-size:.84rem">Documento: <strong>${_rbEsc(r.doc_etiqueta)}</strong>${r.doc_cliente ? ' · ' + _rbEsc(r.doc_cliente) : ''}</div>
+        <div class="mt-1" style="font-size:.9rem"><em>«${_rbEsc(r.argumento)}»</em></div>
+        <div class="text-muted" style="font-size:.78rem">Pidió ${_rbEsc(r.pedido_por)} · ${_rbEsc(r.pedido_at)}${r.resuelto_por ? ' · ' + _rbEsc(r.estado) + ' por ' + _rbEsc(r.resuelto_por) + ' · ' + _rbEsc(r.resuelto_at) : ''}${r.resolucion && r.estado === 'rechazada' ? ' · Motivo: ' + _rbEsc(r.resolucion) : ''}</div>
+        ${acc ? `<div class="d-flex gap-2 flex-wrap mt-2">${acc}</div>` : ''}</div>`;
+    }).join('');
+  }catch(e){ cont.innerHTML = '<div class="text-danger py-3">Error de conexión.</div>'; }
+}
+async function rbRebajaResolver(id, accion){
+  let comentario = '';
+  if (accion === 'aprobar'){
+    const ok = await ilusConfirm({title:'Autorizar la rebaja', message:'Se descuenta del stock ahora y queda en el kardex con tu nombre.', okLabel:'Autorizar', cancelLabel:'Volver'});
+    if (!ok) return;
+  } else if (accion === 'rechazar'){
+    comentario = await ilusPrompt({title:'Rechazar la rebaja', message:'Escribe el motivo: lo verá quien la pidió.', required:true, placeholder:'Ej: falta la guía de despacho'});
+    if (!comentario) return;
+  } else {
+    const ok = await ilusConfirm({title:'Anular tu pedido', message:'El pedido se cancela y el stock no cambia.', okLabel:'Anular', cancelLabel:'Volver'});
+    if (!ok) return;
+  }
+  try{
+    const r = await fetch('/mantenciones/api/repuestos-rebajas/' + id + '/resolver', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({accion, comentario})});
+    const d = await r.json().catch(() => ({}));
+    if (!(r.ok && d.ok)){ await ilusAlert({title:'No se pudo', message: d.error || 'Reintenta.', type:'warning'}); return; }
+    ilusToast(accion === 'aprobar' ? '✓ Rebaja autorizada y aplicada' : (accion === 'rechazar' ? 'Rebaja rechazada' : 'Pedido anulado'), {type:'success'});
+    rbRebajasCargar();
+  }catch(e){ ilusToast('Error de conexión', {type:'error'}); }
+}
+document.addEventListener('DOMContentLoaded', function(){ if (document.getElementById('rbRebajasBtn')) rbRebajasContar(); });
+
 function rbCantidadCambio(){
   const wrap = document.getElementById('rbMotivoAjusteWrap');
   if (RB_CANTIDAD_ORIGINAL === null){ wrap.style.display = 'none'; return; }
@@ -2333,8 +2505,8 @@ async function rbGuardar(crearOtro){
   const body = {
     modelo_pendiente: RB_MODELO_PENDIENTE ? 1 : 0,
     descripcion: descripcion,
-    cantidad: (id && !cantidadCambio) ? undefined : cantidad,
-    cantidad_original: cantidadCambio ? RB_CANTIDAD_ORIGINAL : undefined,
+    cantidad: id ? undefined : cantidad,                // 🔒 2026-11-06: al editar la cantidad NO viaja (se rebaja con «Solicitar rebaja»)
+    cantidad_original: undefined,
     stock_minimo: stockMin,
     costo_unitario: RB_OCULTA_PROV ? undefined : rbCostoRaw(),   // 🔒 un técnico no manda costo (undefined = la clave no viaja)
     ubicacion_id: document.getElementById('rbUbicacion').value || null,
