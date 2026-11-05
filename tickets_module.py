@@ -8500,16 +8500,10 @@ def register_tickets_routes(app, ctx):
         out.sort(key=lambda gr: (gr["ticket_id"] or 0, gr["copias"][0].get("id") or 0))
         return out
 
-    @app.route("/tickets/api/auditoria/correos-duplicados", methods=["GET"])
-    @_tickets_required
-    def tk_api_auditoria_correos_duplicados():
-        if not _tk_solo_superadmin():
-            return jsonify({"ok": False,
-                            "error": "Solo un superadministrador puede ver esta auditoría."}), 403
-        try:
-            dias = min(3650, max(1, int(request.args.get("dias", 120))))
-        except Exception:
-            dias = 120
+    def _tk_dup_leer(dias):
+        """Lee de la base los correos con Message-ID de los últimos `dias` días y devuelve (filas, grupos, adj_por_msg): los grupos de copias
+        (ver _tk_dup_agrupar) y los adjuntos de cada copia {mensaje_id: [{id, nombre, tipo, kb}]}. La usan la auditoría (solo lectura) y la
+        limpieza: las dos miran EXACTAMENTE lo mismo."""
         filas = mysql_fetchall(
             "SELECT id, ticket_id, tipo, metadata, usuario, created_at, message_date, "
             "       MD5(contenido) AS huella, CHAR_LENGTH(contenido) AS largo, "
@@ -8532,6 +8526,19 @@ def register_tickets_routes(app, ctx):
                 adj_por_msg.setdefault(a["mensaje_id"], []).append(
                     {"id": a["id"], "nombre": a.get("archivo_nombre"),
                      "tipo": a.get("mime_type"), "kb": a.get("file_size_kb")})
+        return filas, grupos, adj_por_msg
+
+    @app.route("/tickets/api/auditoria/correos-duplicados", methods=["GET"])
+    @_tickets_required
+    def tk_api_auditoria_correos_duplicados():
+        if not _tk_solo_superadmin():
+            return jsonify({"ok": False,
+                            "error": "Solo un superadministrador puede ver esta auditoría."}), 403
+        try:
+            dias = min(3650, max(1, int(request.args.get("dias", 120))))
+        except Exception:
+            dias = 120
+        filas, grupos, adj_por_msg = _tk_dup_leer(dias)
 
         ids_tk = sorted({gr["ticket_id"] for gr in grupos})
         tickets = {}
@@ -8571,6 +8578,197 @@ def register_tickets_routes(app, ctx):
             },
             "grupos": salida,
         })
+
+    # ─────────────────────────────────────────────────────────────────
+    #  LIMPIEZA — quitar las copias repetidas de un correo del cliente (Daniel, 4-nov-2026, Fase 0: «déjala lista»; la CAUSA ya está
+    #  corregida con _tk_mail_reclamar). Quedaron ~183 mensajes y ~210 adjuntos repetidos, guardados antes del arreglo. Es lo ÚNICO del
+    #  módulo que borra correos de clientes, así que va con todos los candados:
+    #    · solo superadmin; SIMULACIÓN por defecto (nunca borra sin dry_run=false) y confirmación EXACTA con el número que mostró la
+    #      simulación («QUITAR 183 COPIAS»);
+    #    · solo copias IDÉNTICAS (mismo ticket, mismo Message-ID, mismo texto por MD5, mismo tipo y usuario y guardadas con pocos minutos de
+    #      diferencia); se conserva SIEMPRE la primera (id menor);
+    #    · los adjuntos de una copia solo se quitan si la copia conservada tiene los mismos archivos (nombre y tamaño); si no, el grupo se
+    #      omite y se lista para que lo mire una persona;
+    #    · ANTES de borrar: auditoría (_audit) y respaldo completo de cada fila y de sus adjuntos en tk_mensajes_quitados (se puede
+    #      restaurar); los archivos de la nube NUNCA se borran (podrían compartir ruta con la copia conservada);
+    #    · en tandas (`limite` grupos por llamada) y cada copia se verifica DE NUEVO contra la base justo antes de quitarla.
+    #  Hoy no se ejecuta sola ni la llama ninguna pantalla: la corre una persona con el «sí» de Daniel, después de ver la simulación.
+    # ─────────────────────────────────────────────────────────────────
+    _TK_DUP_MAX_MINUTOS = 60
+
+    def _tk_dup_plan(grupos, adj_por_msg, max_minutos=_TK_DUP_MAX_MINUTOS):
+        """PURA. De los grupos de _tk_dup_agrupar arma qué copias se pueden quitar con seguridad. Devuelve
+        {"grupos": [{ticket_id, message_id, conserva, quitar: [{id, adjuntos: [ids]}]}], "omitidos": [{ticket_id, message_id, motivo}],
+         "mensajes": N, "adjuntos": M}. Siempre se conserva la primera copia (id menor)."""
+        def clave_adj(a):
+            return (str(a.get("nombre") or "").strip().lower(), a.get("kb"))
+
+        buenos, omitidos = [], []
+        for gr in grupos or []:
+            copias = gr.get("copias") or []
+            if len(copias) < 2:
+                continue
+            base = {"ticket_id": gr.get("ticket_id"), "message_id": gr.get("message_id")}
+            if not gr.get("mismo_contenido"):
+                omitidos.append(dict(base, motivo="el texto de las copias es distinto: que lo mire una persona"))
+                continue
+            conserva, resto = copias[0], copias[1:]
+            motivo = None
+            if any((c.get("tipo"), c.get("usuario")) != (conserva.get("tipo"), conserva.get("usuario")) for c in resto):
+                motivo = "las copias tienen distinto tipo o usuario"
+            else:
+                for c in resto:
+                    try:
+                        if abs((c.get("created_at") - conserva.get("created_at")).total_seconds()) > max_minutos * 60:
+                            motivo = "las copias se guardaron con más de %d minutos de diferencia" % max_minutos
+                            break
+                    except Exception:
+                        motivo = "no se pudo comparar cuándo se guardó cada copia"
+                        break
+            quitar = []
+            if not motivo:
+                tiene = {}
+                for a in adj_por_msg.get(conserva.get("id"), []):
+                    tiene[clave_adj(a)] = tiene.get(clave_adj(a), 0) + 1
+                for c in resto:
+                    propios = adj_por_msg.get(c.get("id"), [])
+                    disp = dict(tiene)
+                    for a in propios:
+                        k = clave_adj(a)
+                        if disp.get(k, 0) <= 0:
+                            motivo = "una copia trae adjuntos que la copia conservada no tiene"
+                            break
+                        disp[k] -= 1
+                    if motivo:
+                        break
+                    quitar.append({"id": c.get("id"), "adjuntos": [a.get("id") for a in propios]})
+            if motivo:
+                omitidos.append(dict(base, motivo=motivo))
+                continue
+            buenos.append({"ticket_id": gr.get("ticket_id"), "message_id": gr.get("message_id"),
+                           "conserva": conserva.get("id"), "quitar": quitar})
+        return {"grupos": buenos, "omitidos": omitidos,
+                "mensajes": sum(len(g["quitar"]) for g in buenos),
+                "adjuntos": sum(len(q["adjuntos"]) for g in buenos for q in g["quitar"])}
+
+    _TK_DUP_DDL_RESPALDO = (
+        "CREATE TABLE IF NOT EXISTS tk_mensajes_quitados ("
+        "  id INT AUTO_INCREMENT PRIMARY KEY, mensaje_id INT NOT NULL, ticket_id INT NOT NULL, conserva_mensaje_id INT NULL, "
+        "  fila_json MEDIUMTEXT NULL, adjuntos_json MEDIUMTEXT NULL, motivo VARCHAR(200) NULL, quitado_por VARCHAR(190) NULL, "
+        "  quitado_at DATETIME DEFAULT CURRENT_TIMESTAMP, KEY idx_quitado_msg (mensaje_id), KEY idx_quitado_ticket (ticket_id)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+    @app.route("/tickets/api/auditoria/correos-duplicados/quitar", methods=["POST"])
+    @_tickets_required
+    def tk_api_quitar_correos_duplicados():
+        if not _tk_solo_superadmin():
+            return jsonify({"ok": False, "error": "Solo un superadministrador puede quitar correos repetidos."}), 403
+        d = request.get_json(silent=True) or {}
+        try:
+            dias = min(3650, max(1, int(d.get("dias", 3650))))
+        except Exception:
+            dias = 3650
+        try:
+            limite = min(100, max(1, int(d.get("limite", 40))))
+        except Exception:
+            limite = 40
+        # SIMULACIÓN por defecto: solo se ejecuta con un `dry_run` explícitamente falso (false, 0, "false", "0", "no"). Ausente, null,
+        # vacío o cualquier otra cosa = simulación.
+        dr = d.get("dry_run", True)
+        if isinstance(dr, str):
+            ejecutar = dr.strip().lower() in ("0", "false", "no")
+        else:
+            ejecutar = isinstance(dr, (bool, int, float)) and not dr
+        dry_run = not ejecutar
+
+        _filas, grupos, adj_por_msg = _tk_dup_leer(dias)
+        plan = _tk_dup_plan(grupos, adj_por_msg)
+        esperado = "QUITAR %d COPIAS" % plan["mensajes"]
+        resumen = {"grupos": len(plan["grupos"]), "mensajes_a_quitar": plan["mensajes"], "adjuntos_a_quitar": plan["adjuntos"],
+                   "grupos_omitidos": len(plan["omitidos"]), "ventana_dias": dias, "por_llamada": limite}
+
+        if dry_run:
+            return jsonify({"ok": True, "dry_run": True, "resumen": resumen, "confirmar_con": esperado,
+                            "ejemplos": plan["grupos"][:15], "omitidos": plan["omitidos"][:50],
+                            "nota": "Simulación: no se borró nada. Los archivos de la nube no se borran nunca."})
+        if not plan["mensajes"]:
+            return jsonify({"ok": True, "dry_run": False, "quitados": {"mensajes": 0, "adjuntos": 0}, "resumen": resumen,
+                            "nota": "No hay copias repetidas que quitar."})
+        confirm = " ".join(str(d.get("confirm") or "").strip().upper().split())
+        if confirm != esperado:
+            return jsonify({"ok": False, "error": "Para confirmar, escribe exactamente: " + esperado,
+                            "expected": esperado, "resumen": resumen}), 400
+
+        tanda = plan["grupos"][:limite]
+        try:
+            _audit("tk_correos_duplicados_quitar", target_type="tk_correos_duplicados",
+                   details={"confirmado": esperado, "grupos_en_la_tanda": len(tanda),
+                            "mensajes": [q["id"] for gr in tanda for q in gr["quitar"]], "resumen": resumen})
+        except Exception:
+            pass
+        mysql_execute(_TK_DUP_DDL_RESPALDO)
+        usuario = current_username() or "sistema"
+        quitados_m, quitados_a, fallos, tickets_tocados = 0, 0, [], set()
+        for gr in tanda:
+            tid = gr["ticket_id"]
+            for c in gr["quitar"]:
+                try:
+                    # Se verifica DE NUEVO contra la base: la copia y la conservada siguen existiendo y siguen siendo idénticas.
+                    fila = mysql_fetchone("SELECT *, MD5(contenido) AS huella_dup FROM tk_mensajes WHERE id=%s AND ticket_id=%s",
+                                          (c["id"], tid))
+                    base = mysql_fetchone("SELECT MD5(contenido) AS huella_dup FROM tk_mensajes WHERE id=%s AND ticket_id=%s",
+                                          (gr["conserva"], tid))
+                    if not fila or not base or fila.get("huella_dup") != base.get("huella_dup"):
+                        fallos.append({"mensaje_id": c["id"], "motivo": "ya no coincide con la copia conservada"})
+                        continue
+                    adjs = mysql_fetchall("SELECT * FROM tk_adjuntos WHERE mensaje_id=%s AND ticket_id=%s ORDER BY id", (c["id"], tid)) or []
+                    if {a["id"] for a in adjs} != set(c["adjuntos"]):
+                        fallos.append({"mensaje_id": c["id"], "motivo": "los adjuntos cambiaron desde la simulación"})
+                        continue
+                    fila.pop("huella_dup", None)
+                    mysql_execute(
+                        "INSERT INTO tk_mensajes_quitados (mensaje_id, ticket_id, conserva_mensaje_id, fila_json, adjuntos_json, motivo, quitado_por) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                        (c["id"], tid, gr["conserva"], json.dumps(fila, default=str, ensure_ascii=False),
+                         json.dumps([dict(a) for a in adjs], default=str, ensure_ascii=False),
+                         "copia repetida del mismo correo del cliente", usuario))
+                    for a in adjs:
+                        mysql_execute("DELETE FROM tk_adjuntos WHERE id=%s AND mensaje_id=%s", (a["id"], c["id"]))
+                    mysql_execute("DELETE FROM tk_mensajes WHERE id=%s AND ticket_id=%s", (c["id"], tid))
+                    quitados_m += 1
+                    quitados_a += len(adjs)
+                    tickets_tocados.add(tid)
+                except Exception as _e_q:
+                    print(f"[tk_dup_quitar] mensaje {c.get('id')}: {type(_e_q).__name__}: {str(_e_q)[:160]}", flush=True)
+                    fallos.append({"mensaje_id": c.get("id"), "motivo": "error al quitarla; no se tocó nada más de esa copia"})
+
+        # Las columnas de la bandeja rápida (Tickets 2.0) que salen de los mensajes se recalculan para los tickets tocados (misma cuenta
+        # que _tk_bandeja_conciliar, que solo mira mensajes NUEVOS y no se entera de los que se quitan). Si algo falla, no importa: el
+        # siguiente mensaje del ticket las corrige.
+        try:
+            if tickets_tocados and _tk_bandeja_rapida_ok():
+                ids = sorted(tickets_tocados)
+                marcas = ",".join(["%s"] * len(ids))
+                mysql_execute(
+                    "UPDATE tk_tickets t JOIN ("
+                    "  SELECT m.ticket_id, "
+                    "    MAX(CASE WHEN m.tipo='client_message' THEN m.created_at END) AS ult_cli, "
+                    "    MAX(CASE WHEN m.tipo='mensaje' AND m.es_interno=0 "
+                    "             AND COALESCE(m.estado_envio,'')<>'fallido' THEN m.created_at END) AS ult_resp "
+                    f"  FROM tk_mensajes m WHERE m.ticket_id IN ({marcas}) "
+                    "  GROUP BY m.ticket_id) r ON r.ticket_id=t.id "
+                    "SET t.ultimo_cliente_at=r.ult_cli, t.ultima_resp_at=r.ult_resp, "
+                    "    t.espera_desde=(SELECT MIN(m2.created_at) FROM tk_mensajes m2 "
+                    "                    WHERE m2.ticket_id=t.id AND m2.tipo='client_message' "
+                    "                      AND m2.created_at > COALESCE(r.ult_resp,'1970-01-01')), "
+                    "    t.updated_at=t.updated_at", tuple(ids))
+        except Exception as _e_rc:
+            print(f"[tk_dup_quitar] recalcular bandeja: {str(_e_rc)[:160]}", flush=True)
+
+        return jsonify({"ok": True, "dry_run": False, "quitados": {"mensajes": quitados_m, "adjuntos": quitados_a},
+                        "fallos": fallos, "quedan_grupos": max(0, len(plan["grupos"]) - len(tanda)), "resumen": resumen,
+                        "respaldo": "tk_mensajes_quitados",
+                        "nota": "Cada copia quedó respaldada en tk_mensajes_quitados. Los archivos de la nube no se borraron."})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — actualizar
