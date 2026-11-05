@@ -2188,7 +2188,7 @@ function tkaRenderCliDocs(docs, modo, fetchMs){
               ? `<label class="tka-doc-pick" title="Agregar todo este documento" onclick="event.stopPropagation()">
                    <input type="checkbox" id="tkaDocPick-${i}" onchange="tkaTogDocEntero(${i}, this)"></label>`
               : `<label class="tka-doc-pick" title="Sin saldo: márcalo para desbloquearlo con un comentario (o elige sus líneas una por una)" onclick="event.stopPropagation()">
-                   <input type="checkbox" id="tkaDocPickSS-${i}" class="tka-ss-pick" onchange="tkaSSCambio()"></label>`)}
+                   <input type="checkbox" id="tkaDocPickSS-${i}" class="tka-ss-pick" onchange="tkaSSPick(${i}, this)"></label>`)}
         <div class="tka-doc-num">
           <span class="badge-tipo">${_tkaEsc(doc.tido_display)}</span>${_tkaEsc(doc.nudo_display)}
         </div>
@@ -2522,6 +2522,7 @@ async function tkaTogDocEntero(idx, el){
     if (card) card.classList.remove('is-picked');
   }
   tkaUpdateCounter();
+  if (marcar && n) tkaCliAbrirDetalle(idx);     // 2026-11-06: marcar un documento abre su detalle con todas las líneas
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -2617,12 +2618,34 @@ function tkaSSCambio(){
   btn.disabled = n === 0;
   btn.innerHTML = '<i class="bi bi-unlock-fill me-1"></i>' + (n ? `Desbloquear ${n} documento${n === 1 ? '' : 's'}` : 'Desbloquear');
 }
+// 2026-11-06 (Daniel: «ahora no me trae el detalle cuando selecciono las facturas, tráeme todo»): marcar un documento ABRE su detalle con todas
+// sus líneas. Solo abre (tkaToggleDocCli alterna: llamarlo con la tarjeta ya abierta la cerraría).
+async function tkaCliAbrirDetalle(idx){
+  const card = document.querySelector('#tkaCliResult .tka-doc-card[data-cli-idx="' + idx + '"]');
+  if (!card) return;
+  const body = card.querySelector('.tka-doc-body');
+  if (card.classList.contains('is-open') && body && body.dataset.loaded === '1') return;
+  if (card.classList.contains('is-open')) card.classList.remove('is-open');      // abierta pero sin líneas (falló o se reseteó): se vuelve a abrir
+  await tkaToggleDocCli(idx);
+}
+function tkaSSPick(idx, el){
+  tkaSSCambio();
+  if (el && el.checked) tkaCliAbrirDetalle(idx);
+}
+async function _tkaAbrirDetalleMarcados(selector){
+  const marcados = Array.from(document.querySelectorAll(selector)).filter(c => c.checked && !c.disabled);
+  for (const c of marcados){
+    const i = parseInt(String(c.id).replace(/^\D+/, ''), 10);
+    if (!isNaN(i)) await tkaCliAbrirDetalle(i);     // de a uno: no se le pide todo junto al ERP
+  }
+}
 function tkaSSToggleTodos(){
   const cs = _tkaSSMarcables();
   if (!cs.length) return;
   const marcar = cs.some(c => !c.checked);
   cs.forEach(c => { c.checked = marcar; });
   tkaSSCambio();
+  if (marcar) _tkaAbrirDetalleMarcados('#tkaCliResult .tka-ss-pick');
 }
 async function tkaDesbloquearSinSaldo(){
   const docs = (_TKA.loaded.cliQuery && _TKA.loaded.cliQuery.docs) || [];
@@ -2660,10 +2683,11 @@ async function tkaDesbloquearSinSaldo(){
       if (tot && !tot.querySelector('.badge-unlocked')){
         tot.insertAdjacentHTML('afterbegin', '<span class="badge-pill badge-unlocked" title="' + _tkaEsc(txt) + '"><i class="bi bi-unlock-fill"></i>Desbloqueado</span>');
       }
-      // Si ya estaba abierto con sus líneas pintadas, se repinta al abrirlo de nuevo.
+      // Si ya estaba abierto con sus líneas pintadas, se repinta con las líneas ya marcadas.
       const body = card.querySelector('.tka-doc-body');
       if (body && body.dataset.loaded === '1'){ body.dataset.loaded = ''; card.classList.remove('is-open'); }
     }
+    await tkaCliAbrirDetalle(i);               // el detalle completo a la vista, con lo desbloqueado marcado
   }
   tkaUpdateCounter();
   tkaSSCambio();

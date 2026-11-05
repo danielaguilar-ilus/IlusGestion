@@ -59,7 +59,7 @@ class TestEventos(unittest.TestCase):
 class TestModal(unittest.TestCase):
     def test_el_documento_sin_saldo_ya_no_esta_bloqueado(self):
         self.assertNotIn('title="Sin saldo: se eligen sus líneas una por una"', MODAL)
-        self.assertIn('class="tka-ss-pick" onchange="tkaSSCambio()"', MODAL)
+        self.assertIn('class="tka-ss-pick" onchange="tkaSSPick(${i}, this)"', MODAL)
 
     def test_desbloqueo_masivo_pide_comentario_obligatorio_y_lo_pone_como_motivo(self):
         i = MODAL.index("async function tkaDesbloquearSinSaldo()")
@@ -132,6 +132,36 @@ class TestCotizacion(unittest.TestCase):
         i = PY.index("def _tk_cotiz_log_sin_saldo")
         self.assertIn('_tk_cotiz_log(cid, "sin_saldo", ev, user)', PY[i:i + 900])
 
+
+class TestDetalleAlMarcar(unittest.TestCase):
+    """Daniel (6-nov): «ahora no me trae el detalle cuando selecciono las facturas, tráeme todo»: marcar un documento abre su detalle."""
+
+    def test_marcar_un_documento_sin_saldo_abre_su_detalle(self):
+        self.assertIn('onchange="tkaSSPick(${i}, this)"', MODAL)
+        i = MODAL.index("function tkaSSPick(idx, el)")
+        self.assertIn("tkaCliAbrirDetalle(idx)", MODAL[i:i + 200])
+
+    def test_marcar_uno_con_saldo_tambien_lo_abre(self):
+        i = MODAL.index("async function tkaTogDocEntero(idx, el)")
+        self.assertIn("if (marcar && n) tkaCliAbrirDetalle(idx);", MODAL[i:i + 1400])
+
+    def test_seleccionar_todos_los_sin_saldo_abre_los_detalles_de_a_uno(self):
+        i = MODAL.index("function tkaSSToggleTodos()")
+        self.assertIn("_tkaAbrirDetalleMarcados('#tkaCliResult .tka-ss-pick')", MODAL[i:i + 500])
+        j = MODAL.index("async function _tkaAbrirDetalleMarcados(")
+        self.assertIn("for (const c of marcados)", MODAL[j:j + 500])
+        self.assertIn("await tkaCliAbrirDetalle(i)", MODAL[j:j + 500])
+
+    def test_despues_de_desbloquear_la_tarjeta_queda_abierta(self):
+        i = MODAL.index("async function tkaDesbloquearSinSaldo()")
+        f = MODAL[i:i + 5200]
+        self.assertIn("await tkaCliAbrirDetalle(i);", f)
+
+    def test_abrir_detalle_nunca_cierra_una_tarjeta_ya_abierta(self):
+        i = MODAL.index("async function tkaCliAbrirDetalle(idx)")
+        f = MODAL[i:i + 700]
+        self.assertIn("card.classList.contains('is-open') && body && body.dataset.loaded === '1'", f)
+        self.assertIn("return;", f)                      # tkaToggleDocCli alterna: con el detalle ya cargado no se llama
 
 if __name__ == "__main__":
     unittest.main()
