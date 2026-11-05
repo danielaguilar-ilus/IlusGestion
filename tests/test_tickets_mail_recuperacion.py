@@ -36,6 +36,8 @@ from email.header import decode_header, make_header
 from email.message import EmailMessage
 from email.utils import format_datetime, parseaddr, parsedate_to_datetime
 
+import tickets_firma_correo   # módulo PURO que la ingesta usa para no guardar como «fotos» las imágenes de firma (28-oct)
+
 SRC = open("tickets_module.py", encoding="utf-8", errors="ignore").read()
 _ARBOL = ast.parse(SRC)
 
@@ -73,6 +75,7 @@ def _ns_base():
 # ══════════════════════════════════════════════════════════════════════
 _NS_CLASIF = _ns_base()
 exec(_fuente_asignacion("_TK_NUM_TICKET_RE"), _NS_CLASIF)
+exec(_fuente_asignacion("_TK_TAA_NUM_RE"), _NS_CLASIF)   # el criterio también reconoce los TAA-NNN de Triple A en el asunto
 exec(_fuente_funcion("_tk_clasificar_correo"), _NS_CLASIF)
 _clasificar = _NS_CLASIF["_tk_clasificar_correo"]
 
@@ -416,7 +419,9 @@ def _correr_barrido(mensajes, tickets, ya_ingeridos=(), reclamados_por_otro=(), 
         "_tk_imap_creds": lambda: (BUZON, "clave-app"),
         "_tk_imap_host": lambda: "imap.gmail.com",
         "mysql_fetchone": banco.fetchone,
+        "mysql_fetchall": lambda sql, params=None: [],   # adjuntos que el ticket ya tiene (filtro de firmas): ninguno
         "mysql_execute": banco.execute,
+        "_tkfirma": tickets_firma_correo,
         "_tk_log": _tk_log,
         "_uploader_upload": _uploader_upload,
         "_EXT_PERMITIDAS": {".pdf", ".jpg", ".png"},
@@ -465,6 +470,15 @@ MSG_NO_ES_NUESTRO = _construir_mail(
     "TK FRESHDESK newsletter", "marketing@otracosa.com",
     "Promo del mes", "<spam-1@mail.gmail.com>")
 
+def _mail_reciente():
+    """Una respuesta de AYER. Reabrir un ticket cerrado solo corresponde a una respuesta viva (≤ _TK_REABRIR_DIAS_MAX días): con la fecha fija de
+    MSG_NUEVO la prueba caducó sola (pasaron más de 15 días desde el 28-jul-2026) y empezó a fallar sin que el código cambiara."""
+    return _construir_mail(
+        "Re: [TK-2026-00042] Falla trotadora", "ana@gimnasiosur.cl",
+        "Sigue sin andar, por favor vengan.", "<reciente-1@mail.gmail.com>",
+        cuando=datetime.now(timezone.utc) - timedelta(days=1))
+
+
 TODOS = [MSG_NUEVO, MSG_YA, MSG_SIN_TICKET, MSG_PROPIO, MSG_ADJUNTO,
          MSG_NO_ES_NUESTRO]
 YA_INGERIDOS = ["<viejo-1@mail.gmail.com>"]
@@ -497,10 +511,14 @@ class TestVistaPrevia(unittest.TestCase):
         self.assertEqual(1, r["propios"], "el enviado por nosotros")
         self.assertEqual(0, r["errores"])
 
-    def test_el_que_no_es_nuestro_ni_aparece(self):
-        # "TK FRESHDESK" no es un ticket: no ensucia la lista.
-        asuntos = [f["asunto"] for f in self.resumen["detalle"]]
-        self.assertNotIn("TK FRESHDESK newsletter", asuntos)
+    def test_el_que_no_es_nuestro_se_cuenta_aparte_y_nunca_se_ingresa(self):
+        # "TK FRESHDESK" no es un ticket: NO se ingresa. Desde 2026-08-20 SÍ se cuenta y se lista como «sin_numero» (antes ni una cosa ni la
+        # otra): en un barrido de cientos de correos, «3 por ingresar» sin cuántos no se reconocieron es indistinguible de «no había nada»,
+        # y la vista previa es lo que Daniel usa para decidir si el barrido está listo para correr.
+        por_asunto = {f["asunto"]: f for f in self.resumen["detalle"]}
+        self.assertEqual("sin_numero", por_asunto["TK FRESHDESK newsletter"]["estado"])
+        self.assertEqual(1, self.resumen["sin_numero"])
+        self.assertEqual(2, self.resumen["ingresados"], "solo se ingresarían los dos del ticket 42, no el boletín")
 
     def test_el_detalle_dice_de_quien_y_de_que_ticket(self):
         porestado = {f["estado"]: f for f in self.resumen["detalle"]}
@@ -688,7 +706,7 @@ class TestErroresYBordes(unittest.TestCase):
         self.assertTrue(salud and salud[0][0] is False)
 
     def test_imap_caido_devuelve_error_legible_y_no_lanza(self):
-        def _explota(host, port):
+        def _explota(host, port, timeout=None):   # la ingesta conecta con timeout (si no, un buzón colgado congela el barrido)
             raise OSError("[AUTHENTICATIONFAILED] Invalid credentials")
         ns = _ns_base()
         salud = []
@@ -761,13 +779,24 @@ class TestErroresYBordes(unittest.TestCase):
 
     def test_reabre_el_ticket_cerrado_cuando_el_cliente_responde(self):
         cerrado = dict(TICKET_42, estado="closed")
-        _, _, _, ef = _correr_barrido([MSG_NUEVO], {"TK-2026-00042": cerrado},
+        _, _, _, ef = _correr_barrido([_mail_reciente()], {"TK-2026-00042": cerrado},
                                       dias=20, dry_run=False)
         self.assertEqual([42], ef["reabiertos"])
 
+    def test_una_respuesta_vieja_se_ingresa_pero_no_reabre_el_ticket(self):
+        """2026-08-20 (migración Triple A): la continuidad es para una respuesta VIVA (≤ _TK_REABRIR_DIAS_MAX días). Un correo viejo que entra
+        recién porque hoy se amplió el reconocimiento NO reabre tickets cerrados (SLA vencido falso, saltos en la bandeja), pero tampoco se
+        pierde: el mensaje del cliente queda guardado. MSG_NUEVO trae fecha fija (28-jul-2026): desde hace tiempo es «vieja»."""
+        cerrado = dict(TICKET_42, estado="closed")
+        r, _, _, ef = _correr_barrido([MSG_NUEVO], {"TK-2026-00042": cerrado},
+                                      dias=20, dry_run=False)
+        self.assertEqual(1, r["ingresados"], "el mensaje del cliente se guarda igual")
+        self.assertEqual(1, len(ef["log"]))
+        self.assertEqual([], ef["reabiertos"], "pero un correo de hace meses no reabre el ticket")
+
     def test_la_previa_no_reabre_nada(self):
         cerrado = dict(TICKET_42, estado="closed")
-        _, _, _, ef = _correr_barrido([MSG_NUEVO], {"TK-2026-00042": cerrado},
+        _, _, _, ef = _correr_barrido([_mail_reciente()], {"TK-2026-00042": cerrado},
                                       dias=20, dry_run=True)
         self.assertEqual([], ef["reabiertos"])
 

@@ -204,6 +204,9 @@ class Base:
             "_mant_visita_factura_proveedor": lambda vid: b.fac, "_ot_levantamiento_de": lambda vid: None,
             "_ot_tec_snapshot_borrado": lambda vid, v_info: None, "_ot_tec_correo_borrada": lambda vid, snap: None,
             "_ot_hijas_de": lambda vid, cur=None, estricto=False: [], "_fac_libro_marcar": lambda vid: None,
+            # 🚚 La reserva de vehículo que se cancela con la OT (flota, 4-nov) no es parte del anexo: su contrato ("None si la OT no tenía
+            # reserva viva o el módulo no cargó") tiene sus propias pruebas en tests/test_flota_desde_ot.py.
+            "_ot_vehiculo_sincronizar": lambda vid, antes=None, eliminada=False: None,
             "_ot_anexo_de_la_madre": b.madre,
             "_ot_gestion_destinatarios": lambda vid, fila=None: [dict(g) for g in b.gestion],
             "_rol_familia": lambda r: "tecnico" if (r or "").startswith("tecnico") else (r or ""),

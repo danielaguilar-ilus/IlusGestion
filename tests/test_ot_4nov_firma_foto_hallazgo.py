@@ -310,5 +310,105 @@ class TestPantalla(unittest.TestCase):
         self.assertEqual(out["resaltados"], ["scroll"])
 
 
+@unittest.skipUnless(HAY_NODE, "node no está instalado")
+class TestProductosDispensadosYLaFirma(unittest.TestCase):
+    """📏 Fase 0 (4-nov, Daniel: «arranca con la Fase 0»). Pregunta que quedó abierta con la OT-359: ¿«No se puede usar» (fuera_servicio), «No tiene
+    arreglo» (baja) y «No llegó» (no_llego) de un PRODUCTO desalinean la pantalla y la firma, como pasó con las fotos de hallazgos?
+
+    MEDIDO: NO. Las dos capas los eximen, cada una por su camino:
+      · pantalla: `otdChkEvaluar` recibe `estados` (OTD_PROD_DISPENSA, de `_otpe_dispensados`) y marca TODAS las tareas del producto como
+        «dispensada» (exigible = False), también con un hallazgo sin foto;
+      · servidor: las tareas de un producto se guardan con `maquina_id = NULL` (`item_manual_id` = el producto) y el candado de fotos de la firma
+        (`_ot_hallazgos_sin_foto_tareas` y R3) filtra con `_ot_tarea_no_trabajable_sql`, que exige `maquina_id IS NOT NULL`: nunca las mira.
+    Lo que SÍ difiere (y se deja escrito): un producto que NO está dispensado y trae un hallazgo sin foto. La pantalla (modo estricto) lo pide; el
+    servidor no lo exige al firmar. Es la pantalla la MÁS estricta, así que nadie queda «completo pero incompleto»; si algún día se decide que el
+    servidor también lo exija, este es el caso a alinear (decisión de Daniel, no se cambia sola)."""
+
+    ESTADOS = ("fuera_servicio", "baja", "no_llego")   # ot_producto_estado.ESTADOS
+
+    @staticmethod
+    def _producto(tid, tipo, titulo, vj=None, ops=None, item=77):
+        t = _tarea(tid, tipo, titulo, vj, ops)
+        t["maquina_id"] = None
+        t["item_manual_id"] = item
+        return t
+
+    def _tareas(self, item=77, base=1):
+        return [self._producto(base, "verificacion", "Estructura", {"valor": "falla"}, item=item),
+                self._producto(base + 1, "lista", "Resultado del control", {"opcion": "Reparar"}, ops=OPC_RESULTADO, item=item)]
+
+    @staticmethod
+    def _evaluar(tareas, estados):
+        return _js("const T = " + json.dumps(tareas, ensure_ascii=False) + ";\n"
+                   "const E = " + json.dumps(estados) + ";\n"
+                   "console.log(JSON.stringify(otdChkEvaluar(T, E, true)));")
+
+    def test_cada_accion_dispensa_todas_las_tareas_del_producto_aunque_haya_hallazgos_sin_foto(self):
+        for estado in self.ESTADOS:
+            r = self._evaluar(self._tareas(), {"77": estado})
+            self.assertEqual(r["dispensados"], [77], estado)
+            for tid in (1, 2):
+                e = r["por_tarea"][str(tid)]
+                self.assertFalse(e["exigible"], (estado, tid))
+                self.assertTrue(e["dispensada"], (estado, tid))
+                self.assertIsNone(e["motivo"], (estado, tid))
+
+    def test_la_accion_de_un_producto_no_dispensa_a_otro(self):
+        r = self._evaluar(self._tareas(77, 1) + self._tareas(88, 10), {"77": "no_llego"})
+        self.assertFalse(r["por_tarea"]["1"]["exigible"])
+        self.assertEqual(r["por_tarea"]["10"]["motivo"], "foto_hallazgo")
+        self.assertEqual(r["por_tarea"]["11"]["motivo"], "foto_hallazgo")
+
+    def test_un_producto_sin_accion_con_hallazgo_pide_foto_en_pantalla_modo_estricto(self):
+        """Lo que difiere del servidor (ver la nota de la clase): la pantalla es la más estricta."""
+        r = self._evaluar(self._tareas(), {})
+        for tid in ("1", "2"):
+            self.assertTrue(r["por_tarea"][tid]["exigible"])
+            self.assertEqual(r["por_tarea"][tid]["motivo"], "foto_hallazgo")
+
+    def test_con_la_foto_el_producto_no_dispensado_queda_listo(self):
+        t = [dict(x, fotos=[{"url": "https://x/a.jpg"}]) for x in self._tareas()]
+        r = self._evaluar(t, {})
+        self.assertTrue(all(r["por_tarea"][k]["hecha"] for k in ("1", "2")))
+
+
+class TestServidorNoMiraLasTareasDeProductos(unittest.TestCase):
+    """El lado del servidor de la nota anterior, con la consulta REAL ejecutada en SQLite: la tarea de un producto (maquina_id NULL, item_manual_id)
+    con un hallazgo sin foto no entra al candado de fotos de la firma; la de un equipo sí."""
+
+    def test_el_hallazgo_de_un_producto_no_entra_pero_el_de_un_equipo_si(self):
+        import sqlite3
+        con = sqlite3.connect(":memory:")
+        self.addCleanup(con.close)
+        con.row_factory = sqlite3.Row
+        con.executescript("""
+            CREATE TABLE mant_maquinas (id INTEGER PRIMARY KEY, nombre TEXT, estado TEXT);
+            CREATE TABLE mant_visita_tareas (id INTEGER PRIMARY KEY, visita_id INT, maquina_id INT, item_manual_id INT, titulo TEXT,
+                                             tipo_respuesta TEXT, valor_json TEXT, opciones_lista_json TEXT);
+            CREATE TABLE mant_visita_fotos (id INTEGER PRIMARY KEY, tarea_id INT);
+            INSERT INTO mant_maquinas VALUES (6451, 'Escaladora ILUS X1', 'activo');
+            INSERT INTO mant_visita_tareas VALUES
+              (1, 536, 6451, NULL, 'Motor y consola', 'verificacion', '{"valor":"falla"}', NULL),
+              (2, 536, NULL, 77, 'Estructura del producto', 'verificacion', '{"valor":"falla"}', NULL),
+              (3, 536, NULL, 77, 'Resultado del control', 'lista', '{"opcion":"Reparar"}',
+               '["Apto","Apto con observaciones","Reparar","Dar de baja","Fuera de servicio","No llegó","Pendiente de diagnóstico"]');
+        """)
+
+        def fetchall(sql, params=()):
+            return [dict(r) for r in con.execute(sql.replace("%s", "?"), tuple(params)).fetchall()]
+
+        amb = FA.cargar(["_ot_tarea_no_trabajable_sql", "_ot_hallazgos_sin_foto_tareas"], extra={"mysql_fetchall": fetchall, "_oh": OH})
+        self.assertEqual([t["id"] for t in amb["_ot_hallazgos_sin_foto_tareas"](536)], [1],
+                         "solo el hallazgo del equipo (1): las tareas de un producto no llevan equipo y el candado no las mira")
+
+    def test_las_tareas_de_un_producto_se_guardan_sin_equipo(self):
+        """La causa: el INSERT del checklist de un producto pone maquina_id = NULL (y el producto en item_manual_id)."""
+        src = FA.texto("app.py")
+        m = re.search(r'"   item_manual_id" \+ _c \+ "\) "\s*"VALUES \(%s,%s,%s,%s,%s,%s,NULL,', src)
+        self.assertIsNotNone(m, "el INSERT del checklist de un producto ya no pone maquina_id = NULL: revisar el candado de fotos de la firma")
+        helper = FA.fuente_funcion("_ot_tarea_no_trabajable_sql")
+        self.assertIn("maquina_id IS NOT NULL", helper)
+
+
 if __name__ == "__main__":
     unittest.main()

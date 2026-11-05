@@ -67,6 +67,8 @@ def _nucleo(fac=FACTURA):
         # 2026-10-19: una instalación con desinstalación vigente no se borra; esta OT no tiene desinstalaciones.
         "_evt": ot_eventos, "_ot_hijas_de": lambda vid, cur=None, estricto=False: [],
         "_fac_libro_marcar": lambda vid: None,   # el libro de saldo de facturas (REGLA #28) se avisa al borrar una OT
+        # 🚚 4-nov: al borrar la OT se cancela su reserva de vehículo (flota); eso se prueba en tests/test_flota_desde_ot.py, no aquí.
+        "_ot_vehiculo_sincronizar": lambda vid, antes=None, eliminada=False: None,
         # 2026-10-28 (REGLA #50): el anexo FIRMADO de la OT se anula dentro del borrado y se avisa a las dos partes. Esta OT no tiene ninguno
         # (lo suyo está en tests/test_anexo_anulacion_ot_eliminada.py).
         "_anexo_anul_plan": lambda vid: {"numero_ot": "OT-2026-00147", "titulo": "", "anexos": [], "interno": []},

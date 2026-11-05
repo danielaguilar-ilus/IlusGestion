@@ -503,28 +503,39 @@ class TestGateDelPasoCostos(unittest.TestCase):
                                         fin_costo_proveedor=""), False],
             "garantia_con_costo_cero": [dict(fin_centro="sstt", fin_garantia=True, fin_garantia_motivo="x" * 30,
                                              fin_costo_proveedor="0"), True],
+            # 2026-11-03 (despacho como pregunta a la vista): con «Sí, me cobran despacho» elegido a mano, el monto del despacho es el dato
+            # que no puede faltar; con «No» (o sin elegir) el paso avanza igual. Se ejecuta la función REAL del asistente, no un doble.
+            "despacho_si_sin_monto": [dict(fin_centro="sstt", fin_doc={"tido": "FCV", "nudo": "1"}, fin_zz_monto=90000,
+                                           fin_costo_proveedor="0", _fpAbierto={"despacho": True}, fin_costo_despacho=""), False],
+            "despacho_si_con_monto": [dict(fin_centro="sstt", fin_doc={"tido": "FCV", "nudo": "1"}, fin_zz_monto=90000,
+                                           fin_costo_proveedor="0", _fpAbierto={"despacho": True}, fin_costo_despacho="15000"), True],
+            "despacho_si_con_cero": [dict(fin_centro="sstt", fin_doc={"tido": "FCV", "nudo": "1"}, fin_zz_monto=90000,
+                                          fin_costo_proveedor="0", _fpAbierto={"despacho": True}, fin_costo_despacho="0"), True],
+            "despacho_no": [dict(fin_centro="sstt", fin_doc={"tido": "FCV", "nudo": "1"}, fin_zz_monto=90000,
+                                 fin_costo_proveedor="0", _fpAbierto={"despacho": False}, fin_costo_despacho=""), True],
         }
         interna = {k for k in casos if k.startswith("interna")}
         js = r"""
-const GATE = %s; const CASOS = %s; const INTERNA = %s;
+const GATE = %s; const CASOS = %s; const INTERNA = %s; const DESPACHO = %s;
 const out = {};
 Object.keys(CASOS).forEach(function(k){
   const f = new Function('S0', 'INT', `
     var S = Object.assign({fin_centro:null, fin_garantia:false, fin_aut:false, fin_doc:null, fin_zz_monto:null,
       fin_zz_motivo_manual:'', fin_garantia_motivo:'', fin_costo_proveedor:'', fin_zz_envio:null, fin_zz_envio_original:null,
-      fin_zz_envio_motivo_manual:'', costo_interno:''}, S0);
+      fin_zz_envio_motivo_manual:'', costo_interno:'', fin_costo_despacho:null, _fpAbierto:{}}, S0);
     function esInterno(){ return INT; }
     function _o2mFinPideMotivo(){ return false; }
     function _o2mFinEnvioEsManual(){ return false; }
     function _o2mFinFacturaActiva(){ return false; } function _o2mFinFacturaExcedida(){ return false; }
     function _o2mFinSaldoExcesos(){ return []; } function _o2mFinAjusteGrande(){ return true; }
         function _o2mFinObsFalta(){ return false; }   // 🗓️ 2026-10-12: documento observado (se prueba aparte)
+    ` + DESPACHO + `
     ` + GATE + `
     return gate();`);
   out[k] = f(CASOS[k][0], INTERNA.indexOf(k) >= 0);
 });
 process.stdout.write(JSON.stringify(out));
-""" % (json.dumps(gate), json.dumps(casos), json.dumps(sorted(interna)))
+""" % (json.dumps(gate), json.dumps(casos), json.dumps(sorted(interna)), json.dumps(_fn("_o2mFinDespachoPendiente")))
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
             fh.write(js)
             ruta = fh.name

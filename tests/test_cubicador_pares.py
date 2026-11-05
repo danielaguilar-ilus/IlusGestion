@@ -275,7 +275,11 @@ class TestTodosLosModulosAplicanLaMismaRegla(unittest.TestCase):
     def test_retiros_no_recalcula_en_el_navegador(self):
         js = self._leer("static/retiros_internal_detail.js")
         self.assertNotIn("pesoUnit * qty", js)
-        self.assertIn("data-uxv", js)
+        # La tabla «Productos» con diagnóstico en vivo (f7cfd316) reemplazó al modal que marcaba cada fila con `data-uxv` para que el navegador
+        # supiera cuántas piezas trae un empaque. Ahora el peso de cada línea llega YA calculado del servidor (`_empaques_equivalentes`, que
+        # divide por unidades_por_venta; lo guarda test_retiros_divide_por_empaque) y la pantalla solo lo muestra: nada que recalcular aquí.
+        self.assertIn("_fmtNum(l.peso_total, 1)", js, "el peso de cada línea debe mostrarse tal como lo manda el servidor")
+        self.assertNotIn("l.peso_unit * l.a_retirar", js, "el navegador volvió a calcular el peso total multiplicando por piezas")
 
 
 class TestNingunCalculoSueltoEnTodoElProyecto(unittest.TestCase):
