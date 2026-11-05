@@ -461,6 +461,12 @@ class Falsa(BaseFalsa):
                 return 0, None
             c.update(archivado=0, archivado_motivo=None, archivado_por=None, archivado_at=None)
             return 1, None
+        if s.startswith("DELETE FROM flota_solicitudes WHERE id=%s AND estado <> 'llave_entregada'"):
+            x = self.sol.get(p[0])
+            if not x or x["estado"] == "llave_entregada":
+                return 0, None
+            self.sol.pop(p[0])
+            return 1, None
         if s.startswith("DELETE FROM flota_choferes WHERE id=%s"):
             self.cho.pop(p[0], None)
             return 1, None
@@ -1114,7 +1120,7 @@ class TestCableado(unittest.TestCase):
 
     def test_solo_se_borran_vehiculos_y_choferes(self):
         # Las bitácoras, las solicitudes y los archivos NUNCA se borran (los archivos quedan como no vigentes).
-        self.assertEqual(set(re.findall(r"DELETE\s+FROM\s+(\w+)", self.MODULO)), {"flota_vehiculos", "flota_choferes"})
+        self.assertEqual(set(re.findall(r"DELETE\s+FROM\s+(\w+)", self.MODULO)), {"flota_vehiculos", "flota_choferes", "flota_solicitudes"})
 
     def test_ningun_sql_con_fstrings(self):
         for m in re.finditer(r"mysql_(?:execute|fetchone|fetchall|rowcount)\(\s*f[\"']", self.MODULO):
@@ -1149,6 +1155,7 @@ class TestCableado(unittest.TestCase):
                  '"/flota/api/choferes", methods=["POST"]', '"/flota/api/choferes/usuarios"', '"/flota/api/choferes/<int:cid>", methods=["PUT"]',
                  '"/flota/api/choferes/<int:cid>/inhabilitar"', '"/flota/api/choferes/<int:cid>/habilitar"', '"/flota/api/choferes/<int:cid>/archivar"',
                  '"/flota/api/choferes/<int:cid>/desarchivar"', '"/flota/api/choferes/<int:cid>", methods=["DELETE"]',
+                 '"/flota/api/solicitudes/<int:sid>", methods=["DELETE"]',
                  '"/flota/api/archivos", methods=["POST"]', '"/flota/api/archivos/<int:aid>/quitar"')
         for grupo, puerta in ((pedir, "@_flota_required"), (gestion, "@_flota_gestion_required"), (admin, "@_flota_admin_required")):
             for ruta in grupo:
