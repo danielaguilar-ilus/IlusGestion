@@ -67,6 +67,10 @@
     });
   }
 
+  function tieneParcheCsrf() {
+    try { return String(XMLHttpRequest.prototype.send).indexOf('__csrf_method') >= 0; } catch (e) { return false; }
+  }
+
   function enviarUna(o) {
     return new Promise(function (resolver) {
       var x = new XMLHttpRequest();
@@ -77,7 +81,10 @@
         x.timeout = o.timeoutMs || 180000;
         x.setRequestHeader('Accept', 'application/json');
         x.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-        if (window.__CSRF_TOKEN) x.setRequestHeader('X-CSRF-Token', window.__CSRF_TOKEN);
+        // El token lo agrega base.html a TODO XMLHttpRequest al enviarlo (parche global desde mayo). Si aquí se pusiera también, setRequestHeader
+        // JUNTA los dos valores («token, token») y el servidor rechaza TODA subida con «CSRF token inválido»: así fallaron la licencia del chofer y
+        // la devolución de llaves el 05-nov-2026. Solo se pone a mano cuando esa página no trae el parche.
+        if (window.__CSRF_TOKEN && !tieneParcheCsrf()) x.setRequestHeader('X-CSRF-Token', window.__CSRF_TOKEN);
         if (x.upload) {
           x.upload.onprogress = function (e) { if (e.lengthComputable && o.onProgreso) o.onProgreso(e.loaded / e.total, e.loaded, e.total); };
           x.upload.onload = function () { if (o.onSubido) o.onSubido(); };
