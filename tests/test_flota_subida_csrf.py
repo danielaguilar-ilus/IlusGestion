@@ -26,7 +26,8 @@ function correr(caso) {
   class XHR {
     constructor() { this.cab = {}; this.upload = {}; }
     open(m, u) { this.m = m; this.u = u; }
-    setRequestHeader(k, v) { this.cab[k] = v; }
+    // Como el XMLHttpRequest REAL: llamar dos veces a setRequestHeader con el mismo nombre JUNTA los valores («a, a»).
+    setRequestHeader(k, v) { this.cab[k] = (k in this.cab) ? this.cab[k] + ', ' + v : v; }
     send(f) {
       const r = caso.respuestas[n++] || { status: 200, body: { ok: true } };
       llamadas.xhr.push({ metodo: this.m, url: this.u, token: this.cab['X-CSRF-Token'] || null, form: f });
@@ -34,6 +35,15 @@ function correr(caso) {
     }
   }
   const win = { __CSRF_TOKEN: caso.tokenViejo, __ILUS_UID: caso.uidPagina };
+  if (caso.parche !== false) {
+    // Réplica del parche GLOBAL de templates/base.html (desde mayo): agrega el token a todo XMLHttpRequest al enviarlo.
+    const _open = XHR.prototype.open, _send = XHR.prototype.send;
+    XHR.prototype.open = function (method) { this.__csrf_method = (method || 'GET').toString().toUpperCase(); return _open.apply(this, arguments); };
+    XHR.prototype.send = function (body) {
+      try { if (this.__csrf_method && this.__csrf_method !== 'GET' && this.__csrf_method !== 'HEAD' && win.__CSRF_TOKEN) this.setRequestHeader('X-CSRF-Token', win.__CSRF_TOKEN); } catch (e) {}
+      return _send.apply(this, arguments);
+    };
+  }
   const meta = { v: caso.tokenViejo, setAttribute(k, v) { this.v = v; }, getAttribute() { return this.v; } };
   const ctx = {
     window: win, XMLHttpRequest: XHR, console,
@@ -81,6 +91,8 @@ CASOS = {
     # el servidor no responde al pedir el token nuevo → se devuelve el error original
     "sin_red_al_renovar": {"tokenViejo": "viejo", "uidPagina": "5", "respuestas": [VIEJO_403, OK_200], "fetchFalla": True,
                            "csrf": {}},
+    # una página que NO trae el parche global de base.html: la subida pone el token ella misma, una sola vez
+    "sin_parche": {"tokenViejo": "bueno", "uidPagina": "5", "parche": False, "respuestas": [OK_200], "csrf": {"csrf_token": "x", "autenticado": True, "uid": 5}},
     # todo bien a la primera: ni se toca el token
     "normal": {"tokenViejo": "bueno", "uidPagina": "5", "respuestas": [OK_200], "csrf": {"csrf_token": "x", "autenticado": True, "uid": 5}},
 }
@@ -136,6 +148,26 @@ class TestSubidaSeRepara(unittest.TestCase):
         r = self.R["sin_red_al_renovar"]
         self.assertEqual(len(r["llamadas"]["xhr"]), 1)
         self.assertEqual(r["d"]["error_codigo"], "CSRF_INVALIDO")
+
+    def test_el_token_viaja_UNA_sola_vez_nunca_duplicado(self):
+        # Bug real del 05-nov-2026: flota_subida.js ponía el token Y el parche global de base.html lo ponía otra vez → «tok, tok» → TODA subida rechazada.
+        r = self.R["normal"]
+        self.assertEqual(r["llamadas"]["xhr"][0]["token"], "bueno")
+        self.assertNotIn(",", r["llamadas"]["xhr"][0]["token"])
+        for caso in ("se_repara", "un_solo_reintento"):
+            for x in self.R[caso]["llamadas"]["xhr"]:
+                self.assertNotIn(",", x["token"], caso)
+
+    def test_sin_el_parche_global_la_subida_pone_el_token_ella_misma_una_vez(self):
+        r = self.R["sin_parche"]
+        self.assertEqual([x["token"] for x in r["llamadas"]["xhr"]], ["bueno"])
+
+    def test_la_pagina_real_sigue_trayendo_el_parche_que_la_subida_detecta(self):
+        base = open(os.path.join(RAIZ, "templates", "base.html"), encoding="utf-8").read()
+        self.assertIn("XMLHttpRequest.prototype.send = function(body){", base)
+        self.assertIn("this.__csrf_method", base)                      # la subida lo detecta por este nombre: si cambia en base.html, se cambia aquí
+        with open(JS, encoding="utf-8") as f:
+            self.assertIn("indexOf('__csrf_method')", f.read())
 
     def test_si_todo_sale_bien_no_se_toca_nada(self):
         r = self.R["normal"]
