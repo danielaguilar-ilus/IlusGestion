@@ -1493,27 +1493,70 @@ def register_flota_routes(app, ctx):
     @app.route("/flota/api/choferes/<int:cid>", methods=["DELETE"])
     @_flota_admin_required
     def flota_api_chofer_eliminar(cid):
-        """Borrado DEFINITIVO: solo si nunca tuvo reservas y escribiendo su nombre. Queda anotado ANTES de borrar (REGLA #5)."""
+        """Borrado DEFINITIVO, escribiendo su nombre. Queda anotado ANTES de borrar (REGLA #5).
+        Sin reservas lo hace quien administra. CON reservas (Daniel, 05-nov-2026, en plena operación: «necesito eliminar choferes así tengan
+        agendas») solo el superadministrador y a propósito (`forzar`): las reservas que aún no empiezan se cancelan (con su motivo y su
+        bitácora) y las pasadas se conservan. Si el chofer TIENE UNA LLAVE AFUERA nunca se borra, ni siquiera forzando: antes se registra la devolución."""
         c = _chofer_fila(cid)
         if not c:
             return _error("No encontré ese chofer.", 404)
+        cuerpo = request.get_json(silent=True) or {}
         esperado = c.get("nombre_completo") or c.get("u_nombre") or ""
-        if not fr.coincide_confirmacion((request.get_json(silent=True) or {}).get("confirmacion"), esperado):
+        if not fr.coincide_confirmacion(cuerpo.get("confirmacion"), esperado):
             return _error("Para borrarlo definitivo escribe su nombre completo.", 400, errores={"confirmacion": "No coincide con el nombre."})
-        usadas = int((mysql_fetchone("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE chofer_id=%s", (cid,)) or {}).get("n") or 0)
-        if usadas:
-            return _error(f"Ya tuvo {usadas} reserva{'s' if usadas != 1 else ''}: no se puede borrar definitivo porque se perdería su historial. Archívalo.",
-                          409, error_codigo="TIENE_HISTORIAL")
+        super_ = _es_superadmin()
+        sql_reservas = "SELECT id, numero, estado FROM flota_solicitudes WHERE chofer_id=%s"
+        reservas = mysql_fetchall(sql_reservas, (cid,)) or []
+        abiertas = [r for r in reservas if r["estado"] in ("solicitada", "confirmada")]
+        con_llave = [r for r in reservas if r["estado"] == "llave_entregada"]
+        if con_llave:
+            nums = ", ".join(str(r.get("numero") or f"#{r['id']}") for r in con_llave[:5])
+            return _error(f"Tiene la llave de un vehículo en su poder (reserva {nums}): primero registra la devolución y después lo puedes borrar.",
+                          409, error_codigo="LLAVE_AFUERA", puede_forzar=False, reservas=len(reservas), abiertas=len(abiertas), con_llave=len(con_llave))
+        forzar = bool(cuerpo.get("forzar")) and super_
+        if reservas and not forzar:
+            n = len(reservas)
+            return _error(f"Ya tuvo {n} reserva{'s' if n != 1 else ''}: no se puede borrar definitivo porque se perdería su historial. Archívalo.",
+                          409, error_codigo="TIENE_HISTORIAL", puede_forzar=super_, reservas=n, abiertas=len(abiertas), con_llave=0)
+        quien = current_username() or "el superadministrador"
+        nombre = esperado or f"chofer #{cid}"
+        motivo = f"Se eliminó al chofer {nombre} (por {quien}). El horario quedó libre."[:300]
+        canceladas = []
         try:
-            _clog(cid, "eliminado", {"datos": {k: c.get(k) for k in ("usuario_id", "u_nombre", "rut", "nombre_completo", "direccion",
-                                                                        "licencia_clases", "licencia_vence", "notas")}}, estricto=True)
+            # Primero queda escrito qué se va a borrar y qué reservas tenía; si esta anotación falla, no se toca nada.
+            _clog(cid, "eliminado", {
+                "datos": {k: c.get(k) for k in ("usuario_id", "u_nombre", "rut", "nombre_completo", "direccion", "licencia_clases", "licencia_vence", "notas")},
+                "forzado": bool(reservas), "reservas_total": len(reservas),
+                "reservas": [{"numero": r.get("numero"), "estado": r["estado"]} for r in reservas[:200]]}, estricto=True)
+            for r in abiertas:
+                # Atómico: si otra persona la movió mientras tanto (ej. entregó la llave) no se pisa.
+                if mysql_rowcount("UPDATE flota_solicitudes SET estado='cancelada', cancelada_por=%s, cancelada_at=NOW(), cancelada_motivo=%s "
+                                  "WHERE id=%s AND estado IN ('solicitada','confirmada')", (quien, motivo, r["id"])):
+                    _slog(r["id"], "cancelada", {"motivo": motivo, "estado_antes": r["estado"], "chofer_eliminado": nombre})
+                    canceladas.append(r)
+            if reservas:
+                # Una llave pudo salir justo ahora: se vuelve a mirar ya con las cancelaciones hechas.
+                afuera = [r for r in (mysql_fetchall(sql_reservas, (cid,)) or []) if r["estado"] == "llave_entregada"]
+                if afuera:
+                    return _error("Mientras tanto se entregó la llave de una de sus reservas, así que no se borró el chofer. "
+                                  f"Las reservas que aún no empezaban ya quedaron canceladas (cancelaste {len(canceladas)}). "
+                                  "Registra la devolución y vuelve a intentarlo.", 409, error_codigo="LLAVE_AFUERA", puede_forzar=False)
             mysql_execute("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() WHERE entidad='chofer' AND entidad_id=%s AND activo=1",
                           (current_username(), cid))
             mysql_execute("DELETE FROM flota_choferes WHERE id=%s", (cid,))
         except Exception as e:
             print(f"[flota] eliminar chofer: {type(e).__name__}: {e}", flush=True)
-            return _error("No se pudo borrar el chofer. No se borró nada.", 500)
-        return jsonify({"ok": True, "eliminado": True})
+            return _error("No se pudo borrar el chofer. Revisa la lista: si alguna reserva ya quedó cancelada, el historial lo dice.", 500)
+        for r in canceladas:                       # aviso a quien pidió cada reserva (mejor esfuerzo: nunca rompe el borrado)
+            try:
+                fila = _sol_fila(r["id"])
+                if fila and fila.get("solicitante_id") and fila["solicitante_id"] != _uid():
+                    _correo_flota("flota_solicitud_cancelada", [fila["solicitante_id"]], f"Solicitud {fila.get('numero') or ''} cancelada",
+                                  _cuerpo_correo(dict(fila), f"{quien} eliminó al chofer {nombre} y por eso se canceló esta reserva. El horario quedó libre."),
+                                  sid=fila.get("id"))
+            except Exception as e:
+                print(f"[flota] aviso de reserva cancelada al borrar chofer: {type(e).__name__}", flush=True)
+        return jsonify({"ok": True, "eliminado": True, "reservas_total": len(reservas), "reservas_canceladas": len(canceladas)})
 
     @app.route("/flota/api/choferes/<int:cid>/historial", methods=["GET"])
     @_flota_gestion_required

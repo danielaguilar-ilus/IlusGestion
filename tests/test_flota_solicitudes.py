@@ -381,6 +381,8 @@ class Falsa(BaseFalsa):
             return [{"n": sum(1 for x in self.sol.values() if x["estado"] == "devuelta" and not x.get("dev_confirmada_at"))}]
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado IN"):
             return [{"n": sum(1 for x in self.sol.values() if x["estado"] in R.ESTADOS_OCUPAN and x["inicio"] < p[0] and x["fin"] > p[1])}]
+        if s.startswith("SELECT id, numero, estado FROM flota_solicitudes WHERE chofer_id=%s"):
+            return [{"id": x["id"], "numero": x.get("numero"), "estado": x["estado"]} for x in self.sol.values() if x["chofer_id"] == p[0]]
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE vehiculo_id=%s") or \
                 s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE chofer_id=%s"):
             if " AND fin >=" in s:
@@ -545,8 +547,14 @@ class Falsa(BaseFalsa):
             return 1, None
         if s.startswith("UPDATE flota_solicitudes SET estado='cancelada'"):
             por, motivo, sid = p
+            hook = getattr(self, "al_cancelar", None)           # una prueba puede mover otra reserva JUSTO antes (carrera de la llave)
+            if hook:
+                self.al_cancelar = None
+                hook()
             x = self.sol.get(sid)
-            if not x or x["estado"] not in R.ESTADOS_OCUPAN:
+            # como el SQL real: cancelar una reserva con la llave afuera solo si el SQL lo dice («llave_entregada» en el WHERE)
+            permitidos = R.ESTADOS_OCUPAN if "'llave_entregada'" in s else ("solicitada", "confirmada")
+            if not x or x["estado"] not in permitidos:
                 return 0, None
             x.update(estado="cancelada", cancelada_por=por, cancelada_at=dt.datetime.utcnow(), cancelada_motivo=motivo)
             return 1, None
