@@ -194,8 +194,8 @@
 
 .guide-item span {
   display: block;
-  color: #555;
-  font-size: .78rem;
+  color: #4b5563;
+  font-size: .8rem;
   line-height: 1.35;
 }
 
@@ -234,8 +234,8 @@
 
 .group-meta {
   margin: 0 0 8px;
-  color: #777;
-  font-size: .78rem;
+  color: #555;
+  font-size: .85rem;
 }
 
 .label {
@@ -595,8 +595,8 @@
   padding: 5px 10px;
   border-radius: 0 0 6px 6px;
   background: #232323;
-  color: #aaa;
-  font-size: .72rem;
+  color: #c4c4c4;
+  font-size: .8rem;
   text-align: center;
 }
 
@@ -700,6 +700,32 @@
   }
 }
 
+
+/* ── REGLA #61: tableta y celular ─────────────────────────────────────────
+   Todo lo que se toca mide 44 px y la vista previa de la etiqueta se
+   ESCALA para caber en la pantalla (antes: 567 px de etiqueta dentro de
+   300 px útiles = scroll de lado). La escala la calcula fitPreview() abajo;
+   la etiqueta impresa y el PDF no cambian. */
+@media (max-width: 991.98px) {
+  .format-chip,
+  .print-btn { min-height: 44px; }
+  .radio-link { min-height: 48px; }
+  .label-title > a { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+}
+
+@media (max-width: 767.98px) {
+  .label-toolbar { flex-direction: column; align-items: stretch; gap: 12px; padding: 14px; }
+  .label-title h1 { font-size: 1.15rem; }
+  .toolbar-actions { width: 100%; }
+  .toolbar-actions .print-btn { flex: 1 1 calc(50% - 5px); white-space: normal; text-align: center; line-height: 1.15; padding: 6px 10px; }
+  .print-shell { padding: 14px 12px 28px; gap: 18px; }
+  .print-guidance,
+  .print-notes ul { grid-template-columns: 1fr; }
+  .guide-item { border-right: 0; border-bottom: 1px solid #ececec; }
+  .guide-item:last-child { border-bottom: 0; }
+  .print-panel { padding: 16px; }
+}
+
 @page {
   size: {{ label_format.w }} {{ label_format.h }};
   margin: 0;
@@ -751,6 +777,7 @@
   .label {
     width: {{ label_format.w }} !important;
     height: {{ label_format.h }} !important;
+    transform: none !important;
     margin: 0 !important;
     border-radius: 0 !important;
     box-shadow: none !important;
@@ -921,7 +948,7 @@
         <span><strong>100 × 50 mm</strong><br><small>Etiqueta pequena</small></span>
       </a>
       {% if request.args.get('bulto') %}
-      <div style="margin-top:10px;padding:8px 12px;background:#fff6f6;border:1px solid #f4c2c2;border-radius:6px;font-size:.74rem;color:#7f1d1d;display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <div style="margin-top:10px;padding:8px 12px;background:#fff6f6;border:1px solid #f4c2c2;border-radius:6px;font-size:.8rem;color:#7f1d1d;display:flex;align-items:center;justify-content:space-between;gap:8px">
         <span><i class="bi bi-funnel-fill me-1"></i>Filtrado: <strong>Bulto {{ request.args.get('bulto') }}</strong></span>
         <a href="{{ url_for('print_labels_alt', pid=product.id, fmt=format_key) }}" style="color:#7f1d1d;text-decoration:underline;font-weight:700">
           Ver todos
@@ -1056,6 +1083,42 @@ document.addEventListener("DOMContentLoaded", function () {
 
   document.querySelectorAll(".sku-value").forEach((el) => {
     fitText(el, formatKey === "100x50" ? 9 : 18);
+  });
+
+
+  // ── REGLA #61: la vista previa se ESCALA para caber en la pantalla ──────
+  // (150 mm = 567 px no cabe en un celular de 390 px). Solo cambia la vista:
+  // el tamaño real vive en el PDF y la impresión (@media print: transform none).
+  function fitPreview() {
+    const list = document.getElementById("labelsList");
+    if (!list) return;
+    list.querySelectorAll(".label-group").forEach((g) => {
+      const lab = g.querySelector(".label");
+      const foot = g.querySelector(".copy-foot");
+      if (!lab) return;
+      // restaurar a tamaño natural para medir
+      lab.style.transform = "";
+      lab.style.marginRight = "";
+      lab.style.marginBottom = "";
+      g.style.width = "";
+      if (foot) foot.style.width = "";
+      const w = lab.offsetWidth, h = lab.offsetHeight;
+      const avail = list.clientWidth;
+      if (!w || !avail || w <= avail) return;
+      const k = avail / w;
+      lab.style.transformOrigin = "top left";
+      lab.style.transform = "scale(" + k + ")";
+      lab.style.marginRight = (w * (k - 1)) + "px";
+      lab.style.marginBottom = (h * (k - 1)) + "px";
+      g.style.width = (w * k) + "px";
+      if (foot) foot.style.width = "100%";
+    });
+  }
+  fitPreview();
+  let _fitTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(_fitTimer);
+    _fitTimer = setTimeout(fitPreview, 120);
   });
 
   // El modal de vista previa PDF (#pdfModal / openPdf / closePdf) ya NO

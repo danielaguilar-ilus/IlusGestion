@@ -2,6 +2,7 @@
 {% block title %}Configurar impresión — {{ product.sku }}{% endblock %}
 
 {% block content %}
+<div class="eti-scope">
 <div class="page-header">
   <div class="d-flex align-items-start gap-2 flex-wrap">
     <a href="{{ url_for('product_detail', pid=product.id) }}" class="btn btn-sm btn-dark-ilus mt-1 flex-shrink-0">
@@ -9,7 +10,7 @@
     </a>
     <div class="flex-grow-1 min-w-0">
       <h4 class="mb-0"><i class="bi bi-printer me-2" style="color:var(--ilus-red)"></i>Configurar impresión</h4>
-      <div class="sub text-truncate">
+      <div class="sub text-break">
         <span class="font-monospace fw-bold">{{ product.sku }}</span> — {{ product.nombre }}
       </div>
     </div>
@@ -74,7 +75,7 @@
       </div>
 
       <div class="table-responsive">
-        <table class="table ilus-table mb-0" style="min-width:480px">
+        <table class="table ilus-table mb-0 eti-tcard">
           <thead>
             <tr>
               <th class="text-center" style="width:70px">Bulto</th>
@@ -89,22 +90,25 @@
           <tbody>
             {% for b in bultos %}
             <tr>
-              <td class="text-center fw-bold">{{ b.bulto_num }}</td>
-              <td class="text-end">{{ "%.0f"|format(b.largo) }} cm</td>
-              <td class="text-end">{{ "%.0f"|format(b.ancho) }} cm</td>
-              <td class="text-end">{{ "%.0f"|format(b.alto) }} cm</td>
-              <td class="text-end">{{ "%.2f"|format(b.peso) }} kg</td>
-              <td class="text-end">{{ "%.2f"|format(b.peso_vol) }}</td>
-              <td class="text-center">
+              <td class="text-center fw-bold tc-num" data-lbl="Bulto">{{ b.bulto_num }}</td>
+              <td class="text-end tc-dim" data-lbl="Largo">{{ "%.0f"|format(b.largo) }} cm</td>
+              <td class="text-end tc-dim" data-lbl="Ancho">{{ "%.0f"|format(b.ancho) }} cm</td>
+              <td class="text-end tc-dim" data-lbl="Alto">{{ "%.0f"|format(b.alto) }} cm</td>
+              <td class="text-end tc-dim" data-lbl="Peso">{{ "%.2f"|format(b.peso) }} kg</td>
+              <td class="text-end tc-dim" data-lbl="Peso Vol">{{ "%.2f"|format(b.peso_vol) }}</td>
+              <td class="text-center tc-act" data-lbl="Copias">
                 <div class="d-flex align-items-center justify-content-center gap-1">
                   <button type="button" class="btn btn-sm btn-outline-secondary px-2 py-0 qty-dec"
-                          data-target="qty_{{ b.bulto_num }}" style="line-height:1.6">−</button>
+                          data-target="qty_{{ b.bulto_num }}" style="line-height:1.6"
+                          aria-label="Una copia menos del bulto {{ b.bulto_num }}">−</button>
                   <input type="number" id="qty_{{ b.bulto_num }}" name="qty_{{ b.bulto_num }}"
                          value="1" min="1" max="10"
                          class="form-control form-control-sm text-center fw-bold qty-input"
+                         aria-label="Copias del bulto {{ b.bulto_num }}"
                          style="width:54px;border-radius:6px">
                   <button type="button" class="btn btn-sm btn-outline-secondary px-2 py-0 qty-inc"
-                          data-target="qty_{{ b.bulto_num }}" style="line-height:1.6">+</button>
+                          data-target="qty_{{ b.bulto_num }}" style="line-height:1.6"
+                          aria-label="Una copia más del bulto {{ b.bulto_num }}">+</button>
                 </div>
               </td>
             </tr>
@@ -115,7 +119,7 @@
     </div>
 
     {# Botones de acción #}
-    <div class="d-flex flex-wrap gap-2 mb-4">
+    <div class="d-flex flex-wrap gap-2 mb-4 ps-acciones">
 
       <button type="submit" class="btn btn-ilus fw-bold px-4">
         <i class="bi bi-printer me-2"></i>Ver etiquetas e imprimir
@@ -133,7 +137,7 @@
   </form>
 
   {# Nota informativa #}
-  <div class="alert" style="background:#f8f9fa;border:1px solid #dee2e6;border-radius:8px;font-size:.85rem;color:#666">
+  <div class="alert" style="background:#f8f9fa;border:1px solid #dee2e6;border-radius:8px;font-size:.875rem;color:#4b5563">
     <i class="bi bi-info-circle me-2"></i>
     <strong>El código de barras</strong> en la etiqueta corresponde al <strong>SKU</strong> del producto
     (<span class="font-monospace">{{ product.sku }}</span>).
@@ -141,6 +145,7 @@
     {% if product.codigo %}(<strong>{{ product.codigo }}</strong>){% endif %}.
   </div>
 
+</div>
 </div>
 {% endblock %}
 

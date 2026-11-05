@@ -1345,6 +1345,139 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   ETIQUETAS — resto del módulo: ficha, editar/nuevo, configurar
+   impresión y vista de etiquetas (Daniel 2026-11-05).
+   REGLA #61: letra >= 12 px, toques de 44 px, sin scroll de lado, y la
+   tabla pasa a tarjeta COMPACTA bajo 768 px (las celdas son las mismas:
+   solo cambian de forma; nada se quita ni se esconde).
+   Alcance: todo cuelga de .eti-scope para no tocar otras pantallas.
+═══════════════════════════════════════════════════════════════════ */
+.eti-scope .stat-card .stat-label,
+.eti-scope .ilus-badge,
+.eti-scope .badge,
+.eti-scope table thead th { font-size: .75rem; }
+.eti-scope .stat-card .stat-num.is-text { font-size: 1rem; }
+
+/* Tableta y celular: todo lo que se toca mide 44 px */
+@media (max-width: 991.98px) {
+  .eti-scope .btn {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .eti-scope .btn-close { min-width: 44px; min-height: 44px; }
+  .eti-scope .form-control,
+  .eti-scope .form-select { min-height: 44px; font-size: 16px; }
+  .eti-scope .qty-dec, .eti-scope .qty-inc {
+    min-width: 44px;
+    padding: 0 !important;
+    font-size: 1.3rem;
+    line-height: 1 !important;
+  }
+  .eti-scope .qty-input { width: 64px !important; }
+  /* #bultosTable fija 13,6 px con un id: en celular iOS acerca la pantalla si el campo es menor a 16 px */
+  .eti-scope #bultosTable input[type="number"] { font-size: 16px; }
+}
+
+/* ── Bultos en tarjeta compacta: ficha del producto y configurar impresión ── */
+@media (min-width: 768px) { .eti-tcard { min-width: 480px; } }
+@media (max-width: 767.98px) {
+  .eti-tcard, .eti-tcard tbody { display: block; width: 100%; }
+  .eti-tcard thead { display: none; }
+  .eti-tcard tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 16px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .eti-tcard tr:last-child { border-bottom: 0; }
+  .eti-tcard td { display: block; padding: 0; border: 0; min-width: 0; text-align: left !important; }
+  .eti-tcard td[data-lbl]::before { content: attr(data-lbl) ' '; color: #6b7280; font-weight: 600; }
+  /* fila 1: «Bulto N» a la izquierda y la acción (copias o botones) a la derecha */
+  .eti-tcard .tc-num { order: 1; flex: 1 1 0; font-size: 1.1rem; }
+  .eti-tcard .tc-num::before { color: #111; }
+  .eti-tcard .tc-act { order: 2; flex: 0 0 auto; }
+  .eti-tcard .tc-act::before { display: none; }
+  .eti-tcard tr::after { content: ''; order: 3; flex: 0 0 100%; height: 0; }
+  /* fila 2: medidas en una sola línea que parte si hace falta */
+  .eti-tcard .tc-dim { order: 4; font-size: .9rem; color: #111; }
+  .ps-acciones { flex-direction: column; }
+  .ps-acciones .btn { width: 100%; min-height: 48px; }
+}
+
+/* ── Catálogo: ordenar en el teléfono (los encabezados clicables solo existen en la tabla) ── */
+.eti-orden {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  grid-template-areas: "lbl lbl" "sel dir";
+  gap: 6px 8px;
+  align-items: center;
+  margin: 0 0 10px;
+}
+.eti-orden-lbl { grid-area: lbl; margin: 0; font-size: .8rem; font-weight: 700; color: #4b5563; }
+.eti-orden .form-select { grid-area: sel; min-height: 44px; font-size: 16px; }
+.eti-orden-dir {
+  grid-area: dir;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.eti-mobile-list .ilus-badge,
+.ilus-table-fullview .ilus-badge,
+.eti-mobile-list .badge,
+.ilus-table-fullview .badge { font-size: .75rem; }
+
+/* ── Editar / nuevo producto: cada bulto es una tarjeta con sus 4 medidas ── */
+.eti-scope .ilus-card-header .text-muted { color: #cbd5e1 !important; }
+@media (max-width: 767.98px) {
+  .eti-scope .ilus-card-header { flex-wrap: wrap; gap: 10px; }
+  .eti-scope .ilus-card-header > .d-flex { width: 100%; }
+  .eti-scope .ilus-card-header > .d-flex { flex-wrap: wrap; }
+  .eti-scope .ilus-card-header > .d-flex > .btn { flex: 1 1 100%; }
+  .eti-scope .ilus-card-header > .d-flex > label { flex: 1 1 100%; }
+  .eti-scope .ilus-card-header > .d-flex > label .form-select { width: 100% !important; }
+
+  .bf-tabla, .bf-tabla tbody, .bf-tabla tfoot { display: block; width: 100%; }
+  .bf-tabla thead { display: none; }
+  .bf-tabla #bultosBody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "num del" "largo ancho" "alto peso" "pv pv";
+    gap: 10px 12px;
+    align-items: end;
+    padding: 14px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .bf-tabla #bultosBody td { display: block; padding: 0; border: 0; min-width: 0; text-align: left; }
+  .bf-tabla .bf-c-num { grid-area: num; font-size: 1.1rem; align-self: center; text-align: left !important; padding: 0 !important; }
+  .bf-tabla .bf-c-num::before { content: 'Bulto '; color: #111; }
+  .bf-tabla .bf-c-del { grid-area: del; justify-self: end; align-self: center; }
+  .bf-tabla .bf-c-del .btn { min-width: 44px; }
+  .bf-tabla .bf-c-in::before { content: attr(data-lbl); display: block; margin-bottom: 4px; font-size: .75rem; font-weight: 600; color: #6b7280; }
+  .bf-tabla .bf-c-in:nth-child(2) { grid-area: largo; }
+  .bf-tabla .bf-c-in:nth-child(3) { grid-area: ancho; }
+  .bf-tabla .bf-c-in:nth-child(4) { grid-area: alto; }
+  .bf-tabla .bf-c-in:nth-child(5) { grid-area: peso; }
+  .eti-scope .bf-tabla #bultosBody .bf-c-in input { width: 100%; }
+  .bf-tabla .bf-c-pv { grid-area: pv; font-size: .95rem; font-weight: 700; color: var(--ilus-red); }
+  .bf-tabla .bf-c-pv::before { content: attr(data-lbl) ': '; color: #6b7280; font-weight: 600; }
+  .bf-tabla #totalsRow:not([style*="display:none"]):not([style*="display: none"]) { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 12px 14px; }
+  .bf-tabla #totalsRow td { display: block; padding: 0 !important; border: 0; text-align: left !important; }
+  .bf-tabla #totalsRow td:empty { display: none; }
+  .bf-tabla #totalsRow td[data-lbl]::before { content: attr(data-lbl) ': '; color: #6b7280; font-weight: 600; }
+  .bf-acciones { flex-direction: column-reverse; }
+  .bf-acciones > div { width: 100%; }
+  .bf-acciones .btn { flex: 1 1 auto; min-height: 48px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    TABLA DE EQUIPOS DEL CLIENTE — full-viewport opt-in (Daniel
    2026-05-26: misma estética que la tabla de etiquetas).
    Solo la tabla scrollea, header negro sticky arriba.
@@ -1466,7 +1599,7 @@ body {
    TABLA DE BULTOS (formulario)
 ══════════════════════════════════════════════════════════════ */
 #bultosTable th {
-  font-size: .72rem; text-transform: uppercase; letter-spacing: .4px;
+  font-size: .75rem; text-transform: uppercase; letter-spacing: .4px;
   background: #222; color: #fff; padding: 8px 6px;
 }
 #bultosTable td { padding: 5px 4px; border-bottom: 1px solid #eee; vertical-align: middle; }

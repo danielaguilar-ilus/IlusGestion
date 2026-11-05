@@ -384,6 +384,37 @@
 
   {# ── Cards mobile ── #}
   <div class="d-md-none eti-mobile-list">
+    {# ── ORDENAR en el teléfono (Daniel 2026-11-05): los encabezados clicables
+          solo existen en la tabla de escritorio; el servidor ya ordena todo el
+          universo con ?orden=&dir= (lista blanca). Preserva búsqueda, filtro
+          de fotos, ?ver= y el tamaño de página. Sin orden elegido, el servidor
+          ordena por nombre (A–Z): por eso es lo que se ve seleccionado. #}
+    {% set _ord = orden if (orden is defined and orden) else 'nombre' %}
+    {% set _dsc = (orden_dir is defined and orden_dir == 'desc') %}
+    <form method="get" class="eti-orden" id="etiOrdenForm">
+      {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+      {% if foto_filter %}<input type="hidden" name="fotos" value="{{ foto_filter }}">{% endif %}
+      {% if request.args.get('ver') %}<input type="hidden" name="ver" value="{{ request.args.get('ver') }}">{% endif %}
+      <input type="hidden" name="size" value="{{ page_size }}">
+      <input type="hidden" name="dir" id="etiOrdenDir" value="{{ 'desc' if _dsc else 'asc' }}">
+      <label for="etiOrden" class="eti-orden-lbl"><i class="bi bi-arrow-down-up me-1"></i>Ordenar por</label>
+      <select id="etiOrden" name="orden" class="form-select" onchange="this.form.submit()">
+        <option value="nombre"      {% if _ord == 'nombre' %}selected{% endif %}>Nombre</option>
+        <option value="sku"         {% if _ord == 'sku' %}selected{% endif %}>SKU</option>
+        <option value="actualizado" {% if _ord == 'actualizado' %}selected{% endif %}>Última actualización</option>
+        <option value="creado"      {% if _ord == 'creado' %}selected{% endif %}>Fecha de creación</option>
+        <option value="bultos"      {% if _ord == 'bultos' %}selected{% endif %}>Bultos</option>
+        <option value="peso"        {% if _ord == 'peso' %}selected{% endif %}>Peso (kg)</option>
+        <option value="pv"          {% if _ord == 'pv' %}selected{% endif %}>Peso volumétrico</option>
+        <option value="estado"      {% if _ord == 'estado' %}selected{% endif %}>Estado</option>
+      </select>
+      <button type="button" class="btn btn-outline-secondary eti-orden-dir"
+              onclick="var d=document.getElementById('etiOrdenDir');d.value=(d.value==='desc'?'asc':'desc');this.form.submit()"
+              title="{{ 'De mayor a menor' if _dsc else 'De menor a mayor' }}: tocar para invertir"
+              aria-label="{{ 'Orden de mayor a menor' if _dsc else 'Orden de menor a mayor' }}. Tocar para invertir">
+        <i class="bi bi-sort-{{ 'down' if _dsc else 'up' }}"></i>
+      </button>
+    </form>
     {% for p in products %}
     <div class="ilus-card mb-2 mobile-product-card" data-fotos="{{ p.total_fotos|int }}">
       <div class="p-3">
