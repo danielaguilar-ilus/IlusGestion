@@ -52,6 +52,7 @@ def _ns(superadmin, mysql_fetchall, args=None, con_formato_real=False):
     else:
         ns["_fmt_row"] = lambda r: dict(r)
     exec(compile(_funcion("_tk_dup_agrupar"), "<agrupar>", "exec"), ns)
+    exec(compile(_funcion("_tk_dup_leer"), "<leer>", "exec"), ns)       # la lectura la comparten la auditoría y la limpieza
     exec(compile(_funcion("tk_api_auditoria_correos_duplicados"), "<auditoria>", "exec"), ns)
     return ns
 
@@ -120,7 +121,7 @@ def test_la_ruta_pide_login_de_tickets_y_es_solo_get():
 
 
 def test_no_escribe_nada_en_la_base():
-    cuerpo = _funcion("tk_api_auditoria_correos_duplicados") + _funcion("_tk_dup_agrupar")
+    cuerpo = _funcion("tk_api_auditoria_correos_duplicados") + _funcion("_tk_dup_agrupar") + _funcion("_tk_dup_leer")
     assert "mysql_execute" not in cuerpo and "_tk_log(" not in cuerpo
     for palabra in ("INSERT", "UPDATE", "DELETE", "REPLACE", "ALTER", "DROP", "TRUNCATE"):
         assert palabra not in cuerpo, palabra
