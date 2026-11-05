@@ -2,6 +2,7 @@
 {% block title %}{% if product %}Editar {{ product.sku }}{% else %}Nuevo Producto{% endif %} - ILUS{% endblock %}
 
 {% block content %}
+<div class="eti-scope">
 <div class="mod-hero">
   <div class="d-flex align-items-center gap-3">
     <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-light no-print">
@@ -194,7 +195,7 @@
     </div>
 
     <div class="table-responsive">
-      <table class="table mb-0" id="bultosTable">
+      <table class="table mb-0 bf-tabla" id="bultosTable">
         <thead style="background:#222;color:#fff">
           <tr>
             <th class="text-center px-3" style="width:56px">N°</th>
@@ -211,8 +212,8 @@
           <tr id="totalsRow" style="display:none;background:#f7f7f7;border-top:2px solid #111">
             <td colspan="3" class="text-end text-muted small pe-2 py-2">TOTALES</td>
             <td></td>
-            <td class="fw-bold py-2" id="totalPeso">—</td>
-            <td class="fw-bold text-end pe-3 py-2" id="totalPV" style="color:var(--ilus-red)">—</td>
+            <td class="fw-bold py-2" id="totalPeso" data-lbl="Peso total (kg)">—</td>
+            <td class="fw-bold text-end pe-3 py-2" id="totalPV" data-lbl="Peso Vol total" style="color:var(--ilus-red)">—</td>
             <td></td>
           </tr>
         </tfoot>
@@ -226,7 +227,7 @@
   </div>
 
   {# ══ ACCIONES ══════════════════════════════════════════════════════════ #}
-  <div class="d-flex gap-2 justify-content-between mb-3 flex-wrap">
+  <div class="d-flex gap-2 justify-content-between mb-3 flex-wrap bf-acciones">
     <div class="d-flex gap-2">
       {% if product and permissions.delete %}
       <button type="button" class="btn btn-outline-danger"
@@ -295,6 +296,7 @@
 </div>
 {% endif %}
 
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -426,17 +428,17 @@ const FORM_DATA = {
   function sourceBadge(exists) {
     if (!exists) {
       // NO está en la DB → disponible para crear
-      return '<span style="font-size:.65rem;background:#1a6b1a;color:#fff;'
+      return '<span style="font-size:.75rem;background:#1a6b1a;color:#fff;'
            + 'padding:2px 8px;border-radius:4px;flex-shrink:0;font-weight:700;'
            + 'display:inline-flex;align-items:center;gap:4px">'
-           + '<i class="bi bi-plus-circle-fill" style="font-size:.65rem"></i>'
+           + '<i class="bi bi-plus-circle-fill" style="font-size:.75rem"></i>'
            + 'No registrado</span>';
     }
     // YA está en la DB
-    return '<span style="font-size:.65rem;background:#555;color:#fff;'
+    return '<span style="font-size:.75rem;background:#555;color:#fff;'
          + 'padding:2px 8px;border-radius:4px;flex-shrink:0;font-weight:700;'
          + 'display:inline-flex;align-items:center;gap:4px">'
-         + '<i class="bi bi-check-circle-fill" style="font-size:.65rem"></i>'
+         + '<i class="bi bi-check-circle-fill" style="font-size:.75rem"></i>'
          + 'Ya registrado</span>';
   }
 
@@ -444,9 +446,9 @@ const FORM_DATA = {
   function groupHeader(label, count, color) {
     return '<div style="padding:5px 16px 4px;background:#f7f7f7;border-bottom:1px solid #e8e8e8;'
          + 'display:flex;align-items:center;gap:8px;position:sticky;top:0;z-index:1">'
-         + '<span style="font-size:.68rem;font-weight:800;color:' + color + ';text-transform:uppercase;letter-spacing:.8px">'
+         + '<span style="font-size:.75rem;font-weight:800;color:' + color + ';text-transform:uppercase;letter-spacing:.8px">'
          + label + '</span>'
-         + '<span style="font-size:.65rem;background:' + color + ';color:#fff;'
+         + '<span style="font-size:.75rem;background:' + color + ';color:#fff;'
          + 'border-radius:10px;padding:0 7px;font-weight:700">' + count + '</span>'
          + '</div>';
   }
@@ -499,10 +501,10 @@ const FORM_DATA = {
          + ' role="option">'
          + '<div style="flex:1;min-width:0">'
          + '<div style="font-weight:' + (dimmed ? '600' : '700') + ';font-size:.93rem;'
-         + 'line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+         + 'line-height:1.3;overflow-wrap:anywhere;'
          + 'color:' + (dimmed ? '#666' : '#111') + '">'
          + escHtml(item.nombre || '(sin nombre)') + '</div>'
-         + '<div style="font-size:.76rem;color:#999;font-family:monospace;margin-top:2px;letter-spacing:.3px">'
+         + '<div style="font-size:.8rem;color:#6b7280;font-family:monospace;margin-top:2px;letter-spacing:.3px">'
          + 'SKU: ' + escHtml(item.sku) + '</div>'
          + '</div>'
          + '<div style="flex-shrink:0">' + sourceBadge(item.already_exists) + '</div>'

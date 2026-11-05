@@ -78,6 +78,7 @@
     ' background:rgba(10,10,10,.72);color:#fff;font-size:.9rem;cursor:pointer;',
     ' display:inline-flex;align-items:center;justify-content:center;backdrop-filter:blur(2px)}',
     '.ife-card-actions button:hover{background:#dc2626}',
+    '@media (max-width:991px){.ife-card-actions button{width:44px;height:44px}}',
     '.ife-upcard{position:relative}',
     '.ife-upcard .ife-upov{position:absolute;inset:0;background:rgba(10,10,10,.55);',
     ' display:flex;flex-direction:column;align-items:center;justify-content:center;',
@@ -1024,7 +1025,7 @@
       f.innerHTML =
         '<label class="photo-upload-zone d-flex flex-column align-items-center justify-content-center h-100" style="min-height:120px;cursor:pointer">' +
         '  <div class="up-icon"><i class="bi bi-camera-plus"></i></div>' +
-        '  <div class="up-text">Agregar foto<br><span style="color:#bbb;font-size:.7rem">Clic o arrastra · JPG, PNG, WEBP</span></div>' +
+        '  <div class="up-text">Agregar foto<br><span style="color:#6b7280;font-size:.75rem">Clic o arrastra · JPG, PNG, WEBP</span></div>' +
         '  <input type="file" accept="image/*" style="display:none">' +
         '</label>';
       var input = f.querySelector('input');

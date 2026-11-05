@@ -20,17 +20,77 @@
   gap:10px;margin-bottom:14px;}
 .em-kpi{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:10px 14px;}
 .em-kpi .num{font-size:1.5rem;font-weight:900;line-height:1;}
-.em-kpi .lbl{font-size:.66rem;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}
+.em-kpi .lbl{font-size:.75rem;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}
 
-.em-row{display:grid;grid-template-columns:80px 1fr auto auto;gap:10px;padding:8px 12px;
-  border-bottom:1px solid #f3f4f6;align-items:center;font-size:.85rem;}
-.em-badge{padding:3px 9px;border-radius:50px;font-size:.65rem;font-weight:800;letter-spacing:.04em;}
+.em-row{display:grid;grid-template-columns:80px minmax(0,1fr) auto auto;gap:10px;padding:8px 12px;
+  border-bottom:1px solid #f3f4f6;align-items:center;font-size:.9rem;}
+.em-badge{padding:3px 10px;border-radius:50px;font-size:.75rem;font-weight:800;letter-spacing:.04em;}
 .bs-OK{background:#dcfce7;color:#166534;}
 .bs-SIN_BULTO{background:#fef3c7;color:#92400e;}
 .bs-NO_ENCONTRADO{background:#fee2e2;color:#991b1b;}
 .bs-ERROR{background:#fce7f3;color:#9d174d;}
+
+.em-kpi-lbl{font-size:.75rem;font-weight:600}
+.em-tabla td{vertical-align:middle}
+
+/* REGLA #61 - tableta y celular: todo lo que se toca mide 44 px */
+@media (max-width:991px){
+  .em-page .btn{min-height:44px;display:inline-flex;align-items:center;justify-content:center}
+  .em-page .form-select-sm{min-height:44px;font-size:16px}
+}
+/* REGLA #61 - celular: tablas -> tarjetas COMPACTAS, letra >= 12 px, toques de 44 px,
+   sin scroll de lado. Las celdas siguen siendo las mismas (solo cambian de forma). */
+@media (max-width:767px){
+  .em-page .em-hero{padding:14px 16px}
+  .em-page .em-hero .btn{min-height:44px;display:inline-flex;align-items:center}
+  .em-page .em-card{padding:14px 14px}
+  .em-page .form-select-sm{min-height:44px;font-size:16px}
+  .em-page .em-acciones{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;text-align:initial!important}
+  .em-page .em-acciones .btn{min-height:48px;margin:0!important;width:100%}
+  .em-page .em-cab-sel{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;width:100%}
+  .em-page .em-cab-sel .btn,.em-page .em-card .btn-sm{min-height:44px}
+  .em-page .em-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .em-page .em-final{text-align:initial!important}
+  .em-page .em-final .btn{width:100%;min-height:48px}
+
+  .em-page .em-tabla,.em-page .em-tabla tbody{display:block;width:100%}
+  .em-page .em-tabla thead{display:none}
+  .em-page .em-tabla tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;
+    padding:10px 4px;border-bottom:1px solid #e5e7eb}
+  .em-page .em-tabla tr:last-child{border-bottom:0}
+  .em-page .em-tabla td{display:block;padding:0;border:0;font-size:.85rem;min-width:0}
+  .em-page .em-tabla td[data-lbl]::before{content:attr(data-lbl) ' ';color:#6b7280;font-weight:600}
+  /* fila 1: casilla + SKU + badge, fila 2: nombre completo, fila 3: datos, fila 4: botones */
+  .em-page .em-c-chk{order:1;flex:0 0 44px;height:44px;display:flex!important;align-items:center;justify-content:center}
+  .em-page .em-c-chk input{width:22px;height:22px}
+  .em-page .em-c-sku{order:2;flex:1 1 0;font-size:.95rem!important;overflow-wrap:anywhere}
+  .em-page .em-c-etq{order:3;margin-left:auto;background:#dcfce7;color:#166534!important;border-radius:50px;padding:3px 10px!important;font-weight:800;text-align:center}
+  .em-page .em-c-nom{order:4;flex:1 1 100%;max-width:calc(100% - 54px);margin-left:54px;font-size:.9rem;line-height:1.35;overflow-wrap:anywhere}
+  .em-page .em-c-cant{order:5;margin-left:54px;color:#374151}
+  .em-page .em-c-bul{order:6;color:#374151}
+  .em-page .em-c-act{order:7;flex:1 1 100%;display:flex!important;gap:8px;margin-top:4px;text-align:initial!important}
+  .em-page .em-c-act .btn{flex:1 1 0;min-height:44px;display:inline-flex;align-items:center;justify-content:center;margin:0!important}
+  /* tablas 2 y 3 no llevan casilla: el nombre y los datos parten sin sangria */
+  .em-page .em-tabla-sinchk .em-c-sku{flex:1 1 100%}
+  .em-page .em-tabla-sinchk .em-c-nom{max-width:100%;margin-left:0}
+  .em-page .em-tabla-sinchk .em-c-cant,.em-page .em-tabla-sinchk .em-c-bul{margin-left:0}
+
+  /* resultado: una tarjeta por SKU en lugar de 4 columnas apretadas */
+  .em-page .em-row-head{display:none}
+  .em-page .em-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"fila estado" "main main" "acc acc";
+    gap:6px 10px;padding:12px 4px;border-bottom:1px solid #e5e7eb}
+  .em-page .em-c-fila{grid-area:fila}
+  .em-page .em-c-main{grid-area:main;min-width:0;overflow-wrap:anywhere}
+  .em-page .em-c-estado{grid-area:estado}
+  .em-page .em-c-res{grid-area:acc;text-align:initial!important}
+  .em-page .em-c-res .btn{width:100%;min-height:44px;display:inline-flex;align-items:center;justify-content:center}
+  .em-page .alert .btn{min-height:44px;width:100%;margin-top:8px}
+  .em-page .alert.d-flex{flex-direction:column;align-items:stretch!important}
+  #modalCrearInline .modal-footer .btn{min-height:44px}
+}
 </style>
 
+<div class="em-page">
 <div class="em-hero">
   <div>
     <h4 class="mb-1"><i class="bi bi-collection me-2"></i>Carga masiva de etiquetas</h4>
@@ -64,7 +124,7 @@
         <option value="100x50">100 × 50 mm</option>
       </select>
     </div>
-    <div class="col-md-8 text-end">
+    <div class="col-md-8 text-end em-acciones">
       <button id="btnPreview" class="btn btn-outline-dark fw-bold px-3 me-2" onclick="analizarPreview()" disabled>
         <i class="bi bi-search me-1"></i>Analizar Excel
       </button>
@@ -91,25 +151,25 @@
   <div class="row g-2 mb-3">
     <div class="col-6 col-md-3">
       <div class="em-card text-center py-2 px-2" style="background:#f0fdf4;border-color:#86efac">
-        <div class="small text-muted fw-semibold" style="font-size:.68rem">LISTAS</div>
+        <div class="text-muted em-kpi-lbl">LISTAS</div>
         <div class="fw-black" style="font-size:1.6rem;color:#15803d" id="kpiOk">0</div>
       </div>
     </div>
     <div class="col-6 col-md-3">
       <div class="em-card text-center py-2 px-2" style="background:#fef3c7;border-color:#fcd34d">
-        <div class="small text-muted fw-semibold" style="font-size:.68rem">SIN MEDIDAS</div>
+        <div class="text-muted em-kpi-lbl">SIN MEDIDAS</div>
         <div class="fw-black" style="font-size:1.6rem;color:#a16207" id="kpiSinMed">0</div>
       </div>
     </div>
     <div class="col-6 col-md-3">
       <div class="em-card text-center py-2 px-2" style="background:#fee2e2;border-color:#fca5a5">
-        <div class="small text-muted fw-semibold" style="font-size:.68rem">NO REGISTRADOS</div>
+        <div class="text-muted em-kpi-lbl">NO REGISTRADOS</div>
         <div class="fw-black" style="font-size:1.6rem;color:#b91c1c" id="kpiSinProd">0</div>
       </div>
     </div>
     <div class="col-6 col-md-3">
       <div class="em-card text-center py-2 px-2" style="background:#0f172a;color:#fff;border-color:#334155">
-        <div class="small fw-semibold" style="font-size:.68rem;opacity:.7">ETIQUETAS TOTAL</div>
+        <div class="em-kpi-lbl" style="opacity:.85">ETIQUETAS TOTAL</div>
         <div class="fw-black" style="font-size:1.6rem" id="kpiTotalEtq">0</div>
       </div>
     </div>
@@ -119,13 +179,13 @@
   <div class="em-card mb-3" id="boxImprimibles" style="display:none">
     <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
       <h6 class="mb-0 fw-bold"><i class="bi bi-check-circle-fill me-2" style="color:#16a34a"></i>Listas para imprimir</h6>
-      <div>
+      <div class="em-cab-sel">
         <button class="btn btn-sm btn-outline-secondary me-1" onclick="prevToggleAll(true)">Seleccionar todas</button>
         <button class="btn btn-sm btn-outline-secondary" onclick="prevToggleAll(false)">Deseleccionar</button>
       </div>
     </div>
     <div class="table-responsive">
-      <table class="table table-sm mb-0" style="font-size:.82rem">
+      <table class="table table-sm mb-0 em-tabla" style="font-size:.85rem">
         <thead class="table-light">
           <tr>
             <th style="width:32px"><input type="checkbox" id="chkAllImpr" onchange="prevToggleAll(this.checked)" checked></th>
@@ -145,7 +205,7 @@
   <div class="em-card mb-3" id="boxFaltaMed" style="display:none">
     <h6 class="mb-2 fw-bold"><i class="bi bi-rulers me-2" style="color:#a16207"></i>Faltan medidas (producto existe pero sin largo/ancho/alto)</h6>
     <div class="table-responsive">
-      <table class="table table-sm mb-0" style="font-size:.82rem">
+      <table class="table table-sm mb-0 em-tabla em-tabla-sinchk" style="font-size:.85rem">
         <thead class="table-light">
           <tr>
             <th>SKU</th>
@@ -170,7 +230,7 @@
       </div>
     </div>
     <div class="table-responsive">
-      <table class="table table-sm mb-0" style="font-size:.82rem">
+      <table class="table table-sm mb-0 em-tabla em-tabla-sinchk" style="font-size:.85rem">
         <thead class="table-light">
           <tr>
             <th>SKU</th>
@@ -185,7 +245,7 @@
   </div>
 
   {# Acción final #}
-  <div class="text-end">
+  <div class="text-end em-final">
     <button class="btn btn-ilus fw-bold px-4" onclick="procesar()">
       <i class="bi bi-printer-fill me-1"></i>Imprimir las marcadas como listas
     </button>
@@ -217,6 +277,7 @@
   </div>
 </div>
 
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -306,13 +367,13 @@ function renderPreview(d){
     document.getElementById('boxImprimibles').style.display = '';
     tblImpr.innerHTML = d.imprimibles.map(x => `
       <tr>
-        <td><input type="checkbox" class="chk-impr" data-sku="${escAttr(x.sku)}" checked
+        <td class="em-c-chk"><input type="checkbox" class="chk-impr" data-sku="${escAttr(x.sku)}" checked aria-label="Imprimir ${escAttr(x.sku)}"
                     onchange="prevToggleSku('${escAttr(x.sku)}', this.checked)"></td>
-        <td class="font-monospace fw-bold">${escHtml(x.sku)}</td>
-        <td>${escHtml(x.nombre_db || x.descripcion || '—')}</td>
-        <td class="text-center">${x.cantidad}</td>
-        <td class="text-center">${x.n_bultos_validos}</td>
-        <td class="text-center fw-bold" style="color:#15803d">${x.n_etiquetas_estimadas}</td>
+        <td class="font-monospace fw-bold em-c-sku">${escHtml(x.sku)}</td>
+        <td class="em-c-nom">${escHtml(x.nombre_db || x.descripcion || '—')}</td>
+        <td class="text-center em-c-cant" data-lbl="Cant.">${x.cantidad}</td>
+        <td class="text-center em-c-bul" data-lbl="Bultos">${x.n_bultos_validos}</td>
+        <td class="text-center fw-bold em-c-etq" style="color:#15803d" data-lbl="Etiquetas">${x.n_etiquetas_estimadas}</td>
       </tr>
     `).join('');
   } else {
@@ -325,10 +386,10 @@ function renderPreview(d){
     document.getElementById('boxFaltaMed').style.display = '';
     tblMed.innerHTML = d.faltan_medidas.map(x => `
       <tr>
-        <td class="font-monospace fw-bold">${escHtml(x.sku)}</td>
-        <td>${escHtml(x.nombre_db || x.descripcion || '—')}</td>
-        <td class="text-center">${x.n_bultos || 0}</td>
-        <td class="text-end">
+        <td class="font-monospace fw-bold em-c-sku">${escHtml(x.sku)}</td>
+        <td class="em-c-nom">${escHtml(x.nombre_db || x.descripcion || '—')}</td>
+        <td class="text-center em-c-cant" data-lbl="Bultos sin medidas:">${x.n_bultos || 0}</td>
+        <td class="text-end em-c-act">
           <a href="/products/${x.product_id}/edit" target="_blank"
              class="btn btn-sm btn-outline-warning fw-semibold">
             <i class="bi bi-rulers me-1"></i>Agregar medidas
@@ -346,10 +407,10 @@ function renderPreview(d){
     document.getElementById('boxFaltaProd').style.display = '';
     tblProd.innerHTML = d.faltan_productos.map(x => `
       <tr id="rowProd-${escAttr(x.sku)}">
-        <td class="font-monospace fw-bold">${escHtml(x.sku)}</td>
-        <td>${escHtml(x.descripcion || '—')}</td>
-        <td class="text-center">${x.cantidad}</td>
-        <td class="text-end">
+        <td class="font-monospace fw-bold em-c-sku">${escHtml(x.sku)}</td>
+        <td class="em-c-nom">${escHtml(x.descripcion || '—')}</td>
+        <td class="text-center em-c-cant" data-lbl="Cant.">${x.cantidad}</td>
+        <td class="text-end em-c-act">
           <button class="btn btn-sm btn-outline-primary me-1" onclick="importarUnoErp('${escAttr(x.sku)}', '${escAttr(x.descripcion||'')}')">
             <i class="bi bi-cloud-download me-1"></i>Importar ERP
           </button>
@@ -567,7 +628,7 @@ function mostrarResultados(d){
   }
 
   let html = bannerAccion;
-  html += `<div class="em-row" style="font-weight:800;color:#374151;border-bottom:2px solid #e5e7eb">
+  html += `<div class="em-row em-row-head" style="font-weight:800;color:#374151;border-bottom:2px solid #e5e7eb">
     <div>Fila</div><div>SKU / Descripción</div><div>Estado</div><div class="text-end">Acción / Detalle</div>
   </div>`;
   for (const it of d.resultados){
@@ -587,15 +648,15 @@ function mostrarResultados(d){
     }
 
     html += `<div class="em-row">
-      <div class="text-muted font-monospace">#${it.row}</div>
-      <div>
+      <div class="text-muted font-monospace em-c-fila">#${it.row}</div>
+      <div class="em-c-main">
         <span class="font-monospace fw-bold">${esc(it.sku)}</span>
         ${it.nombre_producto ? `<div class="small text-muted">${esc(it.nombre_producto)}</div>` :
           (it.descripcion ? `<div class="small text-muted">${esc(it.descripcion)}</div>` : '')}
         ${it.cantidad > 1 ? `<div class="small text-muted">Cantidad solicitada: ${it.cantidad}</div>` : ''}
       </div>
-      <div><span class="em-badge bs-${it.estado}">${esc(it.estado)}</span></div>
-      <div class="text-end">${accionHtml}</div>
+      <div class="em-c-estado"><span class="em-badge bs-${it.estado}">${esc(it.estado)}</span></div>
+      <div class="text-end em-c-res">${accionHtml}</div>
     </div>`;
   }
   document.getElementById('lista_resultados').innerHTML = html;

@@ -59,23 +59,23 @@ function addBultoRow(num, data) {
   tr.id = `row_${n}`;
 
   tr.innerHTML = `
-    <td class="text-center fw-bold text-muted">${n}</td>
-    <td><input type="number" name="largo_${n}" min="0" step="0.1"
+    <td class="text-center fw-bold text-muted bf-c-num" data-lbl="Bulto">${n}</td>
+    <td class="bf-c-in" data-lbl="Largo (cm)"><input type="number" inputmode="decimal" name="largo_${n}" min="0" step="0.1" aria-label="Largo (cm) del bulto ${n}"
                class="form-control form-control-sm" data-field="largo" data-row="${n}"
                value="${d.largo || ''}" placeholder="0"></td>
-    <td><input type="number" name="ancho_${n}" min="0" step="0.1"
+    <td class="bf-c-in" data-lbl="Ancho (cm)"><input type="number" inputmode="decimal" name="ancho_${n}" min="0" step="0.1" aria-label="Ancho (cm) del bulto ${n}"
                class="form-control form-control-sm" data-field="ancho" data-row="${n}"
                value="${d.ancho || ''}" placeholder="0"></td>
-    <td><input type="number" name="alto_${n}"  min="0" step="0.1"
+    <td class="bf-c-in" data-lbl="Alto (cm)"><input type="number" inputmode="decimal" name="alto_${n}"  min="0" step="0.1" aria-label="Alto (cm) del bulto ${n}"
                class="form-control form-control-sm" data-field="alto"  data-row="${n}"
                value="${d.alto || ''}" placeholder="0"></td>
-    <td><input type="number" name="peso_${n}"  min="0" step="0.01"
+    <td class="bf-c-in" data-lbl="Peso (kg)"><input type="number" inputmode="decimal" name="peso_${n}"  min="0" step="0.01" aria-label="Peso (kg) del bulto ${n}"
                class="form-control form-control-sm" data-field="peso"  data-row="${n}"
                value="${d.peso || ''}" placeholder="0"></td>
-    <td class="pv-cell" data-val="0">—</td>
-    <td>
+    <td class="pv-cell bf-c-pv" data-val="0" data-lbl="Peso Vol">—</td>
+    <td class="bf-c-del">
       <button type="button" class="btn btn-outline-danger btn-sm px-2"
-              onclick="removeBultoRow(${n})" title="Eliminar bulto">
+              onclick="removeBultoRow(${n})" title="Eliminar bulto" aria-label="Eliminar bulto ${n}">
         <i class="bi bi-trash"></i>
       </button>
     </td>

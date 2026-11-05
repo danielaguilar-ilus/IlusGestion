@@ -2,6 +2,7 @@
 {% block title %}{{ product.sku }} - ILUS Etiquetas{% endblock %}
 
 {% block content %}
+<div class="eti-scope">
 <div class="page-header">
   <div class="d-flex align-items-start gap-2 flex-wrap">
     <a href="{{ url_for('index') }}" class="btn btn-sm btn-dark-ilus mt-1 no-print flex-shrink-0">
@@ -9,7 +10,7 @@
     </a>
     <div class="flex-grow-1 min-w-0">
       <div class="d-flex align-items-center gap-2 flex-wrap">
-        <h4 class="font-monospace mb-0 text-truncate">{{ product.sku }}</h4>
+        <h4 class="font-monospace mb-0 text-break">{{ product.sku }}</h4>
         {% if product.estado == 'Confirmado' %}
         <span class="ilus-badge badge-confirmado">Confirmado</span>
         {% elif product.estado == 'Impreso' %}
@@ -18,7 +19,7 @@
         <span class="ilus-badge badge-pendiente">Pendiente</span>
         {% endif %}
       </div>
-      <div class="sub text-truncate">{{ product.nombre }}</div>
+      <div class="sub text-break">{{ product.nombre }}</div>
     </div>
     <div class="d-none d-md-flex gap-2 no-print">
       {% if permissions.edit %}
@@ -40,7 +41,7 @@
     <div class="col-6 col-md-3"><div class="stat-card blk"><div class="stat-num">{{ total_bultos }}</div><div class="stat-label">Bultos</div></div></div>
     <div class="col-6 col-md-3"><div class="stat-card red"><div class="stat-num">{{ "%.1f"|format(peso_total) }}</div><div class="stat-label">Peso Total kg</div></div></div>
     <div class="col-6 col-md-3"><div class="stat-card"><div class="stat-num" style="color:#555;font-size:1.5rem">{{ "%.2f"|format(pv_total) }}</div><div class="stat-label">Peso Vol Total</div></div></div>
-    <div class="col-6 col-md-3"><div class="stat-card"><div class="stat-num" style="font-size:.8rem;color:#333;padding-top:4px">{{ product.created_by or '-' }}<br>{{ product.updated_by or '-' }}</div><div class="stat-label">Creo / Ultimo</div></div></div>
+    <div class="col-6 col-md-3"><div class="stat-card"><div class="stat-num" style="font-size:.875rem;color:#333;padding-top:4px;line-height:1.35">{{ product.created_by or '-' }}<br>{{ product.updated_by or '-' }}</div><div class="stat-label">Creo / Ultimo</div></div></div>
   </div>
 
   {% if permissions.print and total_bultos > 0 %}
@@ -86,7 +87,7 @@
     </div>
     {% if bultos %}
     <div class="table-responsive">
-      <table class="table ilus-table mb-0" style="min-width:560px">
+      <table class="table ilus-table mb-0 eti-tcard">
         <thead>
           <tr>
             <th class="text-center" style="width:70px">Bulto</th>
@@ -102,14 +103,14 @@
           {% for b in bultos %}
           {% set ok = b.largo > 0 and b.ancho > 0 and b.alto > 0 %}
           <tr {% if not ok %}style="background:#fffbf5"{% endif %}>
-            <td class="text-center"><span class="fw-bold">{{ b.bulto_num }}</span></td>
-            <td class="text-end">{{ "%.0f"|format(b.largo) if b.largo > 0 else '-' }}</td>
-            <td class="text-end">{{ "%.0f"|format(b.ancho) if b.ancho > 0 else '-' }}</td>
-            <td class="text-end">{{ "%.0f"|format(b.alto) if b.alto > 0 else '-' }}</td>
-            <td class="text-end">{{ "%.2f"|format(b.peso) if b.peso > 0 else '-' }}</td>
-            <td class="text-end">{{ "%.2f"|format(b.peso_vol) if ok else '-' }}</td>
+            <td class="text-center tc-num" data-lbl="Bulto"><span class="fw-bold">{{ b.bulto_num }}</span></td>
+            <td class="text-end tc-dim" data-lbl="Largo">{{ "%.0f"|format(b.largo) if b.largo > 0 else '-' }}</td>
+            <td class="text-end tc-dim" data-lbl="Ancho">{{ "%.0f"|format(b.ancho) if b.ancho > 0 else '-' }}</td>
+            <td class="text-end tc-dim" data-lbl="Alto">{{ "%.0f"|format(b.alto) if b.alto > 0 else '-' }}</td>
+            <td class="text-end tc-dim" data-lbl="Peso">{{ "%.2f"|format(b.peso) if b.peso > 0 else '-' }}</td>
+            <td class="text-end tc-dim" data-lbl="Peso Vol">{{ "%.2f"|format(b.peso_vol) if ok else '-' }}</td>
             {% if permissions.print %}
-            <td class="text-center no-print">
+            <td class="text-center no-print tc-act">
               {% if ok %}
               <div class="d-flex gap-1 justify-content-center">
                 <a href="{{ url_for('print_labels_alt', pid=product.id, bulto=b.bulto_num, fmt='100x150') }}" class="btn btn-sm btn-ilus no-mobile-print" title="Ver e imprimir etiqueta"><i class="bi bi-printer me-1"></i>Imprimir</a>
@@ -178,6 +179,7 @@
   <i class="bi bi-printer-fill"></i> Imprimir
 </a>
 {% endif %}
+</div>
 {% endblock %}
 
 {% block scripts %}
