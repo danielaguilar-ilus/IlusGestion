@@ -20,6 +20,8 @@
     {% if not oculta_proveedores %}
     <a href="/mantenciones/proveedores" class="btn btn-sm btn-outline-secondary"><i class="bi bi-truck me-1"></i>Proveedores</a>
     {% endif %}
+    {# 🔒 2026-11-06: rebajas con autorización (el superadmin las autoriza aquí; los demás ven sus pedidos). #}
+    <button class="btn btn-sm btn-outline-dark" type="button" id="rbRebajasBtn" onclick="rbRebajasAbrir()" style="min-height:36px"><i class="bi bi-arrow-down-circle me-1"></i>Rebajas <span id="rbRebajasN" class="badge bg-danger ms-1" style="display:none">0</span></button>
     <button class="btn btn-sm btn-danger" type="button" onclick="rbAbrirNuevo()"><i class="bi bi-plus-lg me-1"></i>Nuevo repuesto</button>
   </div>
 </div>
