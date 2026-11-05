@@ -1950,6 +1950,18 @@
     else if (S.editCh && S.editCh.tiene_licencia_pdf) r.licencia_archivo = res('ok', 'Ya hay una licencia guardada. Si adjuntas otra, la reemplaza (la anterior queda en el historial).');
     else if (S.editCh && S.editCh.externo) r.licencia_archivo = res('ok', '');       // el externo antiguo no puede retirar vehículos: corregirle un dato no pide el escaneo
     else r.licencia_archivo = res('bad', 'Escanea o sube la licencia (foto o PDF): sin ella no se registra al chofer.');
+    // Escáner de licencias (Daniel, 05-nov-2026): con una licencia nueva en la mano, lo que ella dice manda sobre lo escrito.
+    if (arch && !S.chArchivoErr) {
+      var vq = (S.chVerif && S.chVerif.errores) || {};
+      if (S.chOmitir) r.licencia_archivo = res('warn', 'Se registrará sin comprobar la licencia (el motivo queda anotado).');
+      else if (S.chLeyendo) r.licencia_archivo = res('bad', 'Leyendo la licencia… espera un momento.');
+      else if (S.chLectorMsg) r.licencia_archivo = res('bad', S.chLectorMsg);
+      else if (S.chLectura && !S.chLectura.legible) r.licencia_archivo = res('bad', 'No pude leer la licencia: toma otra foto de frente, con buena luz y sin reflejos.');
+      else if (S.chLectura) {
+        ['usuario_id', 'rut', 'licencia_clases', 'licencia_vence'].forEach(function (c) { if (vq[c]) r[c] = res('bad', vq[c]); });
+        r.licencia_archivo = vq.licencia_archivo ? res('bad', vq.licencia_archivo) : res('ok', 'Licencia leída y comprobada: ' + arch.name);
+      }
+    }
     return r;
   }
   function marcarCh(c, r) {
@@ -2045,6 +2057,11 @@
     $('flChArchivo').value = '';
     S.chArchivoErr = '';
     pintarArchivoActualCh(c);
+    licReset();
+    S.chBloquea = !!(c && c.tiene_licencia_pdf);          // con licencia ya escaneada, el RUT, las clases y el vencimiento no se reescriben a mano
+    aplicarBloqueoCh();
+    $('flChLectorOff').hidden = true;
+    api(API + '/licencia/estado').then(function (d) { if (d && d.ok && d.disponible === false) $('flChLectorOff').hidden = false; });
     pintarGestionCh(c);
     abrirModal('flModalChofer');
     evaluarCh();
@@ -2076,6 +2093,198 @@
     if (vCh('rut')) f.elements.rut.value = formatoRut(vCh('rut'));
     evaluarChLuego();
   }
+  /* ═══ ESCÁNER DE LICENCIAS (Daniel, 05-nov-2026) ═══
+     «Un scanner de licencias, por el celular o subiendo una foto, y que mediante ese scanner se agregue la licencia y sobre todo la fecha, así
+     evitamos que Milagros cree choferes con su usuario». La foto se lee en el servidor de ILUS (OCR propio: no sale a ningún tercero) y se
+     rellena el RUT, la clase y la «fecha de control» (el vencimiento). El servidor vuelve a leer la licencia al guardar: lo de aquí es la
+     vista previa para que la persona vea al instante si la licencia es de quien se está registrando. */
+  var LIC_OMITIR_MIN = 20;
+  function usuarioCh() { return S.editCh ? (S.editCh.usuario_id || '') : vCh('usuario_id'); }
+  function tituloNombre(t) { return String(t || '').toLowerCase().replace(/(^|\s)(\S)/g, function (m, a, b) { return a + b.toUpperCase(); }); }
+  function licReset() {
+    S.chScanId = (S.chScanId || 0) + 1;
+    S.chLectura = null; S.chVerif = null; S.chLeyendo = false; S.chLectorMsg = ''; S.chLectorCodigo = ''; S.chPuedeOmitir = false; S.chOmitir = '';
+    pintarLectura();
+  }
+  /* Con una licencia ya escaneada, el RUT, las clases y el vencimiento salen de ella: no se reescriben a mano (el servidor también lo exige). */
+  function aplicarBloqueoCh() {
+    var f = $('flFormCh'), b = !!S.chBloquea;
+    f.elements.rut.readOnly = b; f.elements.licencia_vence.readOnly = b;
+    Array.prototype.forEach.call(document.querySelectorAll('#flChClases input'), function (i) { i.disabled = b; });
+    var nota = $('flChBloqueoNota');
+    nota.hidden = !b;
+  }
+  function camposCh(fd) {
+    fd.append('usuario_id', usuarioCh()); fd.append('rut', vCh('rut')); fd.append('nombre_completo', vCh('nombre_completo'));
+    clasesCh().forEach(function (c) { fd.append('licencia_clases', c); });
+  }
+  function miniaturaCh(file) {
+    try { if (S.chMiniatura) URL.revokeObjectURL(S.chMiniatura); } catch (e) { /* nada */ }
+    S.chMiniatura = '';
+    try { if (file && /^image\//.test(file.type || '') && window.URL) S.chMiniatura = URL.createObjectURL(file); } catch (e) { S.chMiniatura = ''; }
+  }
+  function escanearCh(file) {
+    miniaturaCh(file);
+    var id = ++S.chScanId;                                    // una respuesta vieja no pisa a una más nueva
+    S.chLeyendo = true; S.chLectura = null; S.chVerif = null; S.chLectorMsg = ''; S.chLectorCodigo = ''; S.chOmitir = '';
+    pintarLectura(); evaluarChLuego();
+    window.flotaSubida.comprimir(file).then(function (arch) {
+      var fd = new FormData();
+      fd.append('archivo', arch, arch.name || 'licencia.jpg');
+      camposCh(fd);
+      return api(API + '/licencia/leer', { method: 'POST', form: fd });
+    }).then(function (d) {
+      if (id !== S.chScanId) return;
+      S.chLeyendo = false;
+      S.chPuedeOmitir = !!d.puede_omitir;
+      if (!d.ok) { S.chLectorMsg = d.error || 'No pude leer la licencia.'; S.chLectorCodigo = d.error_codigo || ''; pintarLectura(); evaluarCh(); return; }
+      S.chLectura = d.lectura; S.chVerif = d.verificacion;
+      if (d.lectura && d.lectura.legible) { S.chBloquea = false; aplicarBloqueoCh(); aplicarLecturaCh(d.lectura); }
+      pintarLectura(); evaluarCh();
+    });
+  }
+  /* Lo que sale de la licencia se pone en su lugar: el vencimiento y las clases siempre; el RUT y el nombre solo si estaban vacíos
+     (lo escrito no se pisa: si no coincide, el semáforo lo dice). */
+  function aplicarLecturaCh(l) {
+    var f = $('flFormCh');
+    f.elements.licencia_vence.value = l.vence || '';          // la sugerida; si no se supo cuál es la de control, queda vacía y la persona la elige entre las leídas
+    S.chTocados.licencia_vence = true;
+    if (l.clases && l.clases.length) {
+      Array.prototype.forEach.call(document.querySelectorAll('#flChClases input'), function (i) { i.checked = l.clases.indexOf(i.value) >= 0; });
+      S.chTocados.licencia_clases = true;
+    }
+    if (l.rut_formato && !vCh('rut').trim()) { f.elements.rut.value = l.rut_formato; S.chTocados.rut = true; }
+    if (l.nombre && !vCh('nombre_completo').trim()) { f.elements.nombre_completo.value = tituloNombre(l.nombre); S.chTocados.nombre_completo = true; }
+  }
+  var agendarComparar;
+  function recompararLuego() {
+    if (!S.chLectura) return;
+    clearTimeout(agendarComparar);
+    agendarComparar = setTimeout(function () {
+      var id = S.chScanId;
+      api(API + '/licencia/comparar', { method: 'POST', body: { lectura: S.chLectura, usuario_id: usuarioCh(), rut: vCh('rut'),
+        nombre_completo: vCh('nombre_completo'), licencia_clases: clasesCh(), licencia_vence: vCh('licencia_vence') } }).then(function (d) {
+        if (id !== S.chScanId || !d.ok) return;
+        S.chVerif = d.verificacion; pintarLectura(); evaluarCh();
+      });
+    }, 350);
+  }
+  function filaLectura(estado, icono, etiqueta, valor, nota) {
+    return '<div class="fl-lec-fila ' + estado + '"><i class="bi ' + icono + '" aria-hidden="true"></i><div><span class="fl-lec-e">' + esc(etiqueta) + '</span>' +
+      '<b class="fl-lec-v">' + esc(valor) + '</b>' + (nota ? '<span class="fl-lec-n">' + esc(nota) + '</span>' : '') + '</div></div>';
+  }
+  var ICONO_LEC = { ok: 'bi-check-circle-fill', warn: 'bi-exclamation-triangle-fill', bad: 'bi-x-octagon-fill' };
+  function pintarLectura() {
+    var box = $('flChLectura');
+    if (!box) return;
+    if (S.chLeyendo) {
+      box.hidden = false; box.className = 'fl-lectura leyendo';
+      box.innerHTML = '<div class="fl-lec-espera"><span class="fl-lec-spin" aria-hidden="true"></span><span><b>Leyendo la licencia…</b>' +
+        '<span class="fl-lec-n">Puede tardar unos segundos. Se lee en el servidor de ILUS: la foto no sale a ningún tercero.</span></span></div>';
+      return;
+    }
+    if (S.chLectorMsg) {
+      box.hidden = false; box.className = 'fl-lectura bad';
+      box.innerHTML = '<div class="fl-lec-fila bad"><i class="bi bi-x-octagon-fill" aria-hidden="true"></i><div><b class="fl-lec-v">' + esc(S.chLectorMsg) + '</b></div></div>' +
+        accionesLectura();
+      return;
+    }
+    var l = S.chLectura;
+    if (!l) { box.hidden = true; box.innerHTML = ''; box.className = 'fl-lectura'; return; }
+    var v = S.chVerif || { errores: {}, avisos: [] }, e = v.errores || {}, filas = [];
+    var rutEsc = vCh('rut').trim();
+    var rutTxt = l.rut_formato || ((l.ruts_leidos && l.ruts_leidos.length) ? formatoRut(l.ruts_leidos[0]) + ' (leído con dudas)' : '');
+    filas.push(!rutTxt ? filaLectura('bad', ICONO_LEC.bad, 'RUT (Nº de licencia)', 'No se pudo leer', null)
+      : (e.rut ? filaLectura('bad', ICONO_LEC.bad, 'RUT (Nº de licencia)', rutTxt, e.rut)
+      : filaLectura(l.rut_formato ? 'ok' : 'warn', l.rut_formato ? ICONO_LEC.ok : ICONO_LEC.warn, 'RUT (Nº de licencia)', rutTxt,
+        rutEsc ? (l.rut_formato ? 'Coincide con el RUT del chofer.' : 'Una cifra se leyó con dudas, pero coincide con el RUT del chofer: compáralo con la foto.') : 'Leído de la licencia.')));
+    if (!S.editCh || usuarioCh()) {
+      if (e.usuario_id) filas.push(filaLectura('bad', ICONO_LEC.bad, 'Usuario de ILUS', 'No es la misma persona', e.usuario_id));
+      else if (usuarioCh()) filas.push(filaLectura('ok', ICONO_LEC.ok, 'Usuario de ILUS', 'Es la persona dueña de la licencia', null));
+      else filas.push(filaLectura('warn', ICONO_LEC.warn, 'Usuario de ILUS', 'Elige el usuario arriba', 'Se comprueba que la licencia sea de esa persona.'));
+    }
+    filas.push(l.nombre ? filaLectura('ok', ICONO_LEC.ok, 'Nombre en la licencia', l.nombre, null) : filaLectura('warn', ICONO_LEC.warn, 'Nombre en la licencia', 'No se pudo leer', null));
+    filas.push(!l.clases || !l.clases.length ? filaLectura('warn', ICONO_LEC.warn, 'Clase', 'No se pudo leer', 'Márcala a mano: queda sin comprobar.')
+      : (e.licencia_clases ? filaLectura('bad', ICONO_LEC.bad, 'Clase', 'Clase ' + l.clases.join(' y '), e.licencia_clases)
+      : filaLectura('ok', ICONO_LEC.ok, 'Clase', 'Clase ' + l.clases.join(' y '), null)));
+    var elegida = vCh('licencia_vence'), d = elegida ? diasHasta(elegida) : null, fmtElegida = elegida ? fechaCorta(elegida) : '';
+    filas.push(!(l.fechas && l.fechas.length) ? filaLectura('bad', ICONO_LEC.bad, 'Fecha de control (vence)', 'No se pudo leer', null)
+      : (e.licencia_vence ? filaLectura('bad', ICONO_LEC.bad, 'Fecha de control (vence)', fmtElegida || 'Elige una fecha', e.licencia_vence)
+      : (!elegida ? filaLectura('warn', ICONO_LEC.warn, 'Fecha de control (vence)', 'Elige la fecha de control', 'Mira la foto y toca abajo la fecha que dice «Fecha de control».')
+      : (d != null && d <= (S.config.dias_alerta || 30) ? filaLectura('warn', ICONO_LEC.warn, 'Fecha de control (vence)', fmtElegida, 'Vence ' + (d === 0 ? 'hoy' : (d === 1 ? 'mañana' : 'en ' + d + ' días')) + '.')
+      : filaLectura('ok', ICONO_LEC.ok, 'Fecha de control (vence)', fmtElegida, d != null ? 'Vigente · vence en ' + d + ' días. Es una de las fechas de la licencia.' : 'Es una de las fechas de la licencia.')))));
+    var notas = (v.avisos || []).filter(function (a) { return !/vence en \d+ d/.test(a); }).concat((l.avisos || []).map(function (a) { return a.texto; }));
+    var vistas = {};
+    notas = notas.filter(function (t) { if (vistas[t]) return false; vistas[t] = true; return true; });
+    var peor = filas.join('').indexOf('fl-lec-fila bad') >= 0 ? 'bad' : (filas.join('').indexOf('fl-lec-fila warn') >= 0 || notas.length ? 'warn' : 'ok');
+    box.hidden = false; box.className = 'fl-lectura ' + peor;
+    box.innerHTML = '<div class="fl-lec-tit"><i class="bi ' + ICONO_LEC[peor] + '" aria-hidden="true"></i><b>' +
+      (peor === 'ok' ? 'La licencia coincide con el registro' : (peor === 'warn' ? 'Licencia leída, revisa los avisos' :
+        (l.legible ? 'La licencia no coincide: no se puede registrar así' : 'No pude leer la licencia'))) + '</b></div>' +
+      (e.licencia_archivo ? '<p class="fl-lec-por-que">' + esc(e.licencia_archivo) + '</p>' : '') +
+      (S.chMiniatura ? '<img class="fl-lec-foto" src="' + esc(S.chMiniatura) + '" alt="La licencia que escaneaste">' : '') +
+      '<div class="fl-lec-filas">' + filas.join('') + '</div>' + chipsFechas(l) +
+      (notas.length ? '<ul class="fl-lec-avisos">' + notas.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' : '') + accionesLectura();
+  }
+  /* Las fechas que se leyeron en la foto, para ELEGIR la de control mirándola: lo guardado tiene que ser una de ellas, nunca una inventada. */
+  function chipsFechas(l) {
+    if (!l.fechas || !l.fechas.length) return '';
+    var elegida = vCh('licencia_vence');
+    return '<div class="fl-lec-fechas" role="group" aria-label="Fechas leídas en la licencia"><span class="fl-lec-e">Fechas que leí en la licencia: elige la «Fecha de control»</span><div>' +
+      l.fechas.map(function (f) {
+        return '<button type="button" class="fl-lec-fecha' + (f.iso === elegida ? ' on' : '') + '" data-lec-fecha="' + esc(f.iso) + '" aria-pressed="' + (f.iso === elegida) + '">' +
+          '<i class="bi bi-calendar-check" aria-hidden="true"></i>' + esc(f.fmt) + (f.iso === l.vence ? '<small>sugerida</small>' : '') + '</button>';
+      }).join('') + '</div></div>';
+  }
+  function accionesLectura() {
+    var sinRut = S.chVerif && S.chVerif.errores && S.chVerif.errores.rut && S.chLectura && S.chLectura.rut_formato;
+    return '<div class="fl-lec-acc"><button type="button" class="btn btn-sm btn-outline-secondary" data-lec="otra"><i class="bi bi-arrow-repeat me-1"></i>Escanear otra foto</button>' +
+      (sinRut ? '<button type="button" class="btn btn-sm btn-outline-secondary" data-lec="usarrut"><i class="bi bi-person-vcard me-1"></i>Usar el RUT de la licencia (' + esc(S.chLectura.rut_formato) + ')</button>' : '') +
+      (S.chPuedeOmitir && !S.chOmitir ? '<button type="button" class="btn btn-sm btn-outline-danger" data-lec="omitir"><i class="bi bi-shield-exclamation me-1"></i>Registrar sin comprobar</button>' : '') +
+      (S.chOmitir ? '<span class="fl-lec-n">Se registrará sin comprobar: «' + esc(S.chOmitir) + '».</span>' : '') + '</div>';
+  }
+  /* Solo el superadministrador: el servidor lo vuelve a exigir. El motivo queda en el historial del chofer. */
+  function pedirOmitirCh() {
+    return window.ilusPrompt({
+      title: 'Registrar sin comprobar la licencia',
+      message: 'Solo tú puedes hacerlo. Cuenta por qué (mínimo ' + LIC_OMITIR_MIN + ' caracteres): queda anotado en el historial del chofer, con tu nombre.',
+      placeholder: 'Por ejemplo: la foto es antigua y revisé la licencia en persona', okLabel: 'Registrar sin comprobar', type: 'warning', multiline: true, required: true
+    }).then(function (m) {
+      if (m == null) return null;
+      m = String(m).replace(/\s+/g, ' ').trim();
+      if (m.length < LIC_OMITIR_MIN) { toast('El motivo necesita al menos ' + LIC_OMITIR_MIN + ' caracteres.', 'warning'); return null; }
+      return m;
+    });
+  }
+  function archivoDeCamara(file) {
+    var dt;
+    try { dt = new DataTransfer(); dt.items.add(file); $('flChArchivo').files = dt.files; }
+    catch (e) { toast('Este navegador no deja adjuntar la foto de la cámara aquí. Usa «Subir foto o PDF».', 'warning'); return; }
+    $('flChArchivo').dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  function iniciarEscanerCh() {
+    var cam = $('flChCamara');
+    $('flChBtnFoto').addEventListener('click', function () { cam.value = ''; cam.click(); });
+    $('flChBtnSubir').addEventListener('click', function () { $('flChArchivo').click(); });
+    cam.addEventListener('change', function () { if (cam.files && cam.files[0]) archivoDeCamara(cam.files[0]); });
+    $('flChLectura').addEventListener('click', function (ev) {
+      var fb = ev.target.closest('[data-lec-fecha]');
+      if (fb && S.chLectura) {
+        $('flFormCh').elements.licencia_vence.value = fb.getAttribute('data-lec-fecha'); S.chTocados.licencia_vence = true;
+        recompararLuego(); pintarLectura(); evaluarChLuego();
+        return;
+      }
+      var b = ev.target.closest('[data-lec]');
+      if (!b) return;
+      if (b.getAttribute('data-lec') === 'otra') { cam.value = ''; $('flChArchivo').value = ''; licReset(); evaluarChLuego(); cam.click(); }
+      else if (b.getAttribute('data-lec') === 'usarrut' && S.chLectura && S.chLectura.rut_formato) {
+        $('flFormCh').elements.rut.value = S.chLectura.rut_formato; S.chTocados.rut = true; recompararLuego(); evaluarChLuego();
+      }
+      else if (b.getAttribute('data-lec') === 'omitir') {
+        pedirOmitirCh().then(function (m) { if (!m) return; S.chOmitir = m; pintarLectura(); evaluarCh(); });
+      }
+    });
+  }
   function guardarCh() {
     if (S.guardandoCh) return;
     S.chIntento = true;
@@ -2103,6 +2312,7 @@
         licencia_clases: clasesCh(), licencia_vence: vCh('licencia_vence'), notas: vCh('notas') };
       if (esExternoCh()) body.telefono = vCh('telefono');
       if (!editando) body.usuario_id = vCh('usuario_id');
+      if (S.chOmitir) body.licencia_sin_verificar_motivo = S.chOmitir;       // solo vale si lo pide el superadministrador (el servidor lo exige)
       // La licencia escaneada viaja con el registro (Daniel, 04-nov-2026): una sola petición; sin el archivo el servidor no guarda al chofer.
       var fd = new FormData();
       Object.keys(body).forEach(function (k) { if (k !== 'licencia_clases') fd.append(k, body[k]); });
@@ -2130,6 +2340,13 @@
             escribir(el.querySelector('.fl-msg'), r.errores[c]);
           });
           toast(r.error || 'No se pudo guardar el chofer.', 'error');
+          if (/^(LECTOR_NO_DISPONIBLE|LICENCIA_ILEGIBLE|LICENCIA_NO_COINCIDE|LICENCIA_REQUIERE_ESCANEO)$/.test(r.error_codigo || '')) {
+            S.chPuedeOmitir = !!r.puede_omitir;
+            S.chOmitir = '';
+            if (r.error_codigo !== 'LICENCIA_NO_COINCIDE') S.chLectorMsg = r.error || '';
+            else if (r.lectura) S.chLectura = r.lectura;
+            pintarLectura();
+          }
           return;
         }
         var terminar = function () {
@@ -2447,6 +2664,7 @@
     fc.addEventListener('input', function (e) {
       if (e.target.name) S.chTocados[e.target.name] = true;
       if (e.target.name === 'rut') rutEnVivo(e.target);
+      if (e.target.name === 'rut' || e.target.name === 'nombre_completo') recompararLuego();
       if (e.target.name === 'direccion') {
         if (dirValidada && e.target.value === dirValidada.valor) geoCh(dirValidada.lat, dirValidada.lng, dirValidada.pid);
         else geoCh('', '', '');
@@ -2455,13 +2673,14 @@
     });
     $('flChDireccion').addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });   // Enter elige la sugerencia, no envía
     fc.addEventListener('change', function (e) {
-      if (e.target.type === 'checkbox') S.chTocados.licencia_clases = true;
+      if (e.target.type === 'checkbox') { S.chTocados.licencia_clases = true; recompararLuego(); }
       if (e.target.name) S.chTocados[e.target.name] = true;
       evaluarChLuego();
     });
     fc.addEventListener('submit', function (e) { e.preventDefault(); guardarCh(); });
     $('flChGuardar').addEventListener('click', guardarCh);
     $('flChUsuario').addEventListener('change', sugerirDesdePerfil);
+    $('flChUsuario').addEventListener('change', recompararLuego);          // otro usuario: se vuelve a comparar la licencia ya leída
     $('flChGestion').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-gcc]');
       var c = S.editCh;
@@ -2482,8 +2701,10 @@
         if (!ok) { ev.target.value = ''; S.chArchivoErr = 'Sube un PDF (o la foto del carnet en JPG, PNG o WebP).'; }
         else if (f.size > 15 * 1024 * 1024) { ev.target.value = ''; S.chArchivoErr = 'El archivo pesa demasiado (máximo 15 MB).'; }
       }
+      if (f && !S.chArchivoErr) escanearCh(f); else licReset();          // elegir la foto la lee sola (Daniel, 05-nov-2026)
       evaluarChLuego();
     });
+    iniciarEscanerCh();
 
     var h = (location.hash || '').replace('#', '');
     Promise.all([cargarVeh(), cargarChof(), cargarSol()]).then(function () { irTab(h || 'solicitudes'); abrirDesdeEnlace(); });
