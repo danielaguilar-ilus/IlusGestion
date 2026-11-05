@@ -4763,6 +4763,8 @@ def register_tickets_routes(app, ctx):
             "uf_info": uf_info_disp,
             "uf_total": uf_total,
             "logo_b64": _tk_cotiz_logo_b64(),
+            # 2026-11-06: el segundo logo del encabezado, igual que la OT y la cotización (caja blanca con el SPHS).
+            "logo_shs_b64": _tk_cotiz_logo_shs_b64(),
         }
 
     def _tk_solo_superadmin():
@@ -4907,20 +4909,30 @@ def register_tickets_routes(app, ctx):
         dcx = _tk_cotizacion_detalle_calculo_ctx(cid)
         if not dcx:
             return "Cotización no encontrada", 404
-        html = render_template("tickets/cotizacion_detalle_calculo.html", **dcx)
+        # 2026-11-06 (Daniel: «no se apega para nada al diseño de la orden de trabajo»): mismo marco que el PDF de la OT y el de la cotización.
+        # El encabezado (banda negra con los dos logos + franja roja/negra) y el pie (borde rojo + «Página X de Y») son los NATIVOS de
+        # Chromium: repiten en cada página. Sus mm calzan con el @page de la plantilla (en Chromium el @page es el que manda).
+        html = render_template("tickets/cotizacion_detalle_calculo.html", native_header_footer=True, **dcx)
 
         _pw_pdf = ctx.get("_pw_pdf")
         if not _pw_pdf:
             return "Generador de PDF no disponible en este entorno", 503
         try:
+            import cot_detalle_pdf_marco as _marco
+            _cot_d = dcx["cot"]
+            _hdr = _marco.encabezado_html(_cot_d.get("numero"), _cot_d.get("empresa"),
+                                          logo_ilus_b64=dcx.get("logo_b64") or "",
+                                          logo_shs_html=_tk_logo_shs_html(_marco.LOGO_ALTO_MM))
+            _ftr = _marco.pie_html(_cot_d.get("numero"), _cot_d.get("empresa"))
             # A4 apaisado explícito (width/height, no page_format) -- la
             # tabla de ítems tiene 13 columnas y necesita el ancho extra;
             # @page CSS sola no basta porque _pw_pdf no pasa
             # prefer_css_page_size a Playwright (mismo motivo por el que
             # tk_cotizacion_pdf especifica su tamaño desde el backend).
             pdf_bytes = _pw_pdf(html, width="297mm", height="210mm",
-                                 margin={"top": "10mm", "right": "10mm",
-                                         "bottom": "12mm", "left": "10mm"})
+                                 margin={"top": f"{_marco.MARGEN_SUPERIOR_MM}mm", "right": "0mm",
+                                         "bottom": f"{_marco.MARGEN_INFERIOR_MM}mm", "left": "0mm"},
+                                 header_template=_hdr, footer_template=_ftr)
         except Exception as _e_pdf:
             print(f"[tk_cotizacion_detalle_calculo_pdf] cid={cid}: {_e_pdf}", flush=True)
             return ("El generador de PDF no está disponible ahora. "

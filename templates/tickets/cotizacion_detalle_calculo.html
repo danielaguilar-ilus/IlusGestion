@@ -14,6 +14,13 @@
    a las preguntas que más se repiten, con los números de ESTA cotización. Antes suponía que todo precio era «costo × (1 + margen)» y,
    con un precio escrito a mano, mostraba un margen que no era el real. Cabe en una hoja A4 apaisada cuando se puede y no parte filas.
 
+   2026-11-06 (Daniel: «el cálculo que hicimos de la cotización no se apega para nada al diseño de la orden de trabajo»): MISMO lenguaje
+   visual que el PDF de la OT (templates/mantenciones/ot_pdf.html) y el de la cotización: banda negra a sangre con los dos logos + franja
+   roja/negra, títulos de sección en BANDA NEGRA, cajas de datos en panel gris plano (#f0f0f0, esquina de 2 px), tabla con cabecera negra y
+   filas alternadas, pie con borde rojo y «Página X de Y». Sobrio: el color solo marca un ESTADO (origen del precio, margen, sin tarifa).
+   En el PDF descargado el encabezado y el pie son los NATIVOS de Chromium (`native_header_footer`, armados en cot_detalle_pdf_marco.py,
+   que repiten en cada página); en pantalla y en Ctrl+P se dibujan dentro del documento.
+
    Documento interno de trazabilidad -- misma plantilla para la vista en pantalla (con toolbar) y el PDF (Playwright/_pw_pdf);
    @media print oculta el toolbar en ambos casos. Solo costo y margen: nunca sale de superadmin (REGLAS #19 y #26).
 
@@ -25,7 +32,9 @@
                margen_pct_real, precio_hoy, difiere_hoy}}, ... ]
      resumen: {costo_total, cobrado, margen, margen_pct, items_con_costo, items_sin_costo, items_tarifa_cambio, items_a_mano, items_con_perdida}
      dudas: [(pregunta, respuesta), ...]
-     ruta, cfg {valor_hh, margen_pct, iva_pct}, valor_hh_vigente, uf_info (hoy), uf_emision (la congelada al emitir), uf_total, logo_b64, base_url
+     ruta, cfg {valor_hh, margen_pct, iva_pct}, valor_hh_vigente, uf_info (hoy), uf_emision (la congelada al emitir), uf_total,
+     logo_b64, logo_shs_b64 (opcional: sin él el encabezado de pantalla lleva solo el logo ILUS), base_url,
+     native_header_footer (True solo en la ruta del PDF: el encabezado y el pie los pinta Chromium en cada página)
    ════════════════════════════════════════════════════════════════════ #}
 {% if base_url %}<base href="{{ base_url }}">{% endif %}
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -34,14 +43,19 @@
   :root {
     --ilus-red:   #dc2626;
     --ilus-red-d: #991b1b;
+    --ilus-red-l: #fee2e2;
     --ilus-black: #0a0a0a;
     --ilus-ink:   #0f172a;
     --ilus-mute:  #6b7280;
     --ilus-line:  #e5e7eb;
     --ilus-bg:    #f9fafb;
     --ilus-ok:    #166534;
+    /* Gris de panel de las cajas de datos: el mismo token del PDF de la OT y del de cotizaciones (.datos-box). */
+    --ilus-panel: #f0f0f0;
   }
-  @page { size: A4 landscape; margin: 10mm 10mm 12mm; }
+  {# En Chromium el margen de @page manda sobre el de page.pdf(): estos mm deben calzar con cot_detalle_pdf_marco.py
+     (MARGEN_SUPERIOR_MM / MARGEN_INFERIOR_MM) y con la ruta del PDF. Con el marco nativo los laterales van en 0 y los pone .sheet. #}
+  @page { size: A4 landscape; {% if native_header_footer %}margin: 30mm 0 14mm;{% else %}margin: 10mm 0 14mm;{% endif %} }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
@@ -54,6 +68,7 @@
     print-color-adjust: exact;
   }
 
+  /* ───── Barra superior (solo pantalla) ───── */
   .toolbar {
     position: sticky; top: 0; z-index: 50;
     background: var(--ilus-black); color: #fff;
@@ -77,97 +92,126 @@
   .tb-btn.ghost { background: rgba(255,255,255,.1); }
   .tb-btn.ghost:hover { background: rgba(255,255,255,.18); box-shadow: none; transform: none; }
 
+  /* ───── Hoja A4 apaisada ───── */
   .sheet {
     width: 277mm; max-width: 100%;
     min-height: 190mm;
     background: #fff;
     margin: 14px auto;
-    padding: 10mm 12mm;
+    padding: 0 12mm 12mm;
     box-shadow: 0 6px 22px rgba(0,0,0,.10);
   }
 
+  /* ───── Encabezado dentro del documento (pantalla y Ctrl+P): banda negra a sangre + franja roja/negra, como la OT ───── */
   .head {
-    display: flex; align-items: center; justify-content: space-between; gap: 16px;
-    margin-bottom: 4mm; border-bottom: 2px solid var(--ilus-red); padding-bottom: 3mm;
+    background: var(--ilus-black);
+    margin: 0 -12mm;
+    padding: 4mm 12mm;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  .head .logo { height: 40px; display: flex; align-items: center; flex: 0 0 auto; }
-  .head .logo img { max-height: 100%; max-width: 150px; object-fit: contain; }
-  .head .logo .logo-fallback { font-weight: 900; font-size: 15pt; letter-spacing: .02em; color: var(--ilus-black); }
-  .head .logo .logo-fallback .helm { color: var(--ilus-red); }
-  .head .head-mid { flex: 1; min-width: 0; }
-  .head h1 { font-size: 12.5pt; margin: 0 0 2px; font-weight: 900; color: var(--ilus-black); }
-  .head .head-sub { font-size: 8.3pt; color: var(--ilus-mute); }
-  .badge-interno {
-    background: #fef3c7; color: #92400e; font-size: 7.3pt; font-weight: 800;
-    text-transform: uppercase; padding: 4px 10px; border-radius: 20px;
-    letter-spacing: .03em; white-space: nowrap; flex: 0 0 auto;
+  .head .logo { display: flex; align-items: center; gap: 4mm; }
+  .head .logo .logo-shs-box {
+    height: 13.4mm; background: #fff; border-radius: 1mm;
+    padding: 1.2mm 2.4mm;
+    display: flex; align-items: center; justify-content: center;
   }
+  .head .logo .logo-shs-box img { height: 11mm; width: auto; object-fit: contain; display: block; }
+  .head .logo img.logo-ilus { height: 11mm; max-width: 42mm; object-fit: contain; }
+  .head .logo .logo-fallback { font-weight: 900; color: #fff; font-size: 18pt; letter-spacing: .02em; }
+  .head .logo .logo-fallback b { color: var(--ilus-red); }
+  .head .right { text-align: right; flex: none; }
+  .head .right .doc-tipo { font-size: 12pt; font-weight: 800; color: #fff; letter-spacing: -.01em; }
+  .head .right .otn { font-size: 15pt; font-weight: 900; color: var(--ilus-red); line-height: 1.2; letter-spacing: -.01em; }
+  .head .right .doc-meta { font-size: 7.5pt; color: #9ca3af; margin-top: 1px; }
+  .head-sep {
+    height: 2mm;
+    margin: 0 -12mm 5mm;
+    background: linear-gradient(90deg, var(--ilus-red) 0 25%, var(--ilus-black) 25% 100%);
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  {% if native_header_footer %}
+  /* PDF descargado: el encabezado y el pie los pinta Chromium en cada página; el del documento no se imprime. */
+  .head, .head-sep, .foot { display: none !important; }
+  {% endif %}
 
-  .info-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 4mm; }
-  .info-card { background: var(--ilus-bg); border: 1px solid var(--ilus-line); border-radius: 8px; padding: 7px 12px; }
-  .info-card .lbl { font-size: 6.6pt; text-transform: uppercase; font-weight: 800; color: #6b7280; letter-spacing: .03em; margin-bottom: 2px; }
-  .info-card .val { font-size: 9.3pt; font-weight: 700; color: var(--ilus-black); word-break: break-word; }
-
-  h2.sec {
-    font-size: 9.8pt; font-weight: 900; color: var(--ilus-black);
-    margin: 4mm 0 2mm; display: flex; align-items: center; gap: 7px;
+  /* ───── Título de sección: BANDA NEGRA, igual que la OT y las cotizaciones ───── */
+  .sec-title {
+    background: var(--ilus-black); color: #fff;
+    padding: 2.2mm 4mm;
+    margin: 5mm 0 2.5mm;
+    font-size: 9pt; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .02em;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
     page-break-after: avoid; break-after: avoid;
+    page-break-inside: avoid; break-inside: avoid;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  h2.sec .n {
-    background: var(--ilus-red); color: #fff; width: 19px; height: 19px; border-radius: 50%;
-    display: inline-flex; align-items: center; justify-content: center; font-size: 7.8pt; flex: 0 0 auto;
-  }
-  h2.sec .sec-sub { font-size: 7.6pt; font-weight: 600; color: var(--ilus-mute); }
+  .sec-title .sec-sub { font-size: 7.5pt; font-weight: 700; opacity: .85; text-transform: none; letter-spacing: 0; text-align: right; }
+  .sheet > .sec-title.primero { margin-top: 0; }
 
-  .tabla-wrap { border: 1px solid var(--ilus-line); border-radius: 8px; overflow: hidden; }
+  /* ───── Cajas de datos: panel gris plano (#f0f0f0), esquina de 2 px, sin borde — las mismas de la OT ───── */
+  .info-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 2mm; }
+  .info-card { background: var(--ilus-panel); border-radius: 2px; padding: 3mm 4mm; page-break-inside: avoid; break-inside: avoid; }
+  .info-card .lbl { color: var(--ilus-mute); font-weight: 800; text-transform: uppercase; font-size: 6.6pt; letter-spacing: .04em; display: block; margin-bottom: 1px; }
+  .info-card .val { font-size: 9pt; font-weight: 700; color: var(--ilus-ink); word-break: break-word; line-height: 1.35; }
+  .info-card .val .sub { display: block; font-weight: 600; color: var(--ilus-mute); font-size: 7.4pt; }
+
+  /* ───── Tabla de ítems: misma tabla que el checklist de la OT (cabecera negra, filas alternadas) ───── */
+  .tabla-wrap { }
   table.items { width: 100%; border-collapse: collapse; font-size: 7.8pt; }
   table.items thead { display: table-header-group; }
   table.items thead th {
-    background: var(--ilus-black); color: #fff; padding: 5px 6px;
-    font-size: 6.9pt; font-weight: 800; text-transform: uppercase; letter-spacing: .02em;
+    background: var(--ilus-black); color: #fff; padding: 6px 6px;
+    font-size: 7pt; font-weight: 800; text-transform: uppercase; letter-spacing: .03em;
   }
+  table.items thead th:first-child { border-top-left-radius: 6px; }
+  table.items thead th:last-child { border-top-right-radius: 6px; }
   table.items thead th.l { text-align: left; }
   table.items thead th.r { text-align: right; }
   table.items thead th.c { text-align: center; }
   table.items tbody tr { page-break-inside: avoid; break-inside: avoid; }
-  table.items tbody td { padding: 4px 6px; border-bottom: 1px solid var(--ilus-line); vertical-align: middle; }
+  table.items tbody td { padding: 5px 6px; border-bottom: 1px solid var(--ilus-line); vertical-align: middle; overflow-wrap: anywhere; line-height: 1.35; }
   table.items tbody tr:nth-child(even) { background: var(--ilus-bg); }
   table.items td.l { text-align: left; }
+  table.items td.sku { white-space: nowrap; font-weight: 700; }
   table.items td.r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   table.items td.c { text-align: center; white-space: nowrap; }
-  table.items tr.sin-tarifa td { background: #fee2e2; }
+  table.items tr.sin-tarifa td { background: var(--ilus-red-l); }
   table.items tr.sin-tarifa td.mo { color: #7f1d1d; font-style: italic; text-align: left; }
-  .chip-sin-tarifa { background: #dc2626; color: #fff; font-size: 6.4pt; font-weight: 800; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; margin-left: 6px; }
-  .mini-sub { display: block; font-size: 6.5pt; font-weight: 600; color: #6b7280; margin-top: 1px; }
-  .formula { display: block; font-size: 6.5pt; font-weight: 600; color: #6b7280; margin-top: 1px; white-space: nowrap; }
+  .chip-sin-tarifa { background: var(--ilus-red); color: #fff; font-size: 6.4pt; font-weight: 800; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; margin-left: 6px; }
+  .mini-sub { display: block; font-size: 6.6pt; font-weight: 600; color: var(--ilus-mute); margin-top: 1px; }
+  .formula { display: block; font-size: 6.6pt; font-weight: 600; color: var(--ilus-mute); margin-top: 1px; white-space: nowrap; }
 
-  /* Origen del precio: una etiqueta de color por caso (se lee de un vistazo y no depende solo del color: lleva texto). */
+  /* Origen del precio: una etiqueta por caso (se lee de un vistazo y no depende solo del color: lleva texto). El color solo marca un ESTADO. */
   .origen { display: inline-block; font-size: 6.9pt; font-weight: 800; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
   .origen.automatico { background: #dcfce7; color: #166534; }
   .origen.manual { background: #fef3c7; color: #92400e; }
   .origen.fijo, .origen.piso { background: #dbeafe; color: #1e40af; }
   .origen.no_cobrable { background: #f3f4f6; color: #4b5563; }
-  .alerta-hoy { display: block; font-size: 6.5pt; font-weight: 700; color: #92400e; margin-top: 2px; }
+  .alerta-hoy { display: block; font-size: 6.6pt; font-weight: 700; color: #92400e; margin-top: 2px; }
   .margen-neg { color: #b91c1c; font-weight: 800; }
   .margen-ok { color: var(--ilus-ok); font-weight: 800; }
 
-  .zona-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
-  .zona-card { background: var(--ilus-bg); border: 1px solid var(--ilus-line); border-radius: 8px; padding: 6px 8px; text-align: center; }
-  .zona-card.wide { grid-column: span 4; text-align: left; }
-  .zona-card .lbl { font-size: 6.5pt; text-transform: uppercase; font-weight: 800; color: #6b7280; }
-  .zona-card .val { font-size: 9.6pt; font-weight: 800; color: var(--ilus-black); margin-top: 2px; }
+  /* ───── Ruta / zona ───── */
+  .zona-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; page-break-inside: avoid; break-inside: avoid; }
+  .zona-card { background: var(--ilus-panel); border-radius: 2px; padding: 3mm 4mm; page-break-inside: avoid; break-inside: avoid; }
+  .zona-card.wide { grid-column: span 4; }
+  .zona-card .lbl { color: var(--ilus-mute); font-weight: 800; text-transform: uppercase; font-size: 6.6pt; letter-spacing: .04em; display: block; }
+  .zona-card .val { font-size: 9.6pt; font-weight: 700; color: var(--ilus-ink); margin-top: 1px; }
+  .aviso-ruta { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 2px; padding: 3mm 4mm; font-size: 7.8pt; margin-bottom: 2.5mm; page-break-inside: avoid; break-inside: avoid; }
 
-  /* Resultado interno (izquierda) + totales de la cotización (derecha) */
-  .cierre { display: grid; grid-template-columns: 1fr 92mm; gap: 6mm; margin-top: 4mm; align-items: start; page-break-inside: avoid; break-inside: avoid; }
-  .interno { border: 1px solid #fde68a; background: #fffbeb; border-radius: 8px; padding: 8px 12px; }
-  .interno .it-t { font-size: 7.6pt; font-weight: 900; text-transform: uppercase; color: #92400e; letter-spacing: .03em; margin-bottom: 3px; }
-  .interno .it-fila { display: flex; justify-content: space-between; gap: 10px; font-size: 8.6pt; padding: 2px 0; border-bottom: 1px dashed #fcd34d; }
+  /* ───── Resultado interno (izquierda) + totales de la cotización (derecha) ───── */
+  .cierre { display: grid; grid-template-columns: 1fr 92mm; gap: 6mm; align-items: start; page-break-inside: avoid; break-inside: avoid; }
+  .interno { background: var(--ilus-panel); border-radius: 2px; padding: 3mm 4mm; }
+  .interno .it-t { font-size: 6.9pt; font-weight: 800; text-transform: uppercase; color: var(--ilus-mute); letter-spacing: .04em; margin-bottom: 2px; }
+  .interno .it-fila { display: flex; justify-content: space-between; gap: 10px; font-size: 8.6pt; padding: 3px 0; border-bottom: 1px solid #d9dadc; }
   .interno .it-fila:last-of-type { border-bottom: 0; }
   .interno .it-fila b { font-variant-numeric: tabular-nums; white-space: nowrap; }
   .interno .it-total { font-size: 10pt; font-weight: 900; }
-  .interno .it-nota { font-size: 7pt; color: #78350f; margin-top: 4px; line-height: 1.45; }
+  .interno .it-nota { font-size: 7pt; color: var(--ilus-mute); margin-top: 4px; line-height: 1.45; }
   table.totales { width: 100%; border-collapse: collapse; font-size: 8.8pt; }
-  table.totales td { padding: 3px 6px; border-bottom: 1px solid var(--ilus-line); }
+  table.totales td { padding: 4px 6px; border-bottom: 1px solid var(--ilus-line); }
   table.totales td.t-lbl { color: var(--ilus-mute); font-weight: 600; }
   table.totales td.t-val { text-align: right; font-weight: 800; color: var(--ilus-black); white-space: nowrap; }
   table.totales tr.total-final td { background: var(--ilus-black); color: #fff; font-weight: 900; font-size: 10.5pt; padding: 6px 6px; border-bottom: 0; }
@@ -175,27 +219,34 @@
   table.totales tr.total-final td:last-child { border-radius: 0 6px 6px 0; }
   .uf-linea { font-size: 7.6pt; color: var(--ilus-mute); text-align: right; margin-top: 3px; line-height: 1.5; }
   .uf-linea b { color: var(--ilus-black); }
-  .t-uf { display: block; font-size: 6.6pt; font-weight: 600; color: #6b7280; margin-top: 1px; }
+  .t-uf { display: block; font-size: 6.6pt; font-weight: 600; color: var(--ilus-mute); margin-top: 1px; }
   tr.total-final .t-uf { color: #d1d5db; }
 
-  /* Para resolver dudas */
-  .dudas { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
-  .duda { border: 1px solid var(--ilus-line); border-radius: 6px; padding: 8px 12px; background: #fff; page-break-inside: avoid; break-inside: avoid; }
-  .duda .q { font-size: 8pt; font-weight: 800; color: var(--ilus-red-d); }
+  /* ───── Para resolver dudas ───── */
+  .dudas { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  .duda { background: var(--ilus-panel); border-radius: 2px; padding: 3mm 4mm; page-break-inside: avoid; break-inside: avoid; }
+  .duda .q { font-size: 8pt; font-weight: 800; color: var(--ilus-black); }
   .duda .a { font-size: 7.8pt; color: #374151; margin-top: 1px; line-height: 1.45; }
-  .como-leer { font-size: 7.6pt; color: #7f1d1d; background: #fef2f2; border: 1px dashed var(--ilus-red); border-radius: 6px; padding: 8px 12px; margin-top: 3mm; line-height: 1.5; page-break-inside: avoid; break-inside: avoid; }
-  .como-leer b { color: var(--ilus-red); }
+  .como-leer { font-size: 7.6pt; color: #374151; background: var(--ilus-bg); border: 1px solid var(--ilus-line); border-radius: 2px; padding: 3mm 4mm; margin-top: 3mm; line-height: 1.5; page-break-inside: avoid; break-inside: avoid; }
+  .como-leer b { color: var(--ilus-black); }
   .config-foot { margin-top: 3mm; font-size: 7.4pt; color: var(--ilus-mute); display: flex; gap: 14px; flex-wrap: wrap; }
   .config-foot b { color: var(--ilus-black); }
-  .nota-vivo { font-size: 6.9pt; color: #6b7280; margin-top: 2mm; line-height: 1.5; }
+  .nota-vivo { font-size: 6.9pt; color: var(--ilus-mute); margin-top: 2mm; line-height: 1.5; }
+
+  /* ───── Pie dentro del documento (pantalla y Ctrl+P; el PDF usa el nativo) ───── */
+  .foot { margin-top: 6mm; border-top: 1.5px solid var(--ilus-red); padding-top: 5px; display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 7pt; color: var(--ilus-mute); }
+  .foot b { color: var(--ilus-black); }
 
   @media print {
     body { background: #fff; }
     .no-print, .toolbar { display: none !important; }
-    .sheet { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; }
+    .sheet { width: auto; min-height: auto; margin: 0; padding: 0 12mm; box-shadow: none; }
   }
   @media (max-width: 900px) {
-    .sheet { padding: 5mm 4mm 8mm; }
+    .sheet { padding: 0 4mm 8mm; }
+    .head { margin: 0 -4mm; padding: 3mm 4mm; }
+    .head-sep { margin: 0 -4mm 4mm; }
+    .head .right .otn { font-size: 12pt; }
     .info-grid { grid-template-columns: repeat(2, 1fr); }
     .zona-grid { grid-template-columns: repeat(2, 1fr); }
     .zona-card.wide { grid-column: span 2; }
@@ -203,6 +254,7 @@
     table.items { min-width: 880px; }
     .cierre { grid-template-columns: 1fr; }
     .dudas { grid-template-columns: 1fr; }
+    .foot { flex-direction: column; align-items: flex-start; }
   }
 </style>
 </head>
@@ -231,31 +283,37 @@
 </div>
 
 <div class="sheet">
+  {# Encabezado del documento: mismo marco que la OT (banda negra + dos logos + tipo y N° en rojo + franja roja/negra). #}
   <div class="head">
     <div class="logo">
+      {% if logo_shs_b64 %}
+        <div class="logo-shs-box"><img src="data:image/png;base64,{{ logo_shs_b64 }}" alt="Sport and Health Solutions"></div>
+      {% endif %}
       {% if logo_b64 %}
-        <img src="data:image/png;base64,{{ logo_b64 }}" alt="ILUS Fitness">
+        <img class="logo-ilus" src="data:image/png;base64,{{ logo_b64 }}" alt="ILUS Fitness">
       {% else %}
-        <span class="logo-fallback"><span class="helm">⛑</span> ILUS.</span>
+        <div class="logo-fallback">ILUS<b>.</b></div>
       {% endif %}
     </div>
-    <div class="head-mid">
-      <h1>Detalle de cálculo de cotización</h1>
-      <div class="head-sub">Para resolver dudas — cómo se llegó a cada precio, cuánto cuesta y cuánto margen deja</div>
+    <div class="right">
+      <div class="doc-tipo">DETALLE DE CÁLCULO</div>
+      <div class="otn">N° {{ cot.numero }}</div>
+      <div class="doc-meta">DOCUMENTO INTERNO · SOLO SUPERADMIN</div>
     </div>
-    <span class="badge-interno">Documento interno · Solo superadmin</span>
   </div>
+  <div class="head-sep"></div>
 
+  <div class="sec-title primero">Datos de la cotización <span class="sec-sub">Para resolver dudas — cómo se llegó a cada precio, cuánto cuesta y cuánto margen deja</span></div>
   <div class="info-grid">
-    <div class="info-card"><div class="lbl">Cotización</div><div class="val">{{ cot.numero }}</div></div>
-    <div class="info-card"><div class="lbl">Cliente</div><div class="val">{{ cot.empresa or 'Sin cliente' }}{% if cot.rut %} · {{ cot.rut }}{% endif %}</div></div>
-    <div class="info-card"><div class="lbl">Tipo de servicio</div><div class="val">{{ cot.tipo_servicio_label }}</div></div>
-    <div class="info-card"><div class="lbl">Creada</div>
-      <div class="val">{{ cot.created_at | chile_fmt if cot.created_at else '—' }}{% if cot.created_by %}<br><span style="font-weight:500;color:var(--ilus-mute);font-size:8pt;">por {{ cot.created_by }}</span>{% endif %}</div>
+    <div class="info-card"><span class="lbl">Cotización</span><div class="val">{{ cot.numero }}</div></div>
+    <div class="info-card"><span class="lbl">Cliente</span><div class="val">{{ cot.empresa or 'Sin cliente' }}{% if cot.rut %} · {{ cot.rut }}{% endif %}</div></div>
+    <div class="info-card"><span class="lbl">Tipo de servicio</span><div class="val">{{ cot.tipo_servicio_label }}</div></div>
+    <div class="info-card"><span class="lbl">Creada</span>
+      <div class="val">{{ cot.created_at | chile_fmt if cot.created_at else '—' }}{% if cot.created_by %}<span class="sub">por {{ cot.created_by }}</span>{% endif %}</div>
     </div>
   </div>
 
-  <h2 class="sec"><span class="n">1</span>Cálculo por ítem (mano de obra) <span class="sec-sub">· cada precio dice de dónde salió</span></h2>
+  <div class="sec-title"><span>1 · Cálculo por ítem (mano de obra)</span><span class="sec-sub">cada precio dice de dónde salió</span></div>
   <div class="tabla-wrap">
     <table class="items">
       <thead>
@@ -276,7 +334,7 @@
         {% for it in items %}
         {% set a = it.analisis %}
         <tr class="{{ 'sin-tarifa' if a.origen == 'sin_tarifa' }}">
-          <td class="l">{{ it.sku or '—' }}</td>
+          <td class="l sku">{{ it.sku or '—' }}</td>
           <td class="l">{{ it.descripcion or '—' }}</td>
           <td class="l">{{ it.clase_nombre }}</td>
           <td class="c">{{ it.cantidad }}</td>
@@ -320,9 +378,9 @@
     </table>
   </div>
 
-  <h2 class="sec"><span class="n">2</span>Costo de ruta / zona</h2>
+  <div class="sec-title"><span>2 · Costo de ruta / zona</span></div>
   {% if cot.ruta_excluida %}
-  <div style="background:#fff8e1;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:6px 10px;font-size:7.8pt;margin-bottom:6px;">
+  <div class="aviso-ruta">
     <b>Excluido de esta cotización.</b> El monto de abajo es el detectado/ajustado
     para referencia — NO está sumado al subtotal ni aparece en el PDF que ve el cliente
     (checkbox "No incluir el costo de ruta" marcado).
@@ -330,29 +388,29 @@
   {% endif %}
   {% if ruta %}
   <div class="zona-grid">
-    <div class="zona-card"><div class="lbl">Comuna</div><div class="val">{{ ruta.comuna }}</div></div>
-    <div class="zona-card"><div class="lbl">Región</div><div class="val">{{ ruta.region or '—' }}</div></div>
-    <div class="zona-card"><div class="lbl">Distancia</div><div class="val">{{ ruta.km | fkg(1) }} km</div></div>
-    <div class="zona-card"><div class="lbl">Tiempo est.</div><div class="val">{{ ruta.tiempo_min }} min</div></div>
+    <div class="zona-card"><span class="lbl">Comuna</span><div class="val">{{ ruta.comuna }}</div></div>
+    <div class="zona-card"><span class="lbl">Región</span><div class="val">{{ ruta.region or '—' }}</div></div>
+    <div class="zona-card"><span class="lbl">Distancia</span><div class="val">{{ ruta.km | fkg(1) }} km</div></div>
+    <div class="zona-card"><span class="lbl">Tiempo est.</span><div class="val">{{ ruta.tiempo_min }} min</div></div>
     {# Desglose SOLO acá (detalle interno de superadmin), nunca en el PDF del cliente. "Combustible y otros" = bruto − peaje − TAG. #}
-    <div class="zona-card"><div class="lbl">Peaje</div><div class="val">${{ clp(ruta.peaje) }}</div></div>
-    <div class="zona-card"><div class="lbl">TAG</div><div class="val">${{ clp(ruta.tag) }}</div></div>
-    <div class="zona-card"><div class="lbl">Combustible y otros</div><div class="val">${{ clp(ruta.combustible_otros) }}</div></div>
-    <div class="zona-card wide"><div class="lbl">Costo ruta aplicado{% if cot.ruta_excluida %} (excluido — no suma){% endif %}</div><div class="val">${{ clp(cot.costo_ruta) }}</div></div>
+    <div class="zona-card"><span class="lbl">Peaje</span><div class="val">${{ clp(ruta.peaje) }}</div></div>
+    <div class="zona-card"><span class="lbl">TAG</span><div class="val">${{ clp(ruta.tag) }}</div></div>
+    <div class="zona-card"><span class="lbl">Combustible y otros</span><div class="val">${{ clp(ruta.combustible_otros) }}</div></div>
+    <div class="zona-card wide"><span class="lbl">Costo ruta aplicado{% if cot.ruta_excluida %} (excluido — no suma){% endif %}</span><div class="val">${{ clp(cot.costo_ruta) }}</div></div>
   </div>
   {% else %}
   <div class="zona-grid">
-    <div class="zona-card"><div class="lbl">Comuna</div><div class="val">{{ cot.comuna or '—' }}</div></div>
-    <div class="zona-card"><div class="lbl">Región</div><div class="val">{{ cot.region or '—' }}</div></div>
+    <div class="zona-card"><span class="lbl">Comuna</span><div class="val">{{ cot.comuna or '—' }}</div></div>
+    <div class="zona-card"><span class="lbl">Región</span><div class="val">{{ cot.region or '—' }}</div></div>
     <div class="zona-card wide">
-      <div class="lbl">Costo ruta aplicado{% if cot.ruta_excluida %} (excluido — no suma){% endif %}</div>
+      <span class="lbl">Costo ruta aplicado{% if cot.ruta_excluida %} (excluido — no suma){% endif %}</span>
       <div class="val">${{ clp(cot.costo_ruta) }}</div>
       {% if cot.costo_ruta %}<div style="font-size:7.3pt;color:var(--ilus-mute);margin-top:2px;">Sin registro en la tabla de rutas para esta comuna — monto ingresado/ajustado manualmente.</div>{% endif %}
     </div>
   </div>
   {% endif %}
 
-  <h2 class="sec"><span class="n">3</span>Resultado interno y totales</h2>
+  <div class="sec-title"><span>3 · Resultado interno y totales</span></div>
   <div class="cierre">
     <div class="interno">
       <div class="it-t">Resultado interno · solo mano de obra</div>
@@ -387,7 +445,7 @@
     </div>
   </div>
 
-  <h2 class="sec"><span class="n">4</span>Para resolver dudas</h2>
+  <div class="sec-title"><span>4 · Para resolver dudas</span></div>
   <div class="dudas">
     {% for q, r in dudas %}
     <div class="duda"><div class="q">{{ q }}</div><div class="a">{{ r }}</div></div>
@@ -409,6 +467,12 @@
     no es una foto del día en que se creó la cotización. Los montos de la cotización (precio unitario, subtotal, total) sí quedaron fijos al
     calcularla; cuando la tarifa de hoy es distinta, el ítem lo dice («Hoy la tarifa daría…»). Documento interno: no se envía al cliente.
   </p>
+
+  {# Pie del documento (pantalla y Ctrl+P). En el PDF descargado lo reemplaza el pie nativo, que repite en cada página con «Página X de Y». #}
+  <div class="foot">
+    <span><b>ILUS Fitness</b> · www.ilusfitness.com · soportetec@sphs.cl</span>
+    <span><b>{{ cot.numero }}</b> · {{ (cot.empresa or 'Sin cliente')|truncate(48, true, '…') }} · Documento interno</span>
+  </div>
 </div>
 
 </body>
