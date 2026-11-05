@@ -244,7 +244,7 @@ class TestPantalla(unittest.TestCase):
 
     def test_ninguna_ruta_nueva_ni_delete_nuevo(self):
         import re
-        self.assertEqual(set(re.findall(r"DELETE\s+FROM\s+(\w+)", self.mod)), {"flota_vehiculos", "flota_choferes"})
+        self.assertEqual(set(re.findall(r"DELETE\s+FROM\s+(\w+)", self.mod)), {"flota_vehiculos", "flota_choferes", "flota_solicitudes"})
 
 
 if __name__ == "__main__":

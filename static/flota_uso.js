@@ -240,6 +240,7 @@
     if (p.devolver) b.push('<button type="button" class="fl-btn fl-btn--dev" data-acc="devolver"><i class="bi bi-box-arrow-in-down"></i>Devolver</button>');
     if (p.confirmar_recepcion) b.push('<button type="button" class="fl-btn fl-btn--ok" data-acc="recepcion"><i class="bi bi-patch-check"></i>Confirmar recepción</button>');
     if (p.cancelar) b.push('<button type="button" class="fl-btn fl-btn--peligro" data-acc="cancelar"><i class="bi bi-x-circle"></i>Cancelar</button>');
+    if (p.eliminar) b.push('<button type="button" class="fl-btn fl-btn--peligro" data-acc="eliminar"><i class="bi bi-trash"></i>Eliminar</button>');     // solo el superadministrador
     return b.join('');
   }
   /* SLA de respuesta (03-nov-2026): cuánto tarda la gestión en confirmar o cancelar, contando solo el horario de llaves. */
@@ -829,6 +830,7 @@
     if (p.confirmar_recepcion) b.push('<button type="button" class="btn btn-success" data-dacc="recepcion"><i class="bi bi-patch-check me-1"></i>Confirmar recepción</button>');
     if (p.editar) b.push('<button type="button" class="btn btn-outline-secondary" data-dacc="editar"><i class="bi bi-pencil me-1"></i>Mover o cambiar</button>');
     if (p.cancelar) b.push('<button type="button" class="btn btn-outline-danger" data-dacc="cancelar"><i class="bi bi-x-circle me-1"></i>Cancelar</button>');
+    if (p.eliminar) b.push('<button type="button" class="btn btn-danger" data-dacc="eliminar"><i class="bi bi-trash me-1"></i>Eliminar definitivamente</button>');     // solo el superadministrador
     b.push('<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>');
     $('flSolDetAcc').innerHTML = b.join('');
   }
@@ -896,6 +898,27 @@
     }).then(function (motivo) {
       if (motivo == null) return;
       api(API + '/solicitudes/' + s.id + '/cancelar', { method: 'POST', body: { motivo: motivo } }).then(function (d) { tras(d, s.numero + ' quedó cancelada.'); });
+    });
+  }
+  /* ELIMINAR UNA RESERVA PARA SIEMPRE (Daniel, 05-nov-2026: «necesito que el superadministrador pueda eliminar definitivamente cada reserva»,
+     porque una reserva mal cargada impedía borrar al chofer). Solo el superadministrador: el servidor lo vuelve a exigir. Pide escribir el
+     número de la reserva; con la llave afuera el servidor se niega y lo explica. */
+  function eliminarSol(s) {
+    var abierta = s.estado === 'solicitada' || s.estado === 'confirmada';
+    window.ilusPrompt({
+      title: 'Eliminar definitivamente ' + s.numero,
+      message: 'Se borra para siempre y no se puede deshacer.' + (abierta ? ' Todavía está vigente: se le avisa a quien la pidió.' : '') +
+        ' Queda anotado en el historial del vehículo quién la eliminó y todo lo que decía. Para confirmar escribe el número de la reserva.',
+      placeholder: s.numero, okLabel: 'Eliminar definitivamente', cancelLabel: 'Volver', type: 'danger', required: true
+    }).then(function (txt) {
+      if (txt == null) return;
+      api(API + '/solicitudes/' + s.id, { method: 'DELETE', body: { confirmacion: txt } }).then(function (d) {
+        if (!d.ok) { toast(d.error || 'No se pudo eliminar la reserva.', 'error'); if (d.solicitud) recargarSol(); return; }
+        toast(s.numero + ' se eliminó definitivamente.', 'success');
+        cerrarModal('flModalSolDet');
+        S.det = null;
+        recargarSol();
+      });
     });
   }
   /* ═══ SOLICITUDES · DEVOLUCIÓN CON EVIDENCIA (FASE 2, 03-nov-2026) ═══
@@ -1094,6 +1117,7 @@
     else if (a === 'confirmar') confirmar(s);
     else if (a === 'llave') entregarLlave(s);
     else if (a === 'cancelar') cancelar(s);
+    else if (a === 'eliminar') eliminarSol(s);
     else if (a === 'devolver') despuesDeCerrar('flModalSolDet', function () { abrirDevolucion(s); });
     else if (a === 'recepcion') despuesDeCerrar('flModalSolDet', function () { abrirRecepcion(s); });
     else if (a === 'editar') despuesDeCerrar('flModalSolDet', function () { abrirSolicitud(s); });

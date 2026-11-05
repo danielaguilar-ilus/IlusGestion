@@ -690,7 +690,7 @@ def register_flota_routes(app, ctx):
 
     _TITULOS_HISTORIAL = {
         "creado": "Registrado", "editado": "Datos modificados", "inhabilitado": "Inhabilitado", "habilitado": "Habilitado",
-        "archivado": "Archivado", "desarchivado": "Desarchivado", "eliminado": "Borrado definitivo",
+        "archivado": "Archivado", "desarchivado": "Desarchivado", "eliminado": "Borrado definitivo", "reserva_eliminada": "Reserva eliminada",
         "archivo_subido": "Archivo guardado", "archivo_quitado": "Archivo quitado", "licencia_verificada": "Licencia verificada con el escáner", "licencia_sin_verificar": "Licencia registrada SIN comprobar",
     }
 
@@ -734,6 +734,12 @@ def register_flota_routes(app, ctx):
                 lineas = (["Estaba inhabilitado por: " + det["motivo_anterior"]] if det.get("motivo_anterior") else [])
             elif acc in ("archivo_subido", "archivo_quitado"):
                 lineas = [f"{fr.ETIQUETAS_ARCHIVO.get(det.get('tipo'), det.get('tipo') or 'Archivo')}: {det.get('nombre') or ''}".strip(": ")]
+            elif acc == "reserva_eliminada":
+                lineas = [x for x in (f"{det.get('numero') or 'Reserva'} · {det.get('estado_texto') or det.get('estado') or ''}".strip(" ·"),
+                                      f"Cuándo: {det['cuando']}" if det.get("cuando") else None,
+                                      f"Chofer: {det['chofer']}" if det.get("chofer") else None,
+                                      f"Pidió: {det['solicitante']}" if det.get("solicitante") else None,
+                                      f"Motivo de la reserva: {det['motivo']}" if det.get("motivo") else None) if x]
             else:
                 lineas = []
             if chofer and acc in ("creado", "editado", "licencia_verificada", "licencia_sin_verificar") and _flota_docs():
@@ -1626,6 +1632,8 @@ def register_flota_routes(app, ctx):
                 "devolver": est == "llave_entregada" and (gest or mia or soy_chofer),
                 # Cerrar: la gestión, que recibe la llave, confirma que la devolución es real (05-nov-2026).
                 "confirmar_recepcion": gest and cierre == "por_confirmar",
+                # Borrarla DEFINITIVO: solo el superadministrador (Daniel, 05-nov-2026) y nunca con la llave afuera.
+                "eliminar": _es_superadmin() and est != "llave_entregada",
             },
         }
 
@@ -2349,6 +2357,52 @@ def register_flota_routes(app, ctx):
                           solicitud=_sol_json(dict(actual)))
         _slog(sid, accion, detalle)
         return jsonify({"ok": True, "solicitud": _sol_json(dict(_sol_fila(sid)))})
+
+    @app.route("/flota/api/solicitudes/<int:sid>", methods=["DELETE"])
+    @_flota_admin_required
+    def flota_api_solicitud_eliminar(sid):
+        """Borrado DEFINITIVO de una reserva (Daniel, 05-nov-2026: «necesito que el superadministrador pueda eliminar definitivamente cada
+        reserva»: una reserva mal cargada impedía borrar al chofer). Solo el superadministrador, escribiendo el número de la reserva.
+        Con la llave afuera no se borra (primero la devolución o la cancelación). Queda anotado ANTES de borrar, con todo lo que decía, en la
+        bitácora del vehículo (REGLA #5): la bitácora de la reserva queda también, sin borrarse nunca."""
+        if not _es_superadmin():
+            return _error("Solo el superadministrador puede eliminar una reserva definitivamente.", 403, error_codigo="SOLO_SUPERADMIN")
+        fila = _sol_fila(sid)
+        if not fila:
+            return _error("No encontré esa solicitud.", 404)
+        fila = dict(fila)
+        numero = fila.get("numero") or f"#{sid}"
+        if not fr.coincide_confirmacion((request.get_json(silent=True) or {}).get("confirmacion"), numero):
+            return _error("Para eliminarla definitivamente escribe el número de la reserva.", 400, errores={"confirmacion": "No coincide con el número."})
+        if fila["estado"] == "llave_entregada":
+            return _error("La llave de esta reserva está entregada: primero registra la devolución o cancélala, y después la puedes eliminar.",
+                          409, error_codigo="LLAVE_AFUERA", solicitud=_sol_json(fila))
+        quien = current_username() or "el superadministrador"
+        resumen = {"numero": numero, "estado": fila["estado"], "estado_texto": fr.ESTADOS.get(fila["estado"], fila["estado"]),
+                   "vehiculo_id": fila.get("vehiculo_id"), "chofer_id": fila.get("chofer_id"), "chofer": fila.get("chofer_nombre"),
+                   "solicitante": fila.get("solicitante_nombre"), "area": fila.get("area"), "motivo": fila.get("motivo"),
+                   "inicio": fila.get("inicio"), "fin": fila.get("fin"), "cuando": _sol_json(fila).get("rango_texto"),
+                   "cancelada_motivo": fila.get("cancelada_motivo"), "ot_id": fila.get("ot_id"), "ot_numero": fila.get("ot_numero")}
+        eran_abiertas = fila["estado"] in ("solicitada", "confirmada")
+        try:
+            _log(fila["vehiculo_id"], "reserva_eliminada", resumen, estricto=True)      # primero queda escrito; si no se puede, no se borra
+            _slog(sid, "eliminada", resumen)
+            mysql_execute("UPDATE flota_archivos SET activo=0, quitado_por=%s, quitado_at=NOW() WHERE entidad='solicitud' AND entidad_id=%s AND activo=1",
+                          (current_username(), sid))
+            borradas = mysql_rowcount("DELETE FROM flota_solicitudes WHERE id=%s AND estado <> 'llave_entregada'", (sid,))
+        except Exception as e:
+            print(f"[flota] eliminar reserva: {type(e).__name__}: {e}", flush=True)
+            return _error("No se pudo eliminar la reserva. No se borró nada.", 500)
+        if not borradas:
+            _slog(sid, "eliminacion_no_aplicada", {"motivo": "otra persona la movió mientras tanto (por ejemplo entregó la llave)"})
+            return _error("Otra persona la movió mientras tanto (por ejemplo entregó la llave), así que no se eliminó. Recarga la pantalla.", 409)
+        if eran_abiertas and fila.get("solicitante_id") and fila["solicitante_id"] != _uid():     # aviso de mejor esfuerzo: nunca rompe el borrado
+            try:
+                _correo_flota("flota_solicitud_cancelada", [fila["solicitante_id"]], f"Solicitud {numero} cancelada",
+                              _cuerpo_correo(fila, f"{quien} eliminó esta reserva. El horario quedó libre."), sid=sid)
+            except Exception as e:
+                print(f"[flota] aviso al eliminar la reserva: {type(e).__name__}", flush=True)
+        return jsonify({"ok": True, "eliminada": True, "numero": numero})
 
     @app.route("/flota/api/solicitudes/<int:sid>/confirmar", methods=["POST"])
     @_flota_gestion_required
