@@ -58,6 +58,7 @@ function cotWizAbrir(editCid){
    'cotWizAlcance','cotWizRecomendacion','cotWizTerminos','cotWizDiasHabiles','cotWizFrecuenciaAnual'].forEach(function(id){
     const el = document.getElementById(id); if (el) el.value = '';
   });
+  cotWizFrecuenciaCambio();
   document.getElementById('cotWizDescModo').value = 'pct';
   document.getElementById('cotWizDescValor').value = '0';
   cotWizDescModoCambio();
@@ -149,6 +150,7 @@ async function _cotWizCargarEdicion(cid){
     setV('cotWizAlcance', c.alcance); setV('cotWizRecomendacion', c.recomendacion);
     setV('cotWizTerminos', c.terminos); setV('cotWizDiasHabiles', c.dias_habiles_estimado);
     setV('cotWizFrecuenciaAnual', c.frecuencia_anual); setV('cotWizCostoRuta', c.costo_ruta || 0);
+    cotWizFrecuenciaCambio();
     document.getElementById('cotWizRutaExcluida').checked = !!c.ruta_excluida;
     setV('cotWizEjecutivo', c.ejecutivo);
     if (c.valida_hasta) setV('cotWizValidoHasta', c.valida_hasta);
@@ -506,6 +508,23 @@ function cotWizValidarPaso1(){
   }
 })();
 
+// 2026-11-06 (Daniel): frecuencia de mantención RECOMENDADA, editable. Los atajos solo escriben el número del campo; el PDF aclara que la cotización es por UNA visita.
+function cotWizFrecuenciaCambio(){
+  const el = document.getElementById('cotWizFrecuenciaAnual');
+  const n = el ? parseInt(el.value, 10) : NaN;
+  document.querySelectorAll('.cot-wiz-frec-chip').forEach(function(b){ b.classList.toggle('on', parseInt(b.dataset.n, 10) === n); });
+  const h = document.getElementById('cotWizFrecuenciaHint');
+  if (h) h.textContent = (isFinite(n) && n > 0
+    ? 'Recomendamos ' + n + (n === 1 ? ' mantención' : ' mantenciones') + ' al año. '
+    : 'Es una recomendación al cliente (sin valor: 2 al año). ')
+    + 'Esta cotización cubre UNA visita y no incluye la frecuencia anual. Así lo dirá el PDF.';
+}
+function cotWizFrecuenciaElegir(n){
+  const el = document.getElementById('cotWizFrecuenciaAnual');
+  if (!el) return;
+  el.value = String(n);
+  cotWizFrecuenciaCambio();
+}
 function cotWizTipoServ(btn){
   if (!_WIZ) return;
   // 2026-07-24 (Daniel, origen ficha bloquea Instalación -- ver
@@ -3055,7 +3074,7 @@ async function _cotWizPlanDesdeFicha(cid, params){
   }
   const frec = parseInt(params.get('frecuencia'), 10);
   const frecEl = document.getElementById('cotWizFrecuenciaAnual');
-  if (frecEl && isFinite(frec) && frec > 0 && tipo === 'mantencion') frecEl.value = String(frec);
+  if (frecEl && isFinite(frec) && frec > 0 && tipo === 'mantencion'){ frecEl.value = String(frec); cotWizFrecuenciaCambio(); }
   if (_WIZ.items.length) ilusToast('Plan cargado con ' + _WIZ.items.length + ' producto(s) — revisa el tipo de servicio y el descuento', {type:'info'});
 }
 (function(){
