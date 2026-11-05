@@ -12,6 +12,16 @@
 .mk-pane{display:none;background:#fff;border-radius:0 0 12px 12px;
          padding:24px;border:1px solid #eaecf0;border-top:none;}
 .mk-pane.active{display:block;}
+/* 2026-11-05 (REGLA #61): las 3 pestañas con su nombre completo no caben en una fila a 390 px y la página entera se corría 87 px de lado (medido en
+   producción). En el celular pasan a una lista vertical: cada pestaña con su nombre COMPLETO (REGLA #15), 48 px de alto (REGLA #3) y su contador a la derecha. */
+@media (max-width:640px){
+  .mk-tabs{flex-direction:column;padding:0;}
+  .mk-tab{width:100%;justify-content:flex-start;text-align:left;border-bottom:0;border-left:3px solid transparent;margin-bottom:0;min-height:48px;padding:12px 16px;}
+  .mk-tab.active{border-left-color:#cc0000;background:#fff5f5;}
+  .mk-tab .badge{font-size:.75rem !important;margin-left:auto;}
+  .mk-pane{padding:16px;}
+  .li-status-on,.li-status-off{font-size:.75rem;}   /* REGLA #61: letra de 12 px o más (eran 9,9 px) */
+}
 
 .li-card{background:#fff;border:1px solid #eaecf0;border-radius:12px;
          box-shadow:0 1px 4px rgba(0,0,0,.04);overflow:hidden;}
@@ -20,7 +30,7 @@
 .li-form-row input,.li-form-row textarea{font-size:.82rem;}
 .li-status-on{background:#dcfce7;color:#166534;padding:2px 9px;border-radius:50px;
               font-size:.62rem;font-weight:700;}
-.li-status-off{background:#f3f4f6;color:#6b7280;padding:2px 9px;border-radius:50px;
+.li-status-off{background:#f3f4f6;color:#4b5563;padding:2px 9px;border-radius:50px;
                font-size:.62rem;font-weight:700;}
 </style>
 
@@ -296,7 +306,7 @@
           <label class="form-label small fw-semibold">Motivo</label>
           <input type="text" name="motivo" class="form-control" maxlength="200"
                  placeholder="Ej: Inventario, feriado regional, cierre anticipado…">
-          <div class="form-text" style="font-size:.74rem">
+          <div class="form-text" style="font-size:.75rem">
             <i class="bi bi-eye me-1"></i>El cliente verá este motivo en el formulario público de retiros.
           </div>
         </div>
@@ -334,7 +344,7 @@
         </div>
       </div>
 
-      <div class="mt-2 small" id="bkCounter" style="color:#9ca3af;font-weight:500">
+      <div class="mt-2 small" id="bkCounter" style="color:#6b7280;font-weight:500">
         Ninguna franja seleccionada
       </div>
 
@@ -545,7 +555,7 @@ function bkSyncHidden(){
   var counter = document.getElementById('bkCounter');
   if (counter){
     counter.textContent = sel.length ? (sel.length + ' franja(s) seleccionada(s)') : 'Ninguna franja seleccionada';
-    counter.style.color = sel.length ? '#16a34a' : '#9ca3af';
+    counter.style.color = sel.length ? '#166534' : '#6b7280';   // contraste ≥ 4,5:1 sobre el fondo rosado de la tarjeta (los #16a34a y #9ca3af daban 3,2 y 2,4)
   }
 }
 

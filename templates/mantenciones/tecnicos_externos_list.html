@@ -26,16 +26,16 @@
   display:flex;align-items:center;justify-content:center;font-size:1.3rem;
 }
 .kpi-lbl{font-size:.64rem;font-weight:800;text-transform:uppercase;
-         letter-spacing:.08em;color:#9ca3af;margin-bottom:3px}
+         letter-spacing:.08em;color:#6b7280;margin-bottom:3px}   /* #6b7280 (gris neutro de REGLA #2) = 4,8:1 sobre blanco; el #9ca3af anterior daba 2,5:1 */
 .kpi-num{font-size:1.85rem;font-weight:800;color:#0a0a0a;line-height:1}
 
 /* ══ Tech card (premium) ═════════════════════════════════════════════ */
-.tx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+.tx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(310px,100%),1fr));gap:14px}
 .tx-card{
   background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:18px;
   display:flex;flex-direction:column;gap:12px;position:relative;
   transition:box-shadow .18s,transform .15s,border-color .15s;
-  min-height:240px;
+  min-height:240px;min-width:0;
 }
 .tx-card:hover{
   box-shadow:0 10px 28px rgba(0,0,0,.08);border-color:#d1d5db;
@@ -134,10 +134,16 @@
 
 /* ══ Mobile ══════════════════════════════════════════════════════════ */
 @media(max-width:640px){
-  .tx-grid{grid-template-columns:1fr;gap:10px}
+  /* 2026-11-05 (REGLA #61): `1fr` a secas es minmax(auto,1fr): el nombre largo (nowrap) ensanchaba la columna a 656 px en una pantalla de 390 y la
+     página entera se corría 294 px de lado (medido en producción con datos reales). minmax(0,1fr) deja que la columna mida lo que la pantalla. */
+  .tx-grid{grid-template-columns:minmax(0,1fr);gap:10px}
   .mod-hero h4{font-size:1.18rem}
   .tx-card{padding:14px}
   .tx-avatar{width:54px;height:54px;font-size:1.2rem}
+  /* REGLA #15: en el celular el nombre y el giro van COMPLETOS (se parten en líneas), no cortados con «…» */
+  .tx-razon,.tx-giro{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+  /* REGLA #61: letra de 12 px o más */
+  .kpi-lbl,.tx-pill{font-size:.75rem}
 }
 </style>
 

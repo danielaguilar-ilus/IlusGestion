@@ -343,9 +343,17 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
   align-items:center;
 }
 @media (max-width:980px) {
-  .tr-filters-row { grid-template-columns:1fr 1fr; }
+  /* 2026-11-05 (REGLA #61): `1fr` a secas es minmax(auto,1fr): el tamaño propio del <select> y del <input type=date> (≈180 px cada uno) ensanchaba
+     las dos columnas y la página entera se corría 84 px de lado en el celular (medido en producción). minmax(0,1fr) las deja medir lo que cabe. */
+  .tr-filters-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
   .tr-filter-search { grid-column:1 / -1; }
   .tr-filter-actions { grid-column:1 / -1; }
+  .tr-filter-select, .tr-filter-date { min-width:0; width:100%; min-height:44px; }
+  .tr-filter-search input { min-height:44px; }
+}
+@media (max-width:480px) {
+  /* en un celular dos columnas de 150 px dejan la fecha y los estados cortados: una columna, cada filtro con su ancho completo */
+  .tr-filters-row { grid-template-columns:minmax(0,1fr); }
 }
 .tr-filter-search { position:relative; }
 .tr-filter-search input {
