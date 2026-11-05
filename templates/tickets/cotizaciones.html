@@ -106,7 +106,7 @@
    el MISMO patrón compartido de users.html. Se conservan TODOS los
    botones/acciones y el click-fila-para-editar (Regla #4.2) -- solo
    cambió el layout de tarjetas sueltas a tabla con columnas. #}
-<div class="ilus-card">
+<div class="ilus-card cot-lista-card">
   <div class="ilus-card-header">
     <span><i class="bi bi-file-earmark-text me-2"></i>Gestión de cotizaciones</span>
     {#- el texto va sobre la banda negra del encabezado (8:1): se declara el fondo aquí para que se vea el contraste real. -#}
@@ -136,17 +136,21 @@
       </thead>
       <tbody>
         {% for c in cotizaciones %}
-        <tr class="cot-row" onclick="cotRowClick(event, {{ c.id }})" style="cursor:pointer;"
+        {#- 2026-11-05 (Daniel: «la tabla de cotizaciones no se ve fiel al formato y colores»): `cot-st-<estado>` pinta el semáforo del borde izquierdo
+            (mismo lenguaje que la bandeja de Tickets). Una cotización vencida se ve ámbar aunque su estado siga siendo borrador/enviada. -#}
+        <tr class="cot-row cot-st-{{ c.estado }}{% if c.vencida %} cot-st-vencida{% endif %}" onclick="cotRowClick(event, {{ c.id }})" style="cursor:pointer;"
             data-num="{{ (c.numero_cotizacion or '')|lower }}" data-emp="{{ (c.empresa or c.rut or '')|lower }}"
             data-estado="{{ c.estado }}" title="Clic para ver / editar esta cotización">
           <td data-label="Número"><span class="tk-num">{{ c.numero_cotizacion or ('#' ~ c.id) }}</span></td>
-          <td data-label="Cliente"><strong>{{ c.empresa or c.rut or 'Sin cliente' }}</strong></td>
+          <td data-label="Cliente"><strong class="cot-cli-nom">{{ c.empresa or c.rut or 'Sin cliente' }}</strong>{% if c.empresa and c.rut %}<span class="cot-cli-rut">{{ c.rut | rut_fmt }}</span>{% endif %}</td>
           <td data-label="Estado">
             <span class="tk-badge cb-{{ c.estado }}">{{ c.estado | cotiz_estado }}</span>
             {% if c.vencida %}<span class="tk-badge cb-vencida" title="La validez ya pasó">Vencida</span>{% endif %}
             {% if c.editada_post_aprobacion %}<i class="bi bi-pencil-fill" style="color:#f59e0b;font-size:.8rem;" title="Editada después de aprobarse — revisa el historial"></i>{% endif %}
           </td>
-          <td data-label="Fecha">{{ c.created_at | chile_fmt }}</td>
+          {#- «dd/mm/aaaa hh:mm» (hora Chile, REGLA #6) en dos líneas: la fecha en negrita y la hora debajo. Si el filtro no devuelve ese formato se muestra tal cual. -#}
+          {% set _cf = c.created_at | chile_fmt %}
+          <td data-label="Fecha">{% if _cf|length == 16 %}<span class="cot-fec-d">{{ _cf[:10] }}</span><span class="cot-fec-h">{{ _cf[11:] }}</span>{% else %}{{ _cf }}{% endif %}</td>
           <td data-label="Total" class="text-end">
             {% if c.total %}
             <span class="tk-row-total">
