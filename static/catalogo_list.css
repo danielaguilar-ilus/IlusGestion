@@ -434,3 +434,56 @@ table.cat-table tbody tr.seleccionada:hover{background:#fecaca;}
 .cata-vacio{color:#6b7280;font-size:.8rem;padding:6px 0 6px 42px}
 .cata-mas{width:100%;min-height:44px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;font-weight:800;font-size:.82rem;color:#111827}
 @media (max-width:600px){.cata-filtros button{min-height:44px;padding:0 14px}.cata-l1{flex-direction:column;gap:2px}}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CATÁLOGO EN EL CELULAR (2026-11-05, REGLA #61)
+   La tabla de 11 columnas (1509 px reales a 390 px de pantalla) se deslizaba 1179 px por dentro: en un celular se veía la foto y casi el SKU.
+   Bajo 768 px cada producto pasa a UNA tarjeta con las MISMAS celdas (REGLA #4.2: no se quita nada, tampoco el casillero de «seleccionar todos» del
+   superadmin ni los encabezados que ordenan, que pasan a una tira de botones de 44 px). La tabla de escritorio no cambia: todo va dentro de este
+   @media y bajo `table.cat-table`. Nombre completo, sin cortar (REGLA #15).
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (max-width:767.98px){
+  .cat-table-wrap{max-height:none;overflow:visible;background:transparent;border:0;border-radius:0;box-shadow:none;}
+  table.cat-table{display:block;width:100%;min-width:0;}
+  /* orden: los encabezados siguen ordenando, como una tira de botones de una línea que se desliza */
+  table.cat-table thead{display:block;}
+  table.cat-table thead tr{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none;}
+  table.cat-table thead tr::-webkit-scrollbar{display:none;}
+  table.cat-table thead th{position:static;display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;min-height:44px;padding:0 14px;
+    border:1.5px solid #e5e7eb;border-radius:999px;background:#fff;color:#0f172a;font-size:.8rem;font-weight:800;
+    text-transform:none;letter-spacing:0;white-space:nowrap;cursor:pointer;}
+  table.cat-table thead th.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff;}
+  table.cat-table thead th.cat-th-chk{cursor:default;}
+  table.cat-table thead th.cat-th-chk input,table.cat-table td.cat-c-chk input{width:22px;height:22px;accent-color:#dc2626;}
+  table.cat-table thead th:not(.cat-th-sort):not(.cat-th-chk){display:none;}   /* Foto, Manual, Estado y Acciones no ordenan */
+  /* cada producto = una tarjeta */
+  table.cat-table tbody{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:10px;}
+  table.cat-table tbody tr{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;background:#fff;border:1px solid #e5e7eb;
+    border-radius:14px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.05);}
+  table.cat-table tbody tr.seleccionada{background:#fee2e2;border-color:#fca5a5;}
+  table.cat-table tbody td{display:block;min-width:0;padding:0;border:0 !important;}
+  /* orden visual: [foto][nombre…] / [SKU][estado] / [familia][clase][fotos][manual] / [creado][modificado] / [casillero][acciones] */
+  table.cat-table tbody td.cat-c-foto{order:1;flex:0 0 56px;}
+  table.cat-table tbody td.cat-c-nom{order:2;flex:1 1 calc(100% - 70px);}
+  table.cat-table tbody td.cat-c-sku{order:3;}
+  table.cat-table tbody td.cat-c-reg{order:4;margin-left:auto;}
+  table.cat-table tbody td.cat-c-fam{order:5;}
+  table.cat-table tbody td.cat-c-cla{order:6;}
+  table.cat-table tbody td.cat-c-fot{order:7;}
+  table.cat-table tbody td.cat-c-man{order:8;}
+  table.cat-table tbody td.cat-c-cre{order:9;flex:1 1 calc(50% - 8px);}
+  table.cat-table tbody td.cat-c-mod{order:10;flex:1 1 calc(50% - 8px);}
+  table.cat-table tbody td.cat-c-chk{order:11;}
+  table.cat-table tbody td.cat-c-acc{order:12;margin-left:auto;}
+  table.cat-table td.cat-c-cre::before,table.cat-table td.cat-c-mod::before{display:block;font-size:.75rem;font-weight:800;color:#6b7280;
+    text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;}
+  table.cat-table td.cat-c-cre::before{content:"Creado";}
+  table.cat-table td.cat-c-mod::before{content:"Última modificación";}
+  table.cat-table .cat-thumb,table.cat-table .cat-thumb-ph{width:56px;height:56px;}
+  table.cat-table .cat-nombre{min-width:0;max-width:none;}
+  table.cat-table .cat-qc{min-width:0;}
+  /* REGLA #3: botones de 44 px; REGLA #61: letra de 12 px o más */
+  table.cat-table .cat-act,.cat-pg-btn{width:44px;height:44px;min-width:44px;min-height:44px;}
+  table.cat-table .cat-chip-modelo,table.cat-table .cat-qc-quien,table.cat-table .cat-badge-fotos,table.cat-table .cat-badge-reg,
+  table.cat-table .cat-badge-clase,table.cat-table .cat-sku{font-size:.75rem;}
+}

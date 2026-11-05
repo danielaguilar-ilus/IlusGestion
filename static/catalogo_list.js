@@ -405,23 +405,25 @@ function catFilaHtml(row){
     ? '<span class="cat-badge-clase"><i class="bi bi-tag-fill"></i>'+esc(row.clase_producto_label)+'</span>'
     : '<span class="text-muted">—</span>';
   const chkTd = IS_SUPERADMIN
-    ? '<td onclick="event.stopPropagation();"><input type="checkbox" class="cat-chk-fila" data-id="'+row.id+'"'
+    ? '<td class="cat-c-chk" onclick="event.stopPropagation();"><input type="checkbox" class="cat-chk-fila" data-id="'+row.id+'"'
       + (_catSeleccionados.has(row.id)?' checked':'') + ' onchange="catToggleSeleccion('+row.id+',this.checked)"></td>'
     : '';
+  // 2026-11-05 (REGLA #61): cada celda lleva su clase `cat-c-*`. En escritorio no hacen nada; en el celular (catalogo_list.css, «CATÁLOGO EN EL
+  // CELULAR») la fila pasa a ser una tarjeta y esas clases dicen dónde va cada celda. Siguen siendo las MISMAS celdas, en el mismo orden.
   return '<tr class="'+(row.activo===0?'archivado':'')+(_catSeleccionados.has(row.id)?' seleccionada':'')+'" onclick="catAbrirFicha('+row.id+')">'
     + chkTd
-    + '<td>'+foto+'</td>'
-    + '<td><span class="cat-sku">'+esc(row.sku)+'</span></td>'
-    + '<td><div class="cat-nombre">'+esc(row.nombre)+'</div>'+catChipsModelo(row)+'</td>'
-    + '<td>'+(row.familia?esc(row.familia):'<span class="text-muted">—</span>')+'</td>'
-    + '<td>'+clase+'</td>'
-    + '<td>'+badgeFotos+'</td>'
-    + '<td>'+manualIc+'</td>'
-    + '<td>'+badgeReg+'</td>'
+    + '<td class="cat-c-foto">'+foto+'</td>'
+    + '<td class="cat-c-sku"><span class="cat-sku">'+esc(row.sku)+'</span></td>'
+    + '<td class="cat-c-nom"><div class="cat-nombre">'+esc(row.nombre)+'</div>'+catChipsModelo(row)+'</td>'
+    + '<td class="cat-c-fam">'+(row.familia?esc(row.familia):'<span class="text-muted">—</span>')+'</td>'
+    + '<td class="cat-c-cla">'+clase+'</td>'
+    + '<td class="cat-c-fot">'+badgeFotos+'</td>'
+    + '<td class="cat-c-man">'+manualIc+'</td>'
+    + '<td class="cat-c-reg">'+badgeReg+'</td>'
     // 2026-09-16: "siempre quién y cuándo" -- Creado / Última modificación
-    + '<td>'+catCeldaQuienCuando(row.created_at, row.created_by_nombre || row.created_by)+'</td>'
-    + '<td>'+catCeldaQuienCuando(row.updated_at, row.updated_by_nombre || row.updated_by)+'</td>'
-    + '<td>'+catAccionesCelda(row)+'</td>'
+    + '<td class="cat-c-cre">'+catCeldaQuienCuando(row.created_at, row.created_by_nombre || row.created_by)+'</td>'
+    + '<td class="cat-c-mod">'+catCeldaQuienCuando(row.updated_at, row.updated_by_nombre || row.updated_by)+'</td>'
+    + '<td class="cat-c-acc">'+catAccionesCelda(row)+'</td>'
     + '</tr>';
 }
 
