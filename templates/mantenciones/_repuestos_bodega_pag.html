@@ -20,7 +20,9 @@
     {% endif %}
   </div>
 
-  <div class="d-flex align-items-center gap-2">
+  {# 📱 2026-11-05 (REGLA #61): `flex-wrap` — a 390 px este grupo medía 418 px y «Siguiente» quedaba cortado fuera de la pantalla (lo tapaba el
+     overflow:hidden de la tabla). `rb-pag` le da a los botones 44 px en el celular (CSS del panel de Bodega). #}
+  <div class="d-flex flex-wrap align-items-center gap-2 rb-pag">
     <select class="form-select form-select-sm" style="width:auto;font-size:.78rem"
             onchange="location.href='?bpage=1&bsize=' + this.value + '{{ _b_filtros }}{{ _b_keep }}#bodega'">
       <option value="100" {% if bod_page_size == 100 %}selected{% endif %}>100 por pagina</option>

@@ -36,6 +36,53 @@
   .rb-table{border-collapse:separate;border-spacing:0}
   .rb-table thead th{position:sticky;top:0;z-index:5;box-shadow:0 2px 4px rgba(0,0,0,.08)}
 }
+/* ═══ REPUESTOS EN EL CELULAR (2026-11-05, REGLA #61) ═══════════════════════
+   La tabla de 11 columnas (1313 px reales a 390 px de pantalla) se deslizaba 964 px por dentro: en un celular se veía el SKU y la descripción.
+   Bajo 768 px cada repuesto pasa a UNA tarjeta con las MISMAS celdas (REGLA #4.2: no se quita nada) y cada dato lleva su rótulo. El escritorio no
+   cambia: todo va dentro de este @media y bajo `.rb-table`. La celda de Costo sigue existiendo solo si `not oculta_proveedores` (REGLAS #19 y #26:
+   un técnico nunca ve costos ni proveedores; el dato no llega al navegador). El encabezado no ordena nada, así que sus rótulos pasan a cada celda. */
+@media (max-width:767.98px){
+  .rb-table-wrap:has(> .rb-table-scroll){background:transparent;border:0;border-radius:0;overflow:visible}
+  .rb-table-scroll{overflow:visible}
+  .rb-table{display:block;width:100%}
+  .rb-table thead{display:none}
+  .rb-table tbody{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:10px}
+  .rb-table tbody tr{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px 10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .rb-table tbody tr.rb-bajo-min{border-color:#fca5a5}
+  .rb-table tbody td{display:block;min-width:0;padding:0;border:0 !important}
+  /* orden visual: [casillero][SKU][acciones] / [descripción] / [cantidad][stock][ubicación] / [costo][marca] / [modelos] / [asociado] */
+  .rb-table tbody td.rb-c-chk{order:1;flex:0 0 auto}
+  .rb-table tbody td.rb-c-sku{order:2;flex:1 1 0}
+  .rb-table tbody td.rb-c-acc{order:3;flex:0 0 auto}
+  .rb-table tbody td.rb-c-desc{order:4;flex:0 0 100%}
+  .rb-table tbody td.rb-c-cant{order:5;flex:1 1 calc(33.33% - 8px)}
+  .rb-table tbody td.rb-c-stock{order:6;flex:1 1 calc(33.33% - 8px)}
+  .rb-table tbody td.rb-c-ubi{order:7;flex:1 1 calc(33.33% - 8px)}
+  .rb-table tbody td.rb-c-costo{order:8;flex:1 1 calc(50% - 6px)}
+  .rb-table tbody td.rb-c-marca{order:9;flex:1 1 calc(50% - 6px)}
+  .rb-table tbody td.rb-c-mod{order:10;flex:0 0 100%}
+  .rb-table tbody td.rb-c-aso{order:11;flex:0 0 100%}
+  .rb-table td.rb-c-cant::before,.rb-table td.rb-c-stock::before,.rb-table td.rb-c-ubi::before,.rb-table td.rb-c-costo::before,
+  .rb-table td.rb-c-marca::before,.rb-table td.rb-c-mod::before,.rb-table td.rb-c-aso::before{display:block;font-size:.75rem;font-weight:800;
+    color:#6b7280;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
+  .rb-table td.rb-c-cant::before{content:"Cantidad"}
+  .rb-table td.rb-c-stock::before{content:"Stock"}
+  .rb-table td.rb-c-ubi::before{content:"Ubicación"}
+  .rb-table td.rb-c-costo::before{content:"Costo"}
+  .rb-table td.rb-c-marca::before{content:"Marca"}
+  .rb-table td.rb-c-mod::before{content:"Modelos compatibles"}
+  .rb-table td.rb-c-aso::before{content:"Asociado a"}
+  /* REGLA #3: casillero y acciones de 44 px; REGLA #61: letra de 12 px o más (varias traen tamaño en línea, de ahí el !important) */
+  .rb-table td.rb-c-chk .rb-row-check{width:22px;height:22px;accent-color:#dc2626;margin:10px}
+  .rb-table td.rb-c-acc .btn{min-height:44px;padding:0 16px}
+  .rb-table td.rb-c-stock{font-size:.75rem !important;white-space:normal}
+  .rb-table td.rb-c-sku div{font-size:.75rem !important;white-space:normal !important}
+  .rb-table .rb-chip,.rb-table .rb-bajo-min-badge{font-size:.75rem}
+  /* los chips de modelo y de cliente van completos (REGLA #15): con nowrap un modelo largo ensanchaba la tarjeta */
+  .rb-table .rb-chip{white-space:normal;overflow-wrap:anywhere;max-width:100%}
+  /* paginador (Regla #4.3): sin envolver, «Siguiente» quedaba cortado fuera de la pantalla; botones de 44 px */
+  .rb-pag .btn,.rb-pag .form-select{min-height:44px}
+}
 .rb-sku{font-family:ui-monospace,monospace;font-weight:700;color:#0a0a0a}
 .rb-chip{display:inline-block;background:#f3f4f6;color:#374151;font-size:.7rem;font-weight:600;padding:2px 9px;border-radius:50px;margin:1px 3px 1px 0;white-space:nowrap}
 .rb-chip-clase{background:#dbeafe;color:#1d4ed8}
@@ -451,19 +498,22 @@
     {% set rfotos = fotos_por_repuesto.get(r.id, []) %}
     <tr class="{{ 'rb-bajo-min' if r.bajo_minimo else '' }}" data-id="{{ r.id }}" style="cursor:pointer"
         onclick='rbAbrirEditar({{ r|tojson }}, {{ (modelos_por_repuesto.get(r.id, []))|tojson }}, {{ rfotos|tojson }})' title="Click para editar">
-      <td onclick="event.stopPropagation()"><input type="checkbox" class="rb-row-check" value="{{ r.id }}" onchange="rbUpdateBtn()"></td>
+      {# 📱 2026-11-05 (REGLA #61): cada celda lleva su clase `rb-c-*`. En escritorio no hacen nada; en el celular (CSS «REPUESTOS EN EL CELULAR»,
+         arriba) la fila pasa a ser una tarjeta y esas clases dicen dónde va cada celda. Siguen siendo las MISMAS celdas, en el mismo orden;
+         la de Costo sigue saliendo solo si `not oculta_proveedores` (REGLAS #19 y #26: un técnico nunca ve costos ni proveedores). #}
+      <td class="rb-c-chk" onclick="event.stopPropagation()"><input type="checkbox" class="rb-row-check" value="{{ r.id }}" onchange="rbUpdateBtn()"></td>
       {# 🔧 FIX 2026-09-02 (Daniel: "trazabilidad de cuando y quien agrego
          el repuesto") -- quien lo agrego, a simple vista en la tabla (el
          detalle completo con fecha+hora y la ultima edicion va en el
          modal, ver #rbTrazabilidad). Sin columna nueva -- REGLA #4.3 ya
          tiene la tabla con 10 columnas, esto va de subtitulo bajo el SKU. #}
-      <td class="rb-sku">
+      <td class="rb-sku rb-c-sku">
         {{ r.sku }}
         {% if r.created_by %}<div class="text-muted" style="font-size:.68rem;font-weight:400;white-space:nowrap">
           <i class="bi bi-person-fill"></i> {{ r.created_by }} · {{ r.created_at_corto }}
         </div>{% endif %}
       </td>
-      <td>
+      <td class="rb-c-desc">
         {# ?w=96 -> miniatura cacheada en GCS (~6 KB) en vez de la foto original de
    1600px (~156 KB). Medido: 7 filas pasaban de 1.362 KB / 4,4 s a algo
    despreciable. Es lo que hace que esto aguante 1000 productos. #}
@@ -477,22 +527,22 @@
          a float Python, y un float entero como 3.0 se imprime "3.0" tal
          cual si no se trunca explícito. round() sin decimales + int()
          asegura "3", nunca "3.0". #}
-      <td>{{ (r.cantidad|round)|int }} un.</td>
+      <td class="rb-c-cant">{{ (r.cantidad|round)|int }} un.</td>
       {# 🧾 2026-09-26 (Fase 3 -- kardex): rojo si el disponible quedó
          negativo (sobre-comprometido), ámbar si tocó el mínimo, gris
          cuando no hay nada que avisar -- mismo semáforo que ya usa
          "BAJO MÍNIMO" arriba en la fila. #}
-      <td class="text-nowrap" style="font-size:.74rem;line-height:1.5">
+      <td class="text-nowrap rb-c-stock" style="font-size:.74rem;line-height:1.5">
         <div{% if r.disponible < 0 %} style="color:#dc2626;font-weight:700"{% elif r.stock_minimo is not none and r.disponible <= r.stock_minimo %} style="color:#92400e;font-weight:700"{% endif %}>
           Disp.: {{ (r.disponible|round)|int }}
         </div>
         {% if r.comprometido %}<div class="text-muted">Comprometido: {{ (r.comprometido|round)|int }}</div>{% endif %}
         {% if r.por_llegar %}<div class="text-muted">Por llegar: {{ (r.por_llegar|round)|int }}</div>{% endif %}
       </td>
-      <td>{% if r.ubicacion_codigo %}{{ r.ubicacion_codigo }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-      {% if not oculta_proveedores %}<td>{% if r.costo_unitario %}${{ '{:,.0f}'.format(r.costo_unitario).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}</td>{% endif %}
-      <td>{% if r.marca_nombre %}{{ r.marca_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-      <td>
+      <td class="rb-c-ubi">{% if r.ubicacion_codigo %}{{ r.ubicacion_codigo }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      {% if not oculta_proveedores %}<td class="rb-c-costo">{% if r.costo_unitario %}${{ '{:,.0f}'.format(r.costo_unitario).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}</td>{% endif %}
+      <td class="rb-c-marca">{% if r.marca_nombre %}{{ r.marca_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      <td class="rb-c-mod">
         {# 2026-09-16: cada chip sabe si su modelo esta DESCONTINUADO (gris +
            archivo, viene de cat_productos via mod.descontinuado) y si fue
            escrito A MANO por un supervisor (tag "Manual", mod.origen). El
@@ -518,7 +568,7 @@
           <span class="text-muted" style="font-size:.78rem">sin asociar</span>
         {% endif %}
       </td>
-      <td>
+      <td class="rb-c-aso">
         {% if r.cliente_nombre %}<span class="rb-chip" style="background:#dcfce7;color:#166534">{{ r.cliente_nombre }}</span>{% endif %}
         {% if r.ticket_numero %}<span class="rb-chip" style="background:#fef3c7;color:#92400e">{{ r.ticket_numero }}</span>{% endif %}
         {% if not r.cliente_nombre and not r.ticket_numero %}<span class="text-muted" style="font-size:.78rem">—</span>{% endif %}
@@ -536,7 +586,7 @@
          incluido: Bootstrap/Popper solo reposiciona con CSS, no saca el
          <ul> del DOM del <td>, así que el burbujeo del click se detiene
          igual antes de llegar al <tr>. #}
-      <td class="text-nowrap" onclick="event.stopPropagation()">
+      <td class="text-nowrap rb-c-acc" onclick="event.stopPropagation()">
         <div class="dropdown">
           <button class="btn btn-sm btn-dark d-inline-flex align-items-center gap-1" type="button" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Acciones">
             Acciones<i class="bi bi-chevron-down" style="font-size:.65rem"></i>
