@@ -96,11 +96,33 @@ class TestMonitorDeTransporte(unittest.TestCase):
         self.assertIn("grid-template-columns:minmax(0,1fr)", bloques[480.0])
 
     def test_el_select_y_la_fecha_pueden_encogerse_y_son_tocables(self):
-        celu = " ".join(c for ancho, c in _bloques_media_max(MON) if ancho == 980)
-        m = re.search(r"\.tr-filter-select, \.tr-filter-date \{([^}]*)\}", celu)
+        angosto = " ".join(c for ancho, c in _bloques_media_max(MON) if ancho == 1279.98)
+        m = re.search(r"\.tr-filter-select, \.tr-filter-date \{([^}]*)\}", angosto)
         self.assertIsNotNone(m)
         self.assertIn("min-width:0", m.group(1))
-        self.assertIn("min-height:44px", m.group(1), "REGLA #3: objetivos táctiles de 44 px")
+        tactil = " ".join(c for ancho, c in _bloques_media_max(MON) if ancho == 980)
+        m = re.search(r"\.tr-filter-select, \.tr-filter-date, \.tr-filter-search input \{([^}]*)\}", tactil)
+        self.assertIsNotNone(m)
+        self.assertIn("min-height:44px", m.group(1), "REGLA #3: objetivos táctiles de 44 px (solo donde hay dedo, no con mouse)")
+
+    def test_la_fila_de_filtros_de_seis_columnas_solo_con_1280_o_mas(self):
+        """Medido en producción: la fila de 6 columnas necesita ≈1260 px; a 1000, 1100, 1180 y 1240 px la PÁGINA se corría 259, 159, 79 y 19 px."""
+        bloques = {ancho: c for ancho, c in _bloques_media_max(MON)}
+        self.assertIn(1279.98, bloques)
+        self.assertIn(".tr-filters-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }", bloques[1279.98])
+        self.assertIn(".tr-filter-search { grid-column:1 / -1; }", bloques[1279.98])
+        self.assertIn(".tr-filter-actions { grid-column:1 / -1; }", bloques[1279.98])
+        self.assertNotIn(980.0, [a for a, c in _bloques_media_max(MON) if ".tr-filters-row" in c], "el cambio de columnas ya no vive en 980 px")
+
+    def test_el_control_de_vista_no_empuja_la_pagina(self):
+        """Entre 641 y ~1100 px el grupo «Pendientes / En camino / Entregados / Todos / Problema» (976 px) corría la página 391 px a 820 px."""
+        m = re.search(r"\.tr-segment-group \{([^}]*)\}", MON)
+        self.assertIsNotNone(m)
+        self.assertIn("max-width:100%", m.group(1))
+        self.assertIn("overflow-x:auto", m.group(1))
+        b = re.search(r"\.tr-segment-btn \{([^}]*)\}", MON)
+        self.assertIn("flex:0 0 auto", b.group(1))
+        self.assertIn("white-space:nowrap", b.group(1))
 
     def test_el_escritorio_no_cambia(self):
         """La grilla de escritorio (6 columnas) sigue igual: todo lo nuevo va dentro de max-width."""
