@@ -1011,9 +1011,15 @@ _OT_COMPLETADA_MARCA_ANTIGUA = (
     _cuerpo_ot_completada("Si tienes alguna observación, responde este correo y te contactaremos a la brevedad.").replace(
         "ILUS Fitness", "ILUS Sport & Health"))
 
+# …y todavía más atrás: la fila de producción es de ANTES del renombre «Mantenciones → Servicio Técnico» (commit e45349fe), que cambió «El servicio de mantención se ha
+# completado» por «El servicio técnico se ha completado». Verificado contra la fila real (solo lectura): con estos DOS cambios de texto es idéntica, letra por letra.
+_OT_COMPLETADA_ORIGINAL_DE_PRODUCCION = (
+    _OT_COMPLETADA_MARCA_ANTIGUA[0],
+    _OT_COMPLETADA_MARCA_ANTIGUA[1].replace("El servicio técnico se ha completado", "El servicio de mantención se ha completado"))
+
 SEMILLAS_EXTRA_ANTERIORES = {
     PLANTILLA_VISITA_AGENDADA: (_VISITA_AGENDADA_V2,),
-    PLANTILLA_OT_COMPLETADA: (_OT_COMPLETADA_MARCA_ANTIGUA,),
+    PLANTILLA_OT_COMPLETADA: (_OT_COMPLETADA_MARCA_ANTIGUA, _OT_COMPLETADA_ORIGINAL_DE_PRODUCCION),
 }
 
 
