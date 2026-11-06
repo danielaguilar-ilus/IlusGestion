@@ -503,12 +503,17 @@ class TestBloquesDeValor(unittest.TestCase):
     def test_que_va_a_pasar_dice_quien_llega_a_cuantos_equipos_y_como_cierra(self):
         t = _t(O.que_esperar_html(["Trotadora ILUS Pro 9000", "Bicicleta ILUS"], ["Lenin Urbina"]))
         self.assertIn("Llegará Lenin Urbina en el horario indicado.", t)
-        self.assertIn("Trabajará en 2 equipos: Trotadora ILUS Pro 9000, Bicicleta ILUS.", t)
+        # 6-nov (Daniel: «excluye los productos de los correos… se agrandarían»): SOLO la cantidad, nunca los nombres
+        self.assertIn("Trabajará en 2 equipos.", t)
+        self.assertNotIn("Trotadora", t)
+        self.assertNotIn("Bicicleta", t)
         self.assertIn("confirmar la recepción del trabajo con tu firma", t)
-        self.assertIn("1 equipo:", _t(O.que_esperar_html(["Trotadora"], [])))                  # singular
-        self.assertIn("Nuestro equipo técnico llegará", _t(O.que_esperar_html([], [])))        # sin nombres: no se inventa
+        self.assertIn("Trabajará en 1 equipo.", _t(O.que_esperar_html(["Trotadora"], [])))     # singular
+        self.assertIn("Nuestro equipo técnico llegará", _t(O.que_esperar_html([], [])))        # sin equipos: no se inventa
         self.assertNotIn("Trabajará en", _t(O.que_esperar_html([], [])))
-        self.assertIn("y 4 más", _t(O.que_esperar_html([f"Equipo {i}" for i in range(10)], [])))
+        t24 = _t(O.que_esperar_html([f"Equipo {i}" for i in range(24)], []))                   # 24 equipos: el correo NO crece
+        self.assertIn("Trabajará en 24 equipos.", t24)
+        self.assertNotIn("Equipo 0", t24)
 
     def test_cómo_llegar_es_un_enlace_de_mapa_y_solo_con_una_direccion_real(self):
         u = O.url_mapa("Av. Demo 123, Las Condes")
@@ -538,10 +543,11 @@ class TestBloquesDeValor(unittest.TestCase):
         self.assertEqual(O.notas_html(""), "")
         self.assertEqual(O.notas_html("Cobrar $50.000 al cliente"), "")                      # si todo era plata, no se dibuja el bloque
 
-    def test_la_lista_de_equipos_cuenta_y_acota(self):
-        self.assertIn("EQUIPOS DEL TRABAJO (2)", _t(O.equipos_lista_html(["A", "B"])))
+    def test_la_lista_de_equipos_ya_no_se_dibuja_en_ningun_correo(self):
+        """Antes listaba los equipos del técnico; Daniel (6-nov) pidió excluir los productos de los correos: solo la cantidad, el detalle va en la OT."""
+        self.assertEqual(O.equipos_lista_html(["A", "B"]), "")
         self.assertEqual(O.equipos_lista_html([]), "")
-        self.assertIn("… y 3 más", _t(O.equipos_lista_html([f"E{i}" for i in range(15)])))
+        self.assertEqual(O.equipos_lista_html([f"E{i}" for i in range(15)]), "")
 
     def test_las_variables_del_cliente_y_del_tecnico_llenan_solo_lo_suyo(self):
         ot = dict(TestTextosYRegistro.OT, tipo="instalacion", descripcion="Revisar la banda.", contacto_nombre="María Pérez",
@@ -551,9 +557,10 @@ class TestBloquesDeValor(unittest.TestCase):
         for k in ("que_esperar_html", "preparacion_html"):
             self.assertTrue(cli[k], k)
             self.assertEqual(tec[k], "", k)
-        for k in ("como_llegar_html", "contacto_fila", "notas_html", "equipos_lista_html", "antes_de_salir_html"):
+        for k in ("como_llegar_html", "contacto_fila", "notas_html", "antes_de_salir_html"):
             self.assertEqual(cli[k], "", "el cliente no debe recibir " + k)
             self.assertTrue(tec[k], "el técnico debe recibir " + k)
+        self.assertEqual((cli["equipos_lista_html"], tec["equipos_lista_html"]), ("", ""))       # la lista de productos ya no va en ningún correo
 
     def test_con_el_anexo_sin_firmar_el_tecnico_no_recibe_direccion_contacto_ni_que_hacer(self):
         ot = dict(TestTextosYRegistro.OT, tipo="instalacion", descripcion="Revisar la banda.", contacto_nombre="María Pérez",
@@ -561,11 +568,13 @@ class TestBloquesDeValor(unittest.TestCase):
         v = O.variables_recordatorio(ot, F(10, 10, 0), dt.date(2026, 11, 9), para="tecnico", oculto=True)
         for k in ("como_llegar_html", "contacto_fila", "notas_html"):
             self.assertEqual(v[k], "", k)
-        self.assertTrue(v["equipos_lista_html"] and v["antes_de_salir_html"])                # lo demás sí sirve
+        self.assertEqual(v["equipos_lista_html"], "")                                          # (ya no se lista ningún producto)
+        self.assertTrue(v["antes_de_salir_html"])                                              # lo demás sí sirve
 
     def test_el_resumen_del_trabajo_de_la_ot_terminada(self):
         t = _t(C.resumen_trabajo_html({"equipos": ["Trotadora ILUS Pro 9000"], "tecnicos": ["Lenin Urbina", "Pedro Pérez"]}))
-        self.assertIn("Se atendió 1 equipo: Trotadora ILUS Pro 9000.", t)
+        self.assertIn("Se atendió 1 equipo; el detalle está en el documento.", t)
+        self.assertNotIn("Trotadora", t)                                                       # solo la cantidad (Daniel, 6-nov)
         self.assertIn("Lo realizaron: Lenin Urbina, Pedro Pérez.", t)
         self.assertIn("firmado por el técnico, por el cliente y por el responsable de Servicio Técnico", t)
         t2 = _t(C.resumen_trabajo_html({"equipos": ["A", "B", "C"], "tecnicos": []}))
@@ -588,10 +597,10 @@ class TestCorreosConValorDeExtremoAExtremo(_Base):
         w.barrer(LUN(10, 5))
         cli = w.para("contacto@gimnasio.cl")[0]
         t = _t(cli["html"])
-        for esperado in ("QUÉ VA A PASAR", "Llegará Lenin Urbina", "Trabajará en 1 equipo: Trotadora ILUS Pro 9000",
+        for esperado in ("QUÉ VA A PASAR", "Llegará Lenin Urbina", "Trabajará en 1 equipo.", "Equipos: 1 equipo",
                          "PARA DEJAR TODO LISTO", "camino de acceso", "firma"):
             self.assertIn(esperado, t, esperado)
-        for prohibido in ("Cómo llegar", "QUÉ HAY QUE HACER", "Revisar la banda", "50.000", "8765", "ANTES DE SALIR"):
+        for prohibido in ("Cómo llegar", "QUÉ HAY QUE HACER", "Revisar la banda", "50.000", "8765", "ANTES DE SALIR", "Trotadora ILUS Pro 9000"):
             self.assertNotIn(prohibido, t, prohibido)
         self.assertNotIn("google.com/maps", cli["html"])
 
@@ -601,8 +610,10 @@ class TestCorreosConValorDeExtremoAExtremo(_Base):
         tec = w.para("lenin@sphs.cl")[0]
         t = _t(tec["html"])
         for esperado in ("Cómo llegar", "Contacto en terreno: María Pérez · +56 9 8765 4321", "QUÉ HAY QUE HACER", "Revisar la banda de la trotadora",
-                         "EQUIPOS DEL TRABAJO (1)", "ANTES DE SALIR", "foto del antes y del después"):
+                         "Equipos: 1 equipo", "ANTES DE SALIR", "foto del antes y del después"):
             self.assertIn(esperado, t, esperado)
+        self.assertNotIn("EQUIPOS DEL TRABAJO", t)                                             # sin la lista de productos (Daniel, 6-nov)
+        self.assertNotIn("Trotadora ILUS Pro 9000", t)
         self.assertIn("https://www.google.com/maps/search/?api=1&amp;query=", tec["html"])     # el & del enlace va escapado en el HTML
         self.assertNotIn("50.000", t)                                                          # la plata de la descripción no llega al técnico
         self.assertNotRegex(t, PLATA)

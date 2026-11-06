@@ -247,7 +247,8 @@ class TestContenido(unittest.TestCase):
         self.assertEqual(v["link_ot"], "https://app.ilus.cl/ot/301")          # la ficha NUEVA, no /mantenciones/ot/
         self.assertEqual(v["fecha"], "22/10/2026")
         self.assertEqual(v["horario"], "09:00 – 11:00")
-        self.assertIn("Trotadora ILUS Pro 9000", v["maquina"])
+        self.assertEqual(v["maquina"], "2 equipos")                          # SOLO la cantidad: el detalle va en la OT (Daniel, 6-nov)
+        self.assertNotIn("Trotadora", v["maquina"])
         self.assertEqual(v["nombre_tecnico"], "Ana Pérez")
 
     def test_lo_que_escribe_una_persona_va_escapado(self):
@@ -561,7 +562,8 @@ class TestPuntoUnico(unittest.TestCase):
         self.assertIn("09:00 – 11:00", o["html"])
         self.assertIn("Av. Vicuña Mackenna 1000", o["html"])                        # dirección
         self.assertIn("Instalación", o["html"])                                     # tipo
-        self.assertIn("Trotadora ILUS Pro 9000", o["html"])                         # equipos
+        self.assertIn("2 equipos", o["html"])                                       # equipos: solo la cantidad (Daniel, 6-nov)
+        self.assertNotIn("Trotadora ILUS Pro 9000", o["html"])
         self.assertIn("Ver orden de trabajo", o["html"])
         self.assertEqual([x[2] for x in self.m.logs], ["aviso_tecnico", "aviso_tecnico"])   # bitácora de la OT
 

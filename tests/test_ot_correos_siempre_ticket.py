@@ -32,8 +32,7 @@ class TestElTextoVigente(unittest.TestCase):
         for slug in _CLIENTE:
             asunto, cuerpo = _semilla(slug)
             t = _t(cuerpo)
-            self.assertIn("crea un ticket de soporte", t.lower(), slug)
-            self.assertIn("«Crear ticket de soporte»", t, slug)                 # el nombre exacto del botón del pie
+            self.assertIn("crea un ticket de soporte con el botón de abajo", t.lower(), slug)       # el botón es el del pie de TODO correo (6-nov: frase corta)
             self.assertIsNone(_RESPONDER.search(t), (slug, _RESPONDER.search(t)))
             self.assertNotIn("contacta a tu ejecutivo", t, slug)                 # tampoco una salida paralela al ticket
 
@@ -43,7 +42,7 @@ class TestElTextoVigente(unittest.TestCase):
             # la frase base (con la primera letra en minúscula o mayúscula según vaya al inicio de la oración)
             base = C.COMO_CREAR_TICKET[1:]
             self.assertIn(base, cuerpo, slug)
-        self.assertIn("Servicio Técnico", C.PORQUE_TICKET)
+        self.assertLessEqual(len(C.COMO_CREAR_TICKET), 60)                       # Daniel (6-nov): «no me gusta tanta letra»
 
     def test_el_tecnico_no_recibe_el_aviso_de_tickets(self):
         _a, cuerpo = C.SEMILLAS[C.PLANTILLA_RECORDATORIO_TECNICO]
@@ -52,16 +51,15 @@ class TestElTextoVigente(unittest.TestCase):
 
     def test_el_recordatorio_se_lee_bien_de_corrido(self):
         t = _t(C.SEMILLAS[C.PLANTILLA_RECORDATORIO][1])
-        self.assertIn("¿Necesitas cambiar la fecha o el acceso? Crea un ticket de soporte con el botón «Crear ticket de soporte» que está al final de este "
-                      "correo y lo coordinamos con tiempo: así tu solicitud queda registrada y la atiende nuestro equipo de Servicio Técnico.", t)
+        self.assertIn("¿Necesitas cambiar la fecha o el acceso? Crea un ticket de soporte con el botón de abajo.", t)
 
     def test_la_terminada_y_la_creada_se_leen_bien_de_corrido(self):
         t = _t(C.SEMILLAS[C.PLANTILLA_TERMINADA][1])
-        self.assertIn("Si algo no calza o tienes una consulta, crea un ticket de soporte con el botón «Crear ticket de soporte» que está al final de este "
-                      "correo: así tu solicitud queda registrada y la atiende nuestro equipo de Servicio Técnico.", t)
+        self.assertIn("¿Algo no calza? Crea un ticket de soporte con el botón de abajo.", t)
         t = _t(C.SEMILLAS_EXTRA[C.PLANTILLA_VISITA_AGENDADA][1])
-        self.assertIn("Si necesitas reagendar o cancelar, crea un ticket de soporte con el botón «Crear ticket de soporte» que está al final de este correo",
-                      t)
+        self.assertIn("¿Necesitas reagendar o cancelar? Crea un ticket de soporte con el botón de abajo.", t)
+        t = _t(C.SEMILLAS_EXTRA[C.PLANTILLA_OT_COMPLETADA][1])
+        self.assertIn("Si tienes alguna observación, crea un ticket de soporte con el botón de abajo.", t)
 
     def test_el_correo_armado_con_datos_no_deja_variables_sueltas_ni_la_frase_vieja(self):
         v = C.variables_ot({"id": 1, "numero_ot": "OT-1", "cliente": "Gimnasio Demo", "equipos": ["Trotadora"], "tecnicos": ["Lenin"]})
@@ -84,8 +82,9 @@ class TestLasVersionesAnterioresSeConservan(unittest.TestCase):
             self.assertEqual(sin_pie(v3[1]), sin_pie(C.SEMILLAS[slug][1]), slug)
 
     def test_la_v2_de_ot_creada_decia_responde_y_esta_en_la_cadena_extra(self):
-        self.assertEqual(C.SEMILLAS_EXTRA_ANTERIORES[C.PLANTILLA_VISITA_AGENDADA], (C._VISITA_AGENDADA_V2,))
+        self.assertEqual(C.SEMILLAS_EXTRA_ANTERIORES[C.PLANTILLA_VISITA_AGENDADA], (C._VISITA_AGENDADA_V2, C._VISITA_AGENDADA_V3))
         self.assertIsNotNone(_RESPONDER.search(_t(C._VISITA_AGENDADA_V2[1])))
+        self.assertIsNone(_RESPONDER.search(_t(C._VISITA_AGENDADA_V3[1])))                      # la v3 ya mandaba al ticket, con la frase larga
 
     def test_las_semillas_extra_nuevas_estan_en_el_orden_y_con_las_variables_correctas(self):
         self.assertEqual(set(C.SEMILLAS_EXTRA), {C.PLANTILLA_VISITA_AGENDADA, C.PLANTILLA_OT_COMPLETADA})
@@ -102,7 +101,8 @@ class TestLaOtCompletadaSigueSiendoLaOriginalSalvoElTicket(unittest.TestCase):
         antes = C._cuerpo_ot_completada("Si tienes alguna observación, responde este correo y te contactaremos a la brevedad.")
         n = lambda s: s.replace("\r\n", "\n").strip()
         self.assertEqual(n(antes), n(cuerpo))
-        self.assertEqual(asunto, C.SEMILLAS_EXTRA[C.PLANTILLA_OT_COMPLETADA][0])
+        self.assertEqual(asunto, C._OT_COMPLETADA_MARCA_ANTIGUA[0])                           # el asunto ORIGINAL decía «OT {{ot}}» (6-nov: ya no: el número trae «OT-»)
+        self.assertEqual(C.SEMILLAS_EXTRA[C.PLANTILLA_OT_COMPLETADA][0], "{{ot}} completada — Reporte adjunto")
         # y la nueva solo cambia la última frase
         nuevo = C.SEMILLAS_EXTRA[C.PLANTILLA_OT_COMPLETADA][1]
         self.assertEqual(n(nuevo).split("Gracias por confiar")[0], n(cuerpo).split("Gracias por confiar")[0])
@@ -141,6 +141,22 @@ class TestLaActualizacionAlArrancar(unittest.TestCase):
         for s, p in self._ups(w):
             self.assertIn("AND cuerpo=%s", s)
             self.assertEqual(p[2], "sistema")
+
+    def test_las_versiones_de_ayer_con_la_frase_larga_pasan_a_la_corta(self):
+        """6-nov (Daniel: «no me gusta tanta letra»): lo que quedó sembrado con la frase larga del ticket (#283–#286) pasa al pie corto si nadie lo editó."""
+        w = self._mundo()
+        self._poner(w, C.PLANTILLA_TERMINADA, *C._TERMINADA_V4)
+        self._poner(w, C.PLANTILLA_RECORDATORIO, *C._RECORDATORIO_V4)
+        self._poner(w, C.PLANTILLA_VISITA_AGENDADA, *C._VISITA_AGENDADA_V3)
+        self._poner(w, C.PLANTILLA_OT_COMPLETADA, *C._OT_COMPLETADA_V2)
+        w.f("_ensure_comm_template_ot_comunicacion")()
+        nuevos = {p[1] for _s, p in self._ups(w)}
+        for slug in (C.PLANTILLA_TERMINADA, C.PLANTILLA_RECORDATORIO, C.PLANTILLA_VISITA_AGENDADA, C.PLANTILLA_OT_COMPLETADA):
+            self.assertIn(_semilla(slug)[1], nuevos, slug)
+        self.assertEqual(len(self._ups(w)), 4)
+        # el asunto de «OT completada» también pierde el «OT» doble
+        asuntos = {p[0] for _s, p in self._ups(w)}
+        self.assertIn("{{ot}} completada — Reporte adjunto", asuntos)
 
     def test_la_ot_creada_en_v2_pasa_a_la_v3(self):
         w = self._mundo()
@@ -231,7 +247,7 @@ class TestElCorreoQueLlegaAlCliente(unittest.TestCase):
         enviados = w.para("contacto@gimnasio.cl")
         self.assertTrue(enviados)
         t = _t(enviados[0]["html"])
-        self.assertIn("Crea un ticket de soporte con el botón «Crear ticket de soporte»", t)
+        self.assertIn("Crea un ticket de soporte con el botón de abajo", t)
         self.assertIsNone(_RESPONDER.search(t))
         # el técnico recibe el suyo, sin tickets
         th = _t(w.para("lenin@sphs.cl")[0]["html"])

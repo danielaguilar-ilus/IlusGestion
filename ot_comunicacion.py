@@ -625,15 +625,14 @@ def _plural(n, uno, varios):
 
 
 def resumen_trabajo_html(ot, tecnicos_nombres=None):
-    """«Resumen del trabajo» del correo de OT terminada: cuántos equipos se atendieron (con sus nombres), quién lo hizo y que el documento quedó
-    firmado por las tres partes. Solo se manda cuando el documento está completo (`documento_listo`), así que la última línea es verdad."""
+    """«Resumen del trabajo» del correo de OT terminada: cuántos equipos se atendieron (SOLO la cantidad: los nombres van en el documento; Daniel, 6-nov),
+    quién lo hizo y que el documento quedó firmado por las tres partes. Solo se manda cuando el documento está completo (`documento_listo`), así que la
+    última línea es verdad."""
     equipos = [str(e).strip() for e in (ot.get("equipos") or []) if str(e or "").strip()]
     personas = [str(n).strip() for n in (tecnicos_nombres if tecnicos_nombres is not None else ot.get("tecnicos") or []) if str(n or "").strip()]
     lineas = []
     if equipos:
-        tope = 8
-        nombres = ", ".join(equipos[:tope]) + (f" y {len(equipos) - tope} más" if len(equipos) > tope else "")
-        lineas.append(f"Se {_plural(len(equipos), 'atendió', 'atendieron')} {len(equipos)} {_plural(len(equipos), 'equipo', 'equipos')}: {nombres}.")
+        lineas.append(f"Se {_plural(len(equipos), 'atendió', 'atendieron')} {len(equipos)} {_plural(len(equipos), 'equipo', 'equipos')}; el detalle está en el documento.")
     if personas:
         lineas.append(f"{'Lo realizó' if len(personas) == 1 else 'Lo realizaron'}: {', '.join(personas)}.")
     lineas.append("El documento quedó firmado por el técnico, por el cliente y por el responsable de Servicio Técnico.")
@@ -873,8 +872,20 @@ _RECORDATORIO_V3 = (
 
 # REGLA #62 (5-nov-2026): al cliente SIEMPRE se le indica crear un ticket de soporte (el botón «Crear ticket de soporte» va al final de TODO correo de ILUS,
 # `_ilus_email_master`), nunca «responde este correo»: el ticket deja la solicitud registrada y la atiende el equipo. Una frase única para todas las plantillas.
-COMO_CREAR_TICKET = "crea un ticket de soporte con el botón «Crear ticket de soporte» que está al final de este correo"
-PORQUE_TICKET = "así tu solicitud queda registrada y la atiende nuestro equipo de Servicio Técnico"
+# 6-nov-2026 (Daniel: «no me gusta tanta letra»; «nunca se responde al correo»): la frase pasó a su versión CORTA. La larga de ayer (v4) queda abajo, congelada, solo
+# para reconocer las plantillas que quedaron sembradas con ella y actualizarlas si nadie las editó.
+COMO_CREAR_TICKET = "crea un ticket de soporte con el botón de abajo"
+_COMO_CREAR_TICKET_V4 = "crea un ticket de soporte con el botón «Crear ticket de soporte» que está al final de este correo"
+_PORQUE_TICKET_V4 = "así tu solicitud queda registrada y la atiende nuestro equipo de Servicio Técnico"
+
+_TERMINADA_V4 = (
+    "Tu orden de trabajo {{ot}} quedó terminada",
+    _cuerpo_terminada("El enlace es personal y se mantiene disponible por {{dias_vigencia}} días. Si algo no calza o tienes una consulta, "
+                      + _COMO_CREAR_TICKET_V4 + ": " + _PORQUE_TICKET_V4 + "."))
+_RECORDATORIO_V4 = (
+    "Recordatorio: tu visita técnica es {{dia}} ({{ot}})",
+    _cuerpo_recordatorio("¿Necesitas cambiar la fecha o el acceso? " + _COMO_CREAR_TICKET_V4[0].upper() + _COMO_CREAR_TICKET_V4[1:]
+                         + " y lo coordinamos con tiempo: " + _PORQUE_TICKET_V4 + "."))
 
 
 def invitacion_html():
@@ -889,11 +900,11 @@ SEMILLAS = {
     # v4 (5-nov-2026, Daniel: «siempre crear un ticket»): el pie manda al ticket, nunca a «responde este correo».
     PLANTILLA_TERMINADA: (
         "Tu orden de trabajo {{ot}} quedó terminada",
-        _cuerpo_terminada("El enlace es personal y se mantiene disponible por {{dias_vigencia}} días. Si algo no calza o tienes una consulta, "
-                          + COMO_CREAR_TICKET + ": " + PORQUE_TICKET + ".")),
+        _cuerpo_terminada("El enlace es personal y está disponible por {{dias_vigencia}} días. ¿Algo no calza? "
+                          + COMO_CREAR_TICKET[0].upper() + COMO_CREAR_TICKET[1:] + ".")),
     # Al equipo (quien creó la OT, el ejecutivo o el responsable): qué pasó y qué se envió.
     PLANTILLA_TERMINADA_INTERNO: (
-        "OT {{ot}} terminada · {{cliente}}",
+        "{{ot}} terminada · {{cliente}}",
         _p("{{saludo}}")
         + _p("La orden de trabajo <strong>{{ot}}</strong> quedó <strong>terminada y cerrada</strong>. El cierre lo aprobó {{aprobado_por}} "
              "el {{cerrada_en}}.")
@@ -902,7 +913,7 @@ SEMILLAS = {
         + _boton("Ver la OT", "{{link_ot}}")),
     # Al técnico que la hizo: su copia, SIN montos ni proveedores.
     PLANTILLA_TERMINADA_TECNICO: (
-        "OT {{ot}} terminada — gracias",
+        "{{ot}} terminada — gracias",
         _p("{{saludo}}")
         + _p("La orden de trabajo <strong>{{ot}}</strong> que realizaste quedó <strong>cerrada y aprobada</strong>. Gracias por el trabajo.")
         + _tabla("#16a34a", _FILAS)
@@ -922,8 +933,7 @@ SEMILLAS = {
     # v4 (5-nov-2026, Daniel: «siempre crear un ticket»): cambiar la fecha o el acceso se pide con un ticket.
     PLANTILLA_RECORDATORIO: (
         "Recordatorio: tu visita técnica es {{dia}} ({{ot}})",
-        _cuerpo_recordatorio("¿Necesitas cambiar la fecha o el acceso? " + COMO_CREAR_TICKET[0].upper() + COMO_CREAR_TICKET[1:]
-                             + " y lo coordinamos con tiempo: " + PORQUE_TICKET + ".")),
+        _cuerpo_recordatorio("¿Necesitas cambiar la fecha o el acceso? " + COMO_CREAR_TICKET[0].upper() + COMO_CREAR_TICKET[1:] + ".")),
     # Al TÉCNICO (o a la empresa externa): su recordatorio, SIN montos ni proveedores. La dirección, el contacto y «qué hay que hacer» los reemplaza
     # el código mientras el Anexo no esté firmado. v2 (5-nov-2026): con «Cómo llegar», el contacto en terreno, lo que hay que hacer, la lista de
     # equipos y «Antes de salir».
@@ -944,8 +954,8 @@ SEMILLAS = {
 
 # slug → versiones anteriores sin editar que el arranque puede reemplazar por la vigente (ver `_ensure_comm_template_ot_comunicacion`).
 SEMILLAS_ANTERIORES = {
-    PLANTILLA_TERMINADA: (_TERMINADA_V1, _TERMINADA_V2, _TERMINADA_V3),
-    PLANTILLA_RECORDATORIO: (_RECORDATORIO_V1, _RECORDATORIO_V2, _RECORDATORIO_V3),
+    PLANTILLA_TERMINADA: (_TERMINADA_V1, _TERMINADA_V2, _TERMINADA_V3, _TERMINADA_V4),
+    PLANTILLA_RECORDATORIO: (_RECORDATORIO_V1, _RECORDATORIO_V2, _RECORDATORIO_V3, _RECORDATORIO_V4),
     PLANTILLA_RECORDATORIO_TECNICO: (_RECORDATORIO_TECNICO_V1,),
 }
 
@@ -994,13 +1004,21 @@ _VISITA_AGENDADA_V2 = (
     "Tu visita técnica está agendada — {{ot}} ({{fecha}})",
     _cuerpo_visita_agendada("Si necesitas reagendar o cancelar, responde este correo o contacta a tu ejecutivo."))
 
+# v3 de «OT creada» y v2 de «OT completada» (#283–#286, 5-nov): su pie ya mandaba al ticket pero con una frase LARGA; la de hoy es corta (Daniel, «no me gusta tanta letra»).
+_VISITA_AGENDADA_V3 = (
+    "Tu visita técnica está agendada — {{ot}} ({{fecha}})",
+    _cuerpo_visita_agendada("Si necesitas reagendar o cancelar, " + _COMO_CREAR_TICKET_V4 + ": " + _PORQUE_TICKET_V4 + "."))
+_OT_COMPLETADA_V2 = (
+    "OT {{ot}} completada — Reporte adjunto",
+    _cuerpo_ot_completada("Si tienes alguna observación, " + _COMO_CREAR_TICKET_V4 + " y te contactaremos a la brevedad."))
+
 SEMILLAS_EXTRA = {
     PLANTILLA_VISITA_AGENDADA: (
         "Tu visita técnica está agendada — {{ot}} ({{fecha}})",
-        _cuerpo_visita_agendada("Si necesitas reagendar o cancelar, " + COMO_CREAR_TICKET + ": " + PORQUE_TICKET + ".")),
+        _cuerpo_visita_agendada("¿Necesitas reagendar o cancelar? " + COMO_CREAR_TICKET[0].upper() + COMO_CREAR_TICKET[1:] + ".")),
     PLANTILLA_OT_COMPLETADA: (
-        "OT {{ot}} completada — Reporte adjunto",
-        _cuerpo_ot_completada("Si tienes alguna observación, " + COMO_CREAR_TICKET + " y te contactaremos a la brevedad.")),
+        "{{ot}} completada — Reporte adjunto",
+        _cuerpo_ot_completada("Si tienes alguna observación, " + COMO_CREAR_TICKET + ".")),
 }
 # Versiones de SEMILLAS_EXTRA que ya estuvieron sembradas y que NO son la original de `app.py` (esa la agrega el arranque al principio de la cadena).
 # «OT completada» tal como quedó sembrada en producción ANTES del rebrand (commit 5df79308 cambió «ILUS Sport & Health» por «ILUS Fitness» solo en la semilla del
@@ -1018,8 +1036,8 @@ _OT_COMPLETADA_ORIGINAL_DE_PRODUCCION = (
     _OT_COMPLETADA_MARCA_ANTIGUA[1].replace("El servicio técnico se ha completado", "El servicio de mantención se ha completado"))
 
 SEMILLAS_EXTRA_ANTERIORES = {
-    PLANTILLA_VISITA_AGENDADA: (_VISITA_AGENDADA_V2,),
-    PLANTILLA_OT_COMPLETADA: (_OT_COMPLETADA_MARCA_ANTIGUA, _OT_COMPLETADA_ORIGINAL_DE_PRODUCCION),
+    PLANTILLA_VISITA_AGENDADA: (_VISITA_AGENDADA_V2, _VISITA_AGENDADA_V3),
+    PLANTILLA_OT_COMPLETADA: (_OT_COMPLETADA_MARCA_ANTIGUA, _OT_COMPLETADA_ORIGINAL_DE_PRODUCCION, _OT_COMPLETADA_V2),
 }
 
 
