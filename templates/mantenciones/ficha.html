@@ -259,8 +259,9 @@
 {# ── Tabs ───────────────────────────────────────────
    2026-11-05 (Daniel: «ese módulo es viejo, quisiera enchularlo y AHORRAR PESTAÑAS»): las 15 pestañas de abajo se agrupan en 5 SECCIONES, sin quitar
    ninguna (REGLA #4.2). static/ficha_grupos.js MUEVE los botones originales (con sus ids, contadores y eventos) a los chips de su sección y envuelve
-   switchTab(); «Vista clásica» devuelve la barra de 15 pestañas tal cual. El script de abajo solo marca la vista ANTES de pintar (sin parpadeo). #}
-<script>try{if(window.localStorage.getItem('ficha_vista')!=='clasica')document.documentElement.classList.add('fg-nueva');}catch(e){document.documentElement.classList.add('fg-nueva');}</script>
+   switchTab(). 2026-11-06 (Daniel: «no me gustaron… necesito todo ordenado como estaba antes»): la barra de 15 pestañas de siempre es la vista POR OMISIÓN;
+   «Vista nueva» (opcional) agrupa en 5 secciones. El script de abajo solo marca la vista ANTES de pintar (sin parpadeo); sin almacenamiento = clásica. #}
+<script>try{if(window.localStorage.getItem('ficha_vista_2')==='nueva')document.documentElement.classList.add('fg-nueva');}catch(e){}</script>
 <div class="ficha-tabs-wrap" style="border-radius:0 0 0 0">
   <div class="fg-top">
     <div class="fg" id="fgNav" role="tablist" aria-label="Secciones de la ficha del cliente">
@@ -270,7 +271,7 @@
       <button type="button" class="fg-btn" id="fgBtn-comercial" data-grupo="comercial" role="tab" aria-selected="false"><i class="bi bi-receipt" aria-hidden="true"></i><span>Comercial</span></button>
       <button type="button" class="fg-btn" id="fgBtn-comunicacion" data-grupo="comunicacion" role="tab" aria-selected="false"><i class="bi bi-chat-dots" aria-hidden="true"></i><span>Comunicación</span></button>
     </div>
-    <button type="button" class="fg-vista" id="fgVista" data-vista="nueva" title="Volver a la barra de 15 pestañas de siempre"><i class="bi bi-layout-text-sidebar" aria-hidden="true"></i><span>Vista clásica</span></button>
+    <button type="button" class="fg-vista" id="fgVista" data-vista="clasica" title="Agrupar las pestañas en 5 secciones"><i class="bi bi-grid-1x2" aria-hidden="true"></i><span>Vista nueva</span></button>
   </div>
   <div class="fg-subs" id="fgSubs">
     <div class="fg-sub" data-grupo="resumen" role="tablist" aria-label="Resumen"></div>

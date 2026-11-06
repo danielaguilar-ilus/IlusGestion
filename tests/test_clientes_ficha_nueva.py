@@ -95,8 +95,15 @@ class TestEstructura(unittest.TestCase):
         self.assertLess(FICHA.index("filename='tickets_ficha.js'"), FICHA.index("filename='ficha_grupos.js'"))
         # la vista se marca ANTES de pintar la barra (sin parpadeo) y con try/catch (sin almacenamiento no se rompe)
         pre = FICHA[:FICHA.index('<div class="ficha-tabs-wrap"')]
-        self.assertIn("getItem('ficha_vista')!=='clasica'", pre)
-        self.assertIn("catch(e)", pre[pre.index("ficha_vista"):])
+        # 6-nov (Daniel: «necesito todo ordenado como estaba antes»): la barra de 15 de siempre es la de OMISIÓN; solo «nueva» agrupa. Clave nueva (`_2`).
+        self.assertIn("getItem('ficha_vista_2')==='nueva'", pre)
+        self.assertIn("catch(e)", pre[pre.index("ficha_vista_2"):])
+        self.assertNotIn("getItem('ficha_vista')", FICHA)                           # la clave de la primera noche ya no cuenta
+        self.assertIn("var KEY_VISTA = 'ficha_vista_2';", JS_GRUPOS)
+        self.assertIn("function vistaActual() { return lsGet(KEY_VISTA) === 'nueva' ? 'nueva' : 'clasica'; }", JS_GRUPOS)
+        # el botón de la página nace con el texto de la vista de partida (clásica → ofrece la nueva), sin esperar al JS
+        self.assertIn('id="fgVista" data-vista="clasica"', FICHA)
+        self.assertIn("<span>Vista nueva</span>", FICHA[FICHA.index('id="fgVista"'):FICHA.index('id="fgVista"') + 400])
 
     def test_sin_popups_nativos_y_con_almacenamiento_protegido(self):
         for nombre, src in (("ficha_grupos.js", JS_GRUPOS),):
@@ -120,7 +127,7 @@ class TestEstructura(unittest.TestCase):
 def _barra_renderizada():
     """El bloque de la barra de pestañas de ficha.html (de `ficha-tabs-wrap` hasta la primera pestaña), renderizado con Jinja y datos de mentira."""
     import jinja2
-    ini = FICHA.index("<script>try{if(window.localStorage.getItem('ficha_vista')")
+    ini = FICHA.index("<script>try{if(window.localStorage.getItem('ficha_vista_2')")
     marca = FICHA.index("TAB: ★ VIDA DEL CLIENTE")
     fin = FICHA.rfind("{#", 0, marca)
     bloque = FICHA[ini:fin]
@@ -188,7 +195,8 @@ class TestNavegadorReal(unittest.TestCase):
         finally:
             cls._pw.stop()
 
-    def abrir(self, ancho=1280, vista=None, storage=None, html=None, limpiar=True):
+    def abrir(self, ancho=1280, vista="nueva", storage=None, html=None, limpiar=True):
+        """`vista="nueva"` por omisión: casi todas las pruebas miran la vista agrupada, que ahora hay que pedir; `vista=None` = sin nada guardado (la de verdad)."""
         type(self).html_actual = html or self.html_base
         pg = self.pg
         pg.set_viewport_size({"width": ancho, "height": 900})
@@ -196,14 +204,46 @@ class TestNavegadorReal(unittest.TestCase):
         if limpiar:
             pg.evaluate("localStorage.clear()")
             if vista:
-                pg.evaluate("localStorage.setItem('ficha_vista', %r)" % vista)
+                pg.evaluate("localStorage.setItem('ficha_vista_2', %r)" % vista)
             for k, v in (storage or {}).items():
                 pg.evaluate("localStorage.setItem(%r, %r)" % (k, v))
             pg.reload()
         return pg
 
-    # ── agrupar ──
-    def test_por_omision_las_pestanas_van_en_cinco_secciones(self):
+    # ── por omisión: la barra de 15 de siempre (Daniel, 6-nov) ──
+    def test_por_omision_la_ficha_abre_con_las_15_pestanas_de_siempre_en_su_orden(self):
+        pg = self.abrir(vista=None)                                                  # nada guardado en el navegador
+        self.assertNotIn("fg-nueva", pg.evaluate("document.documentElement.className"))
+        orden = pg.evaluate("[...document.querySelectorAll('.ficha-tabs .ftab-btn')].map(b => b.dataset.tab)")
+        self.assertEqual(orden, TABS_DE_SIEMPRE)
+        self.assertEqual(pg.locator(".fg-sub .ftab-btn").count(), 0)
+        self.assertEqual(pg.evaluate("getComputedStyle(document.getElementById('fgNav')).display"), "none")
+        self.assertEqual(pg.locator(".ficha-tabs").evaluate("e => getComputedStyle(e).display"), "flex")
+        self.assertIn("Vista nueva", pg.locator("#fgVista").inner_text())            # y ofrece la agrupada, sin imponerla
+        self.assertEqual(self.errores, [])
+        for tab in TABS_DE_SIEMPRE:                                                  # y cada pestaña conserva su onclick de siempre
+            self.assertEqual(pg.locator(".ftab-btn[data-tab=%s]" % tab).get_attribute("onclick"), ONCLICK_DE_SIEMPRE[tab], tab)
+
+    def test_la_clave_de_la_primera_noche_ya_no_agrupa(self):
+        pg = self.abrir(vista=None, storage={"ficha_vista": "nueva"})
+        self.assertNotIn("fg-nueva", pg.evaluate("document.documentElement.className"))
+        self.assertEqual(pg.locator(".ficha-tabs .ftab-btn").count(), 15)
+
+    def test_elegir_la_vista_nueva_se_recuerda_y_la_clasica_vuelve_a_ser_la_de_siempre(self):
+        pg = self.abrir(vista=None)
+        pg.click("#fgVista")
+        self.assertIn("fg-nueva", pg.evaluate("document.documentElement.className"))
+        self.assertEqual(pg.evaluate("localStorage.getItem('ficha_vista_2')"), "nueva")
+        pg.reload()
+        self.assertIn("fg-nueva", pg.evaluate("document.documentElement.className"))
+        self.assertEqual(pg.locator(".fg-btn").count(), 5)
+        self.assertIn("Vista clásica", pg.locator("#fgVista").inner_text())
+        pg.click("#fgVista")
+        self.assertNotIn("fg-nueva", pg.evaluate("document.documentElement.className"))
+        self.assertEqual(pg.locator(".ficha-tabs .ftab-btn").count(), 15)
+
+    # ── agrupar (vista nueva, opcional) ──
+    def test_con_la_vista_nueva_las_pestanas_van_en_cinco_secciones(self):
         pg = self.abrir()
         clases = pg.evaluate("document.documentElement.className")
         self.assertIn("fg-nueva", clases)
@@ -277,7 +317,7 @@ class TestNavegadorReal(unittest.TestCase):
         orden = pg.evaluate("[...document.querySelectorAll('.ficha-tabs .ftab-btn')].map(b => b.dataset.tab)")
         self.assertEqual(orden, TABS_DE_SIEMPRE)                                   # el MISMO orden de siempre
         self.assertEqual(pg.evaluate("getComputedStyle(document.getElementById('fgNav')).display"), "none")
-        self.assertEqual(pg.evaluate("localStorage.getItem('ficha_vista')"), "clasica")
+        self.assertEqual(pg.evaluate("localStorage.getItem('ficha_vista_2')"), "clasica")
         self.assertIn("Vista nueva", pg.locator("#fgVista").inner_text())
         pg.click(".ftab-btn[data-tab=documentos]")                                   # y sigue funcionando como antes
         self.assertTrue(pg.locator("#tab-documentos").evaluate("e => e.classList.contains('active')"))
@@ -297,9 +337,14 @@ class TestNavegadorReal(unittest.TestCase):
         html = self.html_base.replace("<head>", "<head>" + bloqueo, 1).replace(
             "localStorage.setItem(TAB_KEY, name);", "try{localStorage.setItem(TAB_KEY, name)}catch(e){}")
         pg = self.abrir(html=html, limpiar=False)
+        self.assertEqual(pg.locator(".ficha-tabs .ftab-btn").count(), 15)           # sin almacenamiento = la barra de siempre
+        pg.click(".ftab-btn[data-tab=visitas]")
+        self.assertEqual(pg.locator(".ftab-btn.active").get_attribute("data-tab"), "visitas")
+        pg.click("#fgVista")                                                         # alternar sin almacenamiento tampoco rompe: pasa a la nueva…
+        self.assertEqual(pg.locator(".fg-btn").count(), 5)
         pg.click("#fgBtn-servicio")
         self.assertEqual(pg.locator(".ftab-btn.active").get_attribute("data-tab"), "visitas")
-        pg.click("#fgVista")                                                         # alternar sin almacenamiento tampoco rompe
+        pg.click("#fgVista")                                                         # …y vuelve a la clásica (la vista se lee de la página)
         self.assertEqual(pg.locator(".ficha-tabs .ftab-btn").count(), 15)
 
     def test_una_pestana_nueva_que_nadie_mapeo_no_se_pierde(self):

@@ -5,13 +5,16 @@
      · `switchTab(nombre)` sigue siendo la única puerta (aquí solo se envuelve para sincronizar la sección que se resalta);
      · cada sección recuerda su última pestaña; el atajo de una sección hace `click()` sobre el botón original, así corre el mismo
        `switchTab(...)` + `cargarX()` de siempre (carga perezosa intacta);
-     · «Vista clásica» (localStorage `ficha_vista`) devuelve la barra de 15 pestañas tal cual, en su orden original.
+     · «Vista clásica» = la barra de 15 pestañas tal cual, en su orden original. 6-nov-2026 (Daniel: «no me gustaron las pestañas de los clientes… necesito todo
+       ordenado como estaba antes, veo que ahora hay muy pocas»): **la clásica es la vista POR OMISIÓN**; las 5 secciones son opcionales («Vista nueva»,
+       localStorage `ficha_vista_2` = 'nueva'). La clave subió de `ficha_vista` a `ficha_vista_2` a propósito: lo que alguien eligió con la vista nueva por
+       omisión de la primera noche no cuenta.
    Si falta la estructura (ficha vieja en caché) o algo falla, no hace nada: la barra clásica queda como estaba.
    ══════════════════════════════════════════════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
 
-  var KEY_VISTA = 'ficha_vista';          // 'clasica' | 'nueva' (por omisión, nueva)
+  var KEY_VISTA = 'ficha_vista_2';        // 'clasica' | 'nueva' (por omisión, CLÁSICA: solo 'nueva' agrupa las pestañas)
   var KEY_SUB = 'ficha_sub_';             // + id de la sección: la última pestaña que se abrió en ella
 
   // Las 5 secciones y las pestañas que contiene (data-tab de los botones de la ficha). El orden de cada lista es el de los chips.
@@ -29,7 +32,7 @@
   function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* sin almacenamiento: la ficha funciona igual */ } }
 
-  function vistaActual() { return lsGet(KEY_VISTA) === 'clasica' ? 'clasica' : 'nueva'; }
+  function vistaActual() { return lsGet(KEY_VISTA) === 'nueva' ? 'nueva' : 'clasica'; }
 
   function grupoDe(tab) {
     for (var i = 0; i < GRUPOS.length; i++) {
@@ -152,7 +155,8 @@
     var vista = document.getElementById('fgVista');
     if (vista) {
       vista.addEventListener('click', function () {
-        var nueva = vistaActual() === 'nueva' ? 'clasica' : 'nueva';
+        // La vista de AHORA se lee de la página, no del almacenamiento: sin almacenamiento (modo privado) el botón igual alterna en los dos sentidos.
+        var nueva = document.documentElement.classList.contains('fg-nueva') ? 'clasica' : 'nueva';
         lsSet(KEY_VISTA, nueva);
         aplicarVista(nueva);
         sincronizar(tabActiva());
