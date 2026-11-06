@@ -143456,9 +143456,13 @@ def _ot_recordatorio_barrido(dry=False, ahora=None, max_s=None, max_ot=40):
             fichas = (fichas_map or {}).get(vid, set())
             personas = [n for e, n in tec.items() if e not in fichas]        # el nombre de una ficha es el de un PROVEEDOR: no se muestra
             ot = {"id": vid, "numero_ot": numero, "cliente": f.get("cli_razon") or inf.get("cliente") or "",
-                  "tipo_label": inf.get("tipo_label") or "Visita", "fecha": f.get("fecha_programada"),
+                  "tipo_label": inf.get("tipo_label") or "Visita", "tipo": f.get("tipo"), "fecha": f.get("fecha_programada"),
                   "hora_inicio": f.get("hora_inicio"), "hora_fin": f.get("hora_fin"),
-                  "direccion": inf.get("direccion") or "", "equipos": equipos.get(vid, []), "tecnicos": personas}
+                  "direccion": inf.get("direccion") or "", "equipos": equipos.get(vid, []), "tecnicos": personas,
+                  # solo los usa el correo del TÉCNICO (el del cliente no los lee): qué hay que hacer y a quién ver en terreno
+                  "descripcion": inf.get("descripcion") or "",
+                  "contacto_nombre": (f.get("contacto_nombre") or f.get("cli_contacto_nombre") or ""),
+                  "contacto_tel": f.get("contacto_tel") or ""}
             ref = {"tipo": "OT", "id": vid, "codigo": numero}
             link_ot = f"{base}/ot/{vid}"
             # ── al CLIENTE: solo OT de cliente (no trabajo interno) y no la desinstalación (su aviso es el de la instalación)
@@ -143475,7 +143479,8 @@ def _ot_recordatorio_barrido(dry=False, ahora=None, max_s=None, max_ot=40):
                     ok = False
                     try:
                         vs = _orec.variables_recordatorio(
-                            ot, ini, hoy, nombre_destinatario=(contacto if d.get("origen") == "contacto_ot" else ""), link_ot="")
+                            ot, ini, hoy, nombre_destinatario=(contacto if d.get("origen") == "contacto_ot" else ""), link_ot="",
+                            para="cliente")
                         asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_RECORDATORIO, vs)
                         asunto = _brand_subject(asunto)
                         ok = bool(_send_ilus_email(
@@ -143501,7 +143506,8 @@ def _ot_recordatorio_barrido(dry=False, ahora=None, max_s=None, max_ot=40):
                     ok = False
                     try:
                         ot_t = dict(ot, direccion=(_otc.OCULTO_ANEXO if oculto else ot.get("direccion")))
-                        vs = _orec.variables_recordatorio(ot_t, ini, hoy, nombre_destinatario=nombre, link_ot=link_ot)
+                        vs = _orec.variables_recordatorio(ot_t, ini, hoy, nombre_destinatario=nombre, link_ot=link_ot,
+                                                          para="tecnico", oculto=oculto)
                         asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_RECORDATORIO_TECNICO, vs)
                         ok = bool(_ot_tec_enviar(email, _brand_subject(asunto), cuerpo, evento=_ocom.EVENTO_RECORDATORIO_TECNICO,
                                                  subtitulo=f"OT {numero}", ref=ref, correo="ot_tec_recordatorio"))
@@ -143596,6 +143602,21 @@ def _ensure_comm_template_ot_comunicacion():
                 "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) VALUES (%s,%s,'email',%s,%s)",
                 (_ocom.MODULO_PLANTILLAS, slug, asunto, cuerpo))
             sembradas += 1
+        # 2026-11-05 («que el mensaje aporte valor»): una plantilla que SIGUE EXACTAMENTE igual a su versión anterior —nadie la editó en
+        # Comunicaciones— pasa a la versión vigente (con «Resumen del trabajo», «Qué va a pasar», «Cómo llegar»…). Si una persona la tocó,
+        # queda como la dejó. El UPDATE lleva `AND cuerpo=%s`: si alguien la edita justo ahora, no se pisa.
+        for slug_a, anteriores in (getattr(_ocom, "SEMILLAS_ANTERIORES", None) or {}).items():
+            fila_a = mysql_fetchone(
+                "SELECT id, asunto, cuerpo FROM comm_templates WHERE modulo=%s AND estado=%s AND canal='email' LIMIT 1",
+                (_ocom.MODULO_PLANTILLAS, slug_a))
+            if not fila_a:
+                continue
+            _nn = lambda s: (s or "").replace("\r\n", "\n").strip()
+            if any(_nn(fila_a.get("asunto")) == _nn(a0) and _nn(fila_a.get("cuerpo")) == _nn(c0) for a0, c0 in anteriores):
+                a2, c2 = _ocom.SEMILLAS[slug_a]
+                mysql_execute("UPDATE comm_templates SET asunto=%s, cuerpo=%s, updated_by=%s WHERE id=%s AND cuerpo=%s",
+                              (a2, c2, "sistema", fila_a["id"], fila_a.get("cuerpo")))
+                print(f"[ensure_comm_tpl] '{slug_a}' (semilla anterior sin editar) pasó a la versión con más valor", flush=True)
         if sembradas:
             print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de la comunicación de la OT sembradas", flush=True)
         return sembradas

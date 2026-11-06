@@ -127,6 +127,40 @@ DEMO_EXTRA = {
     "dia": "mañana", "nombre_tecnico": "Pedro", "tecnicos": "Pedro Pérez", "tipo_mantencion": "Mantención preventiva",
     "ot": "OT-2026-00123", "cliente": "Gimnasio Demo SpA", "direccion": "Av. Demo 1234, Las Condes", "maquina": "Trotadora ILUS Pro 9000",
     "fecha": "21/10/2026", "link_ot": "https://ilusfitness.com/ot/123",
+    # Bloques de valor (5-nov-2026): solo para la vista previa, con datos de mentira.
+    "resumen_trabajo_html": ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #16a34a;'
+                             'border-radius:4px;padding:14px 18px;margin:18px 0"><tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;'
+                             'color:#6b7280;padding-bottom:6px">RESUMEN DEL TRABAJO</td></tr><tr><td style="font-size:13px;color:#444;line-height:1.6">'
+                             '<ul style="margin:0;padding-left:18px"><li>Se atendieron 2 equipos: Trotadora ILUS Pro 9000, Bicicleta estática ILUS.</li>'
+                             '<li>Lo realizó: Pedro Pérez.</li><li>El documento quedó firmado por el técnico, por el cliente y por el responsable de '
+                             'Servicio Técnico.</li></ul></td></tr></table>'),
+    "que_esperar_html": ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #0ea5e9;'
+                         'border-radius:4px;padding:14px 18px;margin:18px 0"><tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;'
+                         'color:#6b7280;padding-bottom:6px">QUÉ VA A PASAR</td></tr><tr><td style="font-size:13px;color:#444;line-height:1.6">'
+                         '<ul style="margin:0;padding-left:18px"><li>Llegará Pedro Pérez en el horario indicado.</li><li>Trabajará en 2 equipos.</li>'
+                         '<li>Al terminar, el técnico te pedirá confirmar la recepción del trabajo con tu firma.</li></ul></td></tr></table>'),
+    "preparacion_html": ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #16a34a;'
+                         'border-radius:4px;padding:14px 18px;margin:18px 0"><tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;'
+                         'color:#6b7280;padding-bottom:6px">PARA DEJAR TODO LISTO</td></tr><tr><td style="font-size:13px;color:#444;line-height:1.6">'
+                         '<ul style="margin:0;padding-left:18px"><li>Deja los equipos sin uso durante la visita y con espacio libre alrededor.</li>'
+                         '<li>Anota las fallas o ruidos que hayas notado.</li></ul></td></tr></table>'),
+    "contacto_fila": ('<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Contacto en terreno:</strong>&nbsp; '
+                      'María Pérez &middot; +56 9 1234 5678</td></tr>'),
+    "como_llegar_html": ('<p style="margin:0 0 6px;font-size:13px"><a href="https://www.google.com/maps" style="background:#0a0a0a;color:#fff;'
+                         'padding:9px 20px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block">Cómo llegar</a></p>'),
+    "notas_html": ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;border-radius:4px;'
+                   'padding:14px 18px;margin:18px 0"><tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;color:#6b7280;'
+                   'padding-bottom:6px">QUÉ HAY QUE HACER</td></tr><tr><td style="font-size:13px;color:#444;line-height:1.6">Revisión completa de la '
+                   'trotadora y lubricación de la banda.</td></tr></table>'),
+    "equipos_lista_html": ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #6b7280;'
+                           'border-radius:4px;padding:14px 18px;margin:18px 0"><tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;'
+                           'color:#6b7280;padding-bottom:6px">EQUIPOS DEL TRABAJO (2)</td></tr><tr><td style="font-size:13px;color:#444;line-height:1.6">'
+                           '<ul style="margin:0;padding-left:18px"><li>Trotadora ILUS Pro 9000</li><li>Bicicleta estática ILUS</li></ul></td></tr></table>'),
+    "antes_de_salir_html": ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #f59e0b;'
+                            'border-radius:4px;padding:14px 18px;margin:18px 0"><tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;'
+                            'color:#6b7280;padding-bottom:6px">ANTES DE SALIR</td></tr><tr><td style="font-size:13px;color:#444;line-height:1.6">'
+                            '<ul style="margin:0;padding-left:18px"><li>Revisa el checklist de cada equipo en la OT.</li>'
+                            '<li>En terreno: foto del antes y del después de cada equipo.</li></ul></td></tr></table>'),
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
