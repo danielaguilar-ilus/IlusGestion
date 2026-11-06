@@ -605,7 +605,7 @@ FUNCS_OT = (
     "ot2_api_com_vista_previa", "ot2_api_com_enviar", "_ot_com_contexto_ficha", "_ot_com_tecnicos_de_usuarios", "_ot_com_plan_creacion",
     "ot2_api_com_creacion_previa", "_ot_com_creacion_resultado", "_ensure_ot_comunicacion_tablas", "_ensure_comm_template_ot_comunicacion",
     # 6-nov-2026 (REGLA #68): la encuesta corta «¿Cómo fue tu servicio?» que llevan los correos al cliente y la tarjeta de la ficha
-    "_ensure_ot_encuesta_tabla", "_ot_encuesta_html", "_ot_encuesta_para_ficha",
+    "_ensure_ot_encuesta_tabla", "_ot_encuesta_html", "_ot_encuesta_para_ficha", "_ot_encuesta_puede_ver",
 )
 CONSTS_OT = ("_TIPO_OT_LABEL",)
 
@@ -743,6 +743,8 @@ class MundoOT:
             "_mant_log": lambda ent, eid, accion, detalle="": self.logs.append((ent, eid, accion, detalle)),
             "_render_comm_template": lambda slug, canal, variables, modulo=None: self._editor(slug, variables),
             "_es_rol_tecnico": lambda user=None: self.tecnico,
+            # 6-nov: la tarjeta de «Satisfacción» de la ficha solo se arma para quien puede verla (superadmin o permiso `mant_ot_encuesta`); aquí, un superadmin
+            "g": type("_G", (dict,), {})(permissions={"superadmin": True}),
             "_puede_ot_accion": lambda vid, accion, user=None: self.puede,
             "chile_fmt_filter": MC.chile_fmt,
         })
