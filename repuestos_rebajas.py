@@ -23,7 +23,7 @@ ARGUMENTO_MIN = 30
 ARGUMENTO_MAX = 1000
 RESOLUCION_MIN = 5
 NOTA_KARDEX_MAX = 500          # largo de mant_repuestos_movimientos.nota
-AUMENTO_MAX = 100000           # tope por pedido de aumento: evita un cero de más al teclear
+AUMENTO_MAX = 1000             # tope por pedido de aumento: evita un cero de más al teclear (Daniel, 6-nov: «un tope de 1000»)
 
 ESTADOS = ("pendiente", "aprobada", "rechazada", "anulada")
 TIPOS = ("rebaja", "aumento")
@@ -153,9 +153,10 @@ def etiqueta_doc_completa(tido, nudo):
 
 
 # ───────────────────────────── validaciones ─────────────────────────────
-def validar_pedido(saldo, cantidad, argumento, tido, nudo, tipo="rebaja"):
+def validar_pedido(saldo, cantidad, argumento, tido, nudo, tipo="rebaja", es_superadmin=False):
     """None si el pedido es válido; si no, el mensaje que se le muestra a quien lo pide (claro y accionable).
-    El documento es opcional (ver `evaluar_doc`); el argumento NO lo es, ni siquiera para el superadmin."""
+    El documento es opcional (ver `evaluar_doc`); el argumento es obligatorio para todos MENOS el superadmin (Daniel, 6-nov: «el argumento
+    no aplica» para él: es quien autoriza, así que se aplica en el acto y su nombre queda en la constancia)."""
     tipo_n = normalizar_tipo(tipo, defecto=None)
     if tipo_n is None:
         return "Indica si es una rebaja o un aumento."
@@ -170,7 +171,7 @@ def validar_pedido(saldo, cantidad, argumento, tido, nudo, tipo="rebaja"):
         return f"No se puede rebajar {c:g}: el repuesto tiene {s:g} en bodega."
     if tipo_n == "aumento" and c > AUMENTO_MAX:
         return f"El aumento máximo por pedido es {_miles(AUMENTO_MAX)} unidades (¿sobra un cero?)."
-    if len(str(argumento or "").strip()) < ARGUMENTO_MIN:
+    if not es_superadmin and len(str(argumento or "").strip()) < ARGUMENTO_MIN:
         return (f"Explica por qué se {'rebaja' if tipo_n == 'rebaja' else 'aumenta'}: el argumento necesita al menos {ARGUMENTO_MIN} "
                 "caracteres (qué pasó, con qué equipo o cliente, quién lo constató).")
     return evaluar_doc(tido, nudo)[2]
@@ -201,7 +202,7 @@ def nota_kardex(rebaja_id, pidio, autorizo, tido, nudo, argumento, auto_autoriza
     quien = (f"{p['nombre']} #{rebaja_id} {p['hecha']} por {autorizo} (superadmin)" if auto_autorizada
              else f"{p['nombre']} #{rebaja_id} {p['pedida']} por {pidio}, {p['autorizada']} por {autorizo}")
     cabeza = f"{quien} · {doc} · "
-    arg = " ".join(str(argumento or "").split())
+    arg = " ".join(str(argumento or "").split()) or "sin argumento (lo hizo el superadmin)"
     cupo = max(NOTA_KARDEX_MAX - len(cabeza), 0)
     if len(arg) > cupo:
         arg = arg[:max(cupo - 1, 0)].rstrip() + "…"

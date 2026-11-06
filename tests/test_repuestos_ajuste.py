@@ -104,11 +104,26 @@ class TestLimites(unittest.TestCase):
         self.assertIsNone(rr.validar_pedido(5, 5, ARG, "", "", "rebaja"))
 
     def test_aumento_tiene_tope_para_un_cero_de_mas(self):
-        self.assertEqual(rr.AUMENTO_MAX, 100000)
-        self.assertIsNone(rr.validar_pedido(5, 100000, ARG, "", "", "aumento"))
-        err = rr.validar_pedido(5, 100001, ARG, "", "", "aumento")
-        self.assertIn("100.000", err)
+        self.assertEqual(rr.AUMENTO_MAX, 1000)   # Daniel, 6-nov: «un tope de 1000»
+        self.assertIsNone(rr.validar_pedido(5, 1000, ARG, "", "", "aumento"))
+        err = rr.validar_pedido(5, 1001, ARG, "", "", "aumento")
+        self.assertIn("1.000", err)
         self.assertIn("cero", err)
+
+    def test_el_argumento_no_aplica_al_superadmin_pero_si_a_los_demas(self):
+        # Daniel, 6-nov: «el argumento no aplica» (para él, que es quien autoriza).
+        for tipo in ("rebaja", "aumento"):
+            self.assertIsNone(rr.validar_pedido(5, 2, "", "", "", tipo, es_superadmin=True))
+            self.assertIn("al menos 30", rr.validar_pedido(5, 2, "", "", "", tipo, es_superadmin=False))
+            self.assertIn("al menos 30", rr.validar_pedido(5, 2, "", "", "", tipo))
+        # el superadmin sigue sujeto a la cantidad, al tope y al documento
+        self.assertIn("No se puede rebajar", rr.validar_pedido(5, 6, "", "", "", "rebaja", es_superadmin=True))
+        self.assertIn("1.000", rr.validar_pedido(5, 1001, "", "", "", "aumento", es_superadmin=True))
+        self.assertIn("documento", rr.validar_pedido(5, 1, "", "GDV", "", "rebaja", es_superadmin=True))
+
+    def test_la_nota_del_kardex_sin_argumento_lo_dice(self):
+        n = rr.nota_kardex(3, "Daniel", "Daniel", "", "", "", auto_autorizada=True, tipo="rebaja")
+        self.assertIn("sin argumento", n)
 
     def test_el_aumento_no_depende_del_saldo(self):
         self.assertIsNone(rr.validar_pedido(0, 40, ARG, "", "", "aumento"))
@@ -457,11 +472,11 @@ class TestPedirRebajaYAumento(unittest.TestCase):
         m = Mundo(saldo=5)
         self.assertEqual(m.pedir("rebaja", 6, tido="", nudo="")[1], 400)
         self.assertEqual(m.pedir("rebaja", 0, tido="", nudo="")[1], 400)
-        p, st = m.pedir("aumento", 100001, tido="", nudo="")
+        p, st = m.pedir("aumento", 1001, tido="", nudo="")
         self.assertEqual(st, 400)
-        self.assertIn("100.000", p["error"])
-        self.assertEqual(m.pedir("aumento", 100000, tido="", nudo="")[1], 200)
-        self.assertEqual(m.rebajas[1]["cantidad"], 100000)
+        self.assertIn("1.000", p["error"])
+        self.assertEqual(m.pedir("aumento", 1000, tido="", nudo="")[1], 200)
+        self.assertEqual(m.rebajas[1]["cantidad"], 1000)
 
     def test_tipo_invalido_y_tipo_ausente_es_rebaja(self):
         m = Mundo()
@@ -528,8 +543,16 @@ class TestSuperadminSeReconoce(unittest.TestCase):
         self.assertEqual((st, p["estado"], m.saldo), (200, "aprobada", 0))
         self.assertIn("SIN documento de Random", m.movs[0]["nota"])
 
-    def test_el_superadmin_tambien_debe_dar_argumento(self):
+    def test_el_superadmin_no_necesita_argumento(self):
+        # Daniel, 6-nov: «el argumento no aplica» para él; la constancia dice que fue sin argumento.
         m = Mundo("Daniel", superadmin=True)
+        p, st = m.pedir("aumento", 3, argumento="", tido="", nudo="")
+        self.assertEqual((st, p["estado"], m.saldo), (200, "aprobada", 8))
+        self.assertIn("sin argumento", m.movs[0]["nota"])
+        self.assertIn("Daniel (superadmin)", m.movs[0]["nota"])
+
+    def test_quien_no_es_superadmin_sigue_necesitando_argumento(self):
+        m = Mundo("Lenin", superadmin=False)
         p, st = m.pedir("aumento", 3, argumento="cuenta física", tido="", nudo="")
         self.assertEqual(st, 400)
         self.assertEqual(m.saldo, 5)
@@ -862,6 +885,8 @@ class TestPantallaTextos(unittest.TestCase):
         self.assertIn("Como superadmin se aplica en el acto", js)
         self.assertIn("tu nombre queda en la constancia", js)
         self.assertIn("Aplicar ahora", js)
+        self.assertIn("¿Aplicar ahora?", js)          # confirmación antes de mover el stock (Daniel, 6-nov)
+        self.assertIn("opcional para ti", js)         # el argumento no aplica al superadmin
         self.assertIn("RB_ES_SUPERADMIN", js)
         self.assertIn("{% if permissions.superadmin %}", PANE)  # la tarjeta del modal de edición también lo dice
 
@@ -1043,8 +1068,8 @@ class TestNavegadorReal(unittest.TestCase):
         self.assertEqual(pg.get_attribute("#rbAjusteTipoRebaja", "aria-checked"), "false")
         self.assertIn("a aumentar", pg.inner_text("#rbAjusteCantVerbo"))
         self.assertIn("Quedarían 14 en bodega", pg.inner_text("#rbAjusteQuedan"))
-        pg.fill("#rbAjusteCant", "100001")
-        self.assertIn("100.000", pg.inner_text("#rbAjusteQuedan"))
+        pg.fill("#rbAjusteCant", "1001")
+        self.assertIn("1.000", pg.inner_text("#rbAjusteQuedan"))
         pg.click("#rbAjusteTipoRebaja")
         pg.fill("#rbAjusteCant", "2")
         self.assertIn("Quedarían 3 en bodega", pg.inner_text("#rbAjusteQuedan"))
@@ -1112,6 +1137,36 @@ class TestNavegadorReal(unittest.TestCase):
         pg = self.abrir_modal(superadmin=False)
         self.assertIn("hasta que el superadmin lo autorice", pg.inner_text("#rbAjusteAviso"))
         self.assertIn("Enviar pedido", pg.inner_text("#rbAjusteEnviar"))
+
+    def test_el_superadmin_aplica_sin_argumento_pero_confirma_antes(self):
+        # Daniel, 6-nov: argumento opcional para él + «¿Aplicar ahora?» antes de mover el stock.
+        pg = self.abrir_modal(superadmin=True)
+        pg.click("#rbAjusteTipoAumento")
+        pg.fill("#rbAjusteCant", "3")
+        self.assertIn("opcional", pg.inner_text("label[for=rbAjusteArg]"))
+        pg.click("#rbAjusteEnviar")
+        pg.wait_for_function("window.__alerts.length > 0")
+        confirms = pg.evaluate("window.__confirms")
+        self.assertEqual(len(confirms), 1)
+        self.assertEqual(confirms[0]["title"], "¿Aplicar ahora?")
+        self.assertIn("quedarían 8", confirms[0]["message"])
+        b = pg.evaluate("window.__calls.filter(c => c.b)[0].b")
+        self.assertEqual((b["tipo"], b["cantidad"], b["argumento"]), ("aumento", 3, ""))
+
+    def test_si_el_superadmin_vuelve_atras_no_se_envia_nada(self):
+        pg = self.abrir_modal(superadmin=True)
+        pg.evaluate("window.ilusConfirm = function(o){ window.__confirms = (window.__confirms || []).concat([o]); return Promise.resolve(false); }")
+        pg.fill("#rbAjusteCant", "2")
+        pg.click("#rbAjusteEnviar")
+        pg.wait_for_function("(window.__confirms || []).length > 0")
+        self.assertEqual(pg.evaluate("window.__calls.filter(c => c.b).length"), 0)
+
+    def test_quien_no_es_superadmin_no_ve_la_confirmacion(self):
+        pg = self.abrir_modal(superadmin=False)
+        self.llenar(pg, "2")
+        pg.click("#rbAjusteEnviar")
+        pg.wait_for_function("window.__alerts.length > 0")
+        self.assertEqual(pg.evaluate("(window.__confirms || []).length"), 0)
 
     def test_regla_61_el_modal_en_tres_anchos(self):
         for superadmin in (False, True):

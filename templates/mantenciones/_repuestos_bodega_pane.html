@@ -2277,7 +2277,7 @@ async function rbGuardarDesdeSolicitud(){
    acto y queda su nombre en la constancia. El servidor valida todo otra vez (repreb_pedir / repreb_resolver).
    ══════════════════════════════════════════════════════════════════════ */
 const RB_AJUSTE_TIPOS_DOC = [['FCV','Factura'],['BLV','Boleta'],['GDV','Guía de despacho'],['NVV','Nota de venta'],['FCC','Factura de compra'],['GRC','Guía de recepción']];
-const RB_AJUSTE_MAX_AUMENTO = 100000;
+const RB_AJUSTE_MAX_AUMENTO = 1000;   // Daniel, 6-nov: «un tope de 1000» (el servidor valida lo mismo: repuestos_rebajas.AUMENTO_MAX)
 let RB_AJUSTE = null, RB_AJUSTE_MODAL = null, RB_AJUSTES_LISTA = [];
 function _rbEsc(t){ return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function _rbMiles(n){ return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
@@ -2306,7 +2306,7 @@ function rbAjusteAbrir(id, sku, descripcion, saldo){
         <div class="mb-3"><label class="form-label small fw-semibold" for="rbAjusteCant">Unidades <span id="rbAjusteCantVerbo">a rebajar</span> <span class="rb-req">*</span></label>
           <input type="number" class="form-control" id="rbAjusteCant" min="1" step="1" inputmode="numeric" oninput="rbAjusteCalc()" style="min-height:44px">
           <div class="rb-aj-help" id="rbAjusteQuedan"></div></div>
-        <div class="mb-3"><label class="form-label small fw-semibold" for="rbAjusteArg">Argumento <span class="rb-req">*</span></label>
+        <div class="mb-3"><label class="form-label small fw-semibold" for="rbAjusteArg">Argumento ${RB_ES_SUPERADMIN ? '<span class="rb-aj-opc">(opcional para ti)</span>' : '<span class="rb-req">*</span>'}</label>
           <textarea class="form-control" id="rbAjusteArg" rows="4" maxlength="1000" oninput="rbAjusteContar()"
             placeholder="Qué pasó, con qué equipo o cliente, quién lo constató. Mínimo 30 caracteres."></textarea>
           <div class="rb-aj-help" id="rbAjusteContador">0 / 30 caracteres mínimos</div></div>
@@ -2333,7 +2333,7 @@ function rbAjusteAbrir(id, sku, descripcion, saldo){
   const av = document.getElementById('rbAjusteAviso');
   if (RB_ES_SUPERADMIN){
     av.className = 'rb-aj-aviso is-super';
-    av.innerHTML = '<i class="bi bi-patch-check-fill me-1"></i>Como superadmin se aplica en el acto: no se te pide autorización y tu nombre queda en la constancia (el argumento sí es obligatorio).';
+    av.innerHTML = '<i class="bi bi-patch-check-fill me-1"></i>Como superadmin se aplica en el acto: no se te pide autorización y tu nombre queda en la constancia (el argumento es opcional para ti; antes de aplicar se te pide confirmar).';
   } else {
     av.className = 'rb-aj-aviso is-pend';
     av.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>El stock no cambia hasta que el superadmin lo autorice. Queda en el kardex con quién pidió, quién autorizó, el documento (o que va sin documento) y el argumento.';
@@ -2391,6 +2391,7 @@ function rbAjusteDocCambio(){
 function rbAjusteContar(){
   const n = document.getElementById('rbAjusteArg').value.trim().length;
   const c = document.getElementById('rbAjusteContador');
+  if (RB_ES_SUPERADMIN){ c.textContent = n ? n + ' caracteres' : 'Opcional para ti: si lo dejas vacío queda «sin argumento».'; c.style.color = '#6b7280'; return; }
   c.textContent = n + ' / 30 caracteres mínimos';
   c.style.color = n >= 30 ? '#166534' : '#6b7280';
 }
@@ -2404,8 +2405,19 @@ async function rbAjusteEnviar(){
   if (!(cant > 0)){ ilusToast(esAum ? 'Indica cuántas unidades se aumentan' : 'Indica cuántas unidades se rebajan', {type:'warning'}); return; }
   if (!esAum && cant > RB_AJUSTE.saldo){ ilusToast('No puedes rebajar más de lo que hay en bodega (' + RB_AJUSTE.saldo + ')', {type:'warning'}); return; }
   if (esAum && cant > RB_AJUSTE_MAX_AUMENTO){ ilusToast('El aumento máximo por pedido es ' + _rbMiles(RB_AJUSTE_MAX_AUMENTO), {type:'warning'}); return; }
-  if (arg.length < 30){ ilusToast('El argumento necesita al menos 30 caracteres', {type:'warning'}); return; }
+  if (!RB_ES_SUPERADMIN && arg.length < 30){ ilusToast('El argumento necesita al menos 30 caracteres', {type:'warning'}); return; }
   if (tido && !nudo){ ilusToast('Indica el número del documento (o elige «Sin documento»)', {type:'warning'}); return; }
+  if (RB_ES_SUPERADMIN){
+    // Daniel, 6-nov: «sí, quiero un aplicar ahora» — el superadmin no pide autorización, pero confirma antes de mover el stock.
+    const quedan = Math.round((RB_AJUSTE.saldo + (esAum ? cant : -cant)) * 100) / 100;
+    const ok = await ilusConfirm({
+      title: '¿Aplicar ahora?',
+      message: (esAum ? 'Aumentar ' : 'Rebajar ') + cant + ' u. de ' + RB_AJUSTE.sku + '. En bodega hoy hay ' + RB_AJUSTE.saldo + ' y quedarían ' + quedan + '.',
+      sub: 'Se aplica en el acto y queda tu nombre en el kardex' + (arg ? '.' : ', sin argumento.'),
+      okLabel: 'Aplicar ahora', cancelLabel: 'Volver', danger: !esAum,
+    });
+    if (!ok) return;
+  }
   const btn = document.getElementById('rbAjusteEnviar'); btn.disabled = true;
   try{
     const r = await fetch('/mantenciones/api/repuestos-stock/' + RB_AJUSTE.id + '/rebaja', {method:'POST', headers:{'Content-Type':'application/json'},
