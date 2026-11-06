@@ -58,12 +58,13 @@ class TestSoloLaCantidad(unittest.TestCase):
 
     def test_con_24_equipos_los_bloques_no_crecen(self):
         qp = _t(O.que_esperar_html(_NOMBRES, ["Lenin"]))
-        self.assertIn("Trabajará en 24 equipos.", qp)
-        self.assertNotIn("Trotadora", qp)
+        self.assertNotIn("Trotadora", qp)                                                      # (6-nov, auditoría: la caja ya no repite cuántos equipos; lo dice la tabla)
+        self.assertNotIn("24", qp)
         self.assertEqual(O.equipos_lista_html(_NOMBRES), "")
         rt = _t(C.resumen_trabajo_html({"equipos": _NOMBRES, "tecnicos": ["Lenin"]}))
-        self.assertIn("Se atendieron 24 equipos; el detalle está en el documento.", rt)
+        self.assertIn("Documento firmado", rt)                                                 # (6-nov, auditoría: ni nombres ni cantidad; ya están en la tabla del correo)
         self.assertNotIn("Trotadora", rt)
+        self.assertNotIn("24", rt)
         self.assertLess(len(O.que_esperar_html(_NOMBRES, ["Lenin"])), len(O.que_esperar_html(["A"], ["Lenin"])) + 40)     # no crece con la cantidad
 
     def test_el_resumen_y_la_invitacion_cuentan_bien_el_texto_de_la_cantidad(self):
@@ -74,11 +75,12 @@ class TestSoloLaCantidad(unittest.TestCase):
         amb = {"_ot_com_promesas": lambda: {"recordatorio": True, "documento": True}, "_orec": O, "_ocom": C, "_otc": T}
         FC.extraer(amb, "app.py", ("_ot_com_bloques_creacion",), ())
         b = amb["_ot_com_bloques_creacion"]({"tipo": "instalacion"}, {"tecnico": "Lenin Urbina", "maquina": "24 equipos"}, con_invitacion=True)
-        self.assertIn("Trabajará en 24 equipos.", _t(b["que_esperar_html"]))
+        self.assertNotIn("Trotadora", _t(b["que_esperar_html"]))
+        self.assertIn("confirmar la recepción del trabajo con tu firma", _t(b["que_esperar_html"]))
         b1 = amb["_ot_com_bloques_creacion"]({"tipo": "instalacion"}, {"tecnico": "Lenin Urbina", "maquina": "1 equipo"}, con_invitacion=False)
-        self.assertIn("Trabajará en 1 equipo.", _t(b1["que_esperar_html"]))
+        self.assertEqual(b1["que_esperar_html"], b["que_esperar_html"])                       # igual con 1 o con 24 equipos
         b0 = amb["_ot_com_bloques_creacion"]({"tipo": "instalacion"}, {"tecnico": "Lenin Urbina", "maquina": "—"}, con_invitacion=False)
-        self.assertNotIn("Trabajará en", _t(b0["que_esperar_html"]))
+        self.assertEqual(b0["que_esperar_html"], b["que_esperar_html"])                       # y sin equipos
 
     def test_la_invitacion_de_calendario_dice_la_cantidad_y_no_los_nombres(self):
         import datetime as dt

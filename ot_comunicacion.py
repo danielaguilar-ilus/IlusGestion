@@ -610,7 +610,7 @@ def caja_valor(titulo, cuerpo_html, color="#0ea5e9"):
     """Una caja gris con riel de color y un título pequeño: el mismo lenguaje de los demás correos de la OT."""
     return ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;'
             f'border-left:4px solid {color};border-radius:4px;padding:14px 18px;margin:18px 0">'
-            '<tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;color:#6b7280;padding-bottom:6px">'
+            '<tr><td style="font-size:12px;font-weight:800;letter-spacing:.1em;color:#4b5563;padding-bottom:6px">'
             f'{esc(str(titulo).upper())}</td></tr>'
             f'<tr><td style="font-size:13px;color:#444;line-height:1.6">{cuerpo_html}</td></tr></table>')
 
@@ -629,15 +629,10 @@ def resumen_trabajo_html(ot, tecnicos_nombres=None):
     """«Resumen del trabajo» del correo de OT terminada: cuántos equipos se atendieron (SOLO la cantidad: los nombres van en el documento; Daniel, 6-nov),
     quién lo hizo y que el documento quedó firmado por las tres partes. Solo se manda cuando el documento está completo (`documento_listo`), así que la
     última línea es verdad."""
-    equipos = [str(e).strip() for e in (ot.get("equipos") or []) if str(e or "").strip()]
-    personas = [str(n).strip() for n in (tecnicos_nombres if tecnicos_nombres is not None else ot.get("tecnicos") or []) if str(n or "").strip()]
-    lineas = []
-    if equipos:
-        lineas.append(f"Se {_plural(len(equipos), 'atendió', 'atendieron')} {len(equipos)} {_plural(len(equipos), 'equipo', 'equipos')}; el detalle está en el documento.")
-    if personas:
-        lineas.append(f"{'Lo realizó' if len(personas) == 1 else 'Lo realizaron'}: {', '.join(personas)}.")
-    lineas.append("El documento quedó firmado por el técnico, por el cliente y por el responsable de Servicio Técnico.")
-    return caja_valor("Resumen del trabajo", lista_valor(lineas), "#16a34a")
+    # 6-nov (auditoría de diseño, «no me gusta tanta letra»): la tabla de abajo ya dice quién lo hizo, cuántos equipos y cuándo; aquí solo va lo que NO está en ningún otro
+    # lado: que el documento quedó firmado por las tres partes. Una línea, no una caja con tres viñetas repetidas.
+    return ('<p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:#166534"><strong>&#10003; Documento firmado</strong>'
+            '<span style="color:#444444"> por el técnico, por el cliente y por el responsable de Servicio Técnico.</span></p>')
 
 
 # ── «Tu servicio, paso a paso» y la firma del equipo (Daniel, 5-nov-2026: «dejemos listo los correos ordenados, disparando el Dpto de SSTT, con algo
@@ -957,7 +952,7 @@ _TERMINADA_V5 = (
 
 def invitacion_html():
     """El aviso de la invitación de calendario adjunta (solo cuando el correo de verdad la lleva)."""
-    return _p("<strong>Agrégala a tu calendario:</strong> te adjuntamos la invitación (archivo .ics). Ábrela y acéptala para que la visita quede en tu agenda.")
+    return _p("<strong>Agrégala a tu calendario:</strong> te enviamos la invitación; acéptala y la visita quedará en tu agenda.")
 
 
 # Nota: ninguna de estas plantillas lleva montos, costos, proveedores ni OC (REGLAS #19 y #26).

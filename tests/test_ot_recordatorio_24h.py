@@ -501,19 +501,15 @@ class TestBloquesDeValor(unittest.TestCase):
             self.assertNotRegex(" ".join(c), re.compile(PLATA.pattern.replace(r"|\bfactur", ""), re.I), k)
 
     def test_que_va_a_pasar_dice_quien_llega_a_cuantos_equipos_y_como_cierra(self):
+        # 6-nov (auditoría de diseño, «no me gusta tanta letra»): la tabla de arriba YA dice el técnico, el horario y «N equipos»; la caja solo dice lo que no está en otro lado
         t = _t(O.que_esperar_html(["Trotadora ILUS Pro 9000", "Bicicleta ILUS"], ["Lenin Urbina"]))
-        self.assertIn("Llegará Lenin Urbina en el horario indicado.", t)
-        # 6-nov (Daniel: «excluye los productos de los correos… se agrandarían»): SOLO la cantidad, nunca los nombres
-        self.assertIn("Trabajará en 2 equipos.", t)
-        self.assertNotIn("Trotadora", t)
-        self.assertNotIn("Bicicleta", t)
+        self.assertIn("QUÉ VA A PASAR", t)
         self.assertIn("confirmar la recepción del trabajo con tu firma", t)
-        self.assertIn("Trabajará en 1 equipo.", _t(O.que_esperar_html(["Trotadora"], [])))     # singular
-        self.assertIn("Nuestro equipo técnico llegará", _t(O.que_esperar_html([], [])))        # sin equipos: no se inventa
-        self.assertNotIn("Trabajará en", _t(O.que_esperar_html([], [])))
-        t24 = _t(O.que_esperar_html([f"Equipo {i}" for i in range(24)], []))                   # 24 equipos: el correo NO crece
-        self.assertIn("Trabajará en 24 equipos.", t24)
-        self.assertNotIn("Equipo 0", t24)
+        for repetido in ("Llegará", "Lenin", "Trabajará", "Trotadora", "Bicicleta", "equipos"):
+            self.assertNotIn(repetido, t, repetido)
+        # con 24 equipos, con uno o con ninguno el bloque es el mismo (no crece ni cambia)
+        self.assertEqual(O.que_esperar_html([f"Equipo {i}" for i in range(24)], []), O.que_esperar_html(["A"], ["Pedro"]))
+        self.assertEqual(O.que_esperar_html([], []), O.que_esperar_html(["A"], ["Pedro"]))
 
     def test_cómo_llegar_es_un_enlace_de_mapa_y_solo_con_una_direccion_real(self):
         u = O.url_mapa("Av. Demo 123, Las Condes")
@@ -573,13 +569,14 @@ class TestBloquesDeValor(unittest.TestCase):
 
     def test_el_resumen_del_trabajo_de_la_ot_terminada(self):
         t = _t(C.resumen_trabajo_html({"equipos": ["Trotadora ILUS Pro 9000"], "tecnicos": ["Lenin Urbina", "Pedro Pérez"]}))
-        self.assertIn("Se atendió 1 equipo; el detalle está en el documento.", t)
-        self.assertNotIn("Trotadora", t)                                                       # solo la cantidad (Daniel, 6-nov)
-        self.assertIn("Lo realizaron: Lenin Urbina, Pedro Pérez.", t)
+        # 6-nov (auditoría de diseño): una sola línea; quién lo hizo, cuántos equipos y cuándo ya están en la tabla del correo
+        self.assertIn("Documento firmado", t)
+        self.assertNotIn("Trotadora", t)
+        self.assertNotIn("Lenin", t)
+        self.assertNotIn("atendi", t)
         self.assertIn("firmado por el técnico, por el cliente y por el responsable de Servicio Técnico", t)
         t2 = _t(C.resumen_trabajo_html({"equipos": ["A", "B", "C"], "tecnicos": []}))
-        self.assertIn("Se atendieron 3 equipos", t2)
-        self.assertNotIn("Lo realiz", t2)                                                     # sin nombres, no se inventa
+        self.assertEqual(t2, t)                                                                # no depende de cuántos equipos ni de quién lo hizo
         self.assertNotRegex(t + t2, PLATA)
 
     def test_todo_va_escapado_y_sin_plata(self):
@@ -597,7 +594,7 @@ class TestCorreosConValorDeExtremoAExtremo(_Base):
         w.barrer(LUN(10, 5))
         cli = w.para("contacto@gimnasio.cl")[0]
         t = _t(cli["html"])
-        for esperado in ("QUÉ VA A PASAR", "Llegará Lenin Urbina", "Trabajará en 1 equipo.", "Equipos: 1 equipo",
+        for esperado in ("QUÉ VA A PASAR", "confirmar la recepción del trabajo con tu firma", "Equipos: 1 equipo",
                          "PARA DEJAR TODO LISTO", "camino de acceso", "firma"):
             self.assertIn(esperado, t, esperado)
         for prohibido in ("Cómo llegar", "QUÉ HAY QUE HACER", "Revisar la banda", "50.000", "8765", "ANTES DE SALIR", "Trotadora ILUS Pro 9000"):

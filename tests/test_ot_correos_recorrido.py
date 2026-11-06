@@ -211,8 +211,8 @@ class TestCorreosDeExtremoAExtremo(unittest.TestCase):
         variables = {"tecnico": "Lenin Urbina, Pedro Pérez", "maquina": "Trotadora ILUS Pro 9000, Bicicleta ILUS"}
         b = w.amb["_ot_com_bloques_creacion"](v, variables, con_invitacion=True)
         t = _t(b["que_esperar_html"])
-        self.assertIn("Llegará Lenin Urbina, Pedro Pérez", t)
-        self.assertIn("Trabajará en 2 equipos", t)
+        self.assertIn("confirmar la recepción del trabajo con tu firma", t)                    # (6-nov, auditoría: «Llegará…» y «Trabajará en N equipos» ya están en la tabla)
+        self.assertNotIn("Trabajará", t)
         self.assertIn("camino de acceso", _t(b["preparacion_html"]))                 # instalación
         self.assertIn("te enviaremos un recordatorio 24 horas antes de la visita", _t(b["recorrido_html"]))
         self.assertIn("calendario", b["invitacion_html"])
