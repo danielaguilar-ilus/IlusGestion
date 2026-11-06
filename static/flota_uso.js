@@ -120,6 +120,7 @@
     $('flBtnChofer').hidden = t !== 'choferes' || !PERM.admin;
     try { history.replaceState(null, '', '#' + t); } catch (e) { /* sin historial: no importa */ }
     if (t === 'solicitudes' && S.vista === 'calendario') cargarCal();
+    else if (t === 'solicitudes') refrescarListaViva(5);
   }
 
   /* Contador de cada pestaña (05-nov-2026, Daniel: «las pestañas las puedes mejorar»): lo que importa de un vistazo. */
@@ -164,8 +165,13 @@
       pintarChoferes();
     });
   }
-  function cargarSol() {
+  function cargarSol(silencio) {                              // `silencio`: la carga automática no avisa ni vacía la lista si falla (la señal puede fallar un rato)
+    var mia = S.solSeq = (S.solSeq || 0) + 1;                // si dos cargas se cruzan, solo vale la última que se pidió
+    S.cargandoSol = Date.now();
     return api(API + '/solicitudes?vista=' + S.solVista).then(function (d) {
+      if (mia !== S.solSeq) return;
+      S.cargandoSol = 0;
+      if (!d.ok && silencio) return;
       if (!d.ok) { toast(d.error || 'No se pudo leer las solicitudes.', 'error'); pintarSolVacio('No se pudo leer las solicitudes', d.error || 'Intenta de nuevo en un momento.'); return; }
       S.sol = d.solicitudes || [];
       S.hoy = d.hoy || S.hoy;
@@ -186,8 +192,36 @@
       $('flKpiLlave').textContent = r.llave_entregada != null ? r.llave_entregada : '–';
       $('flKpiHoy').textContent = r.hoy != null ? r.hoy : '–';
       if (!S.mes && S.hoy) S.mes = S.hoy.slice(0, 7);
+      S.ultimaCargaSol = Date.now();
       pintarSolLista();
     });
+  }
+  /* LA LISTA SE MANTIENE AL DÍA (Daniel, 06-nov-2026: «Alex la ve bien en el calendario pero en la lista no ve la solicitud 9, y debe verla para
+     entregar las llaves»). Antes la lista se pedía UNA sola vez, al abrir la página; el calendario sí se vuelve a pedir al abrirlo y cada 2 minutos.
+     Quien dejaba /flota abierta (el celular en el bolsillo, el PC toda la mañana) veía las reservas nuevas en el calendario y no en la lista.
+     Ahora se refresca: al volver a la lista, cada minuto mientras se mira, y al volver a la pantalla tras un rato. Nunca mientras hay un
+     formulario o un detalle abierto (no se le mueve la pantalla a quien está escribiendo ni se le cambia una fila bajo el dedo). */
+  function refrescarListaViva(minSeg) {
+    if (document.hidden || S.tab !== 'solicitudes' || S.vista !== 'lista') return false;
+    if (document.querySelector('.modal.show')) return false;
+    if (S.cargandoSol && Date.now() - S.cargandoSol < 15000) return false;                    // ya hay una carga en camino
+    if (Date.now() - (S.ultimaCargaSol || 0) < (minSeg || 0) * 1000) return false;           // acaba de cargar: no se repite
+    cargarSol(true);
+    return true;
+  }
+  function latidoFlota() {                                  // cada 30 s: la cuenta regresiva y la agenda (cada 2 min) o, en la lista, cada minuto
+    if (document.hidden || S.tab !== 'solicitudes') return;
+    S.latidos = (S.latidos || 0) + 1;
+    if (S.vista === 'calendario') { if (S.latidos % 4 === 0) cargarCal(true); else pintarProximo(); }
+    else if (S.latidos % 2 === 0) refrescarListaViva(20);
+  }
+  function alVolverALaPantalla() {                          // el celular se desbloquea o la pestaña vuelve al frente tras un rato
+    if (document.hidden || S.tab !== 'solicitudes') return;
+    if (S.vista === 'calendario') cargarCal(true); else refrescarListaViva(20);
+  }
+  function alCambiarVisibilidad() {                         // se oculta (se anota cuándo) o vuelve (si pasaron más de 30 s, se actualiza)
+    if (document.hidden) { S.ocultoDesde = Date.now(); return; }
+    if (Date.now() - (S.ocultoDesde || Date.now()) > 30000) alVolverALaPantalla();
   }
   function recargarSol() {
     var p = [cargarSol()];
@@ -684,7 +718,7 @@
     $('flSolListaWrap').hidden = v !== 'lista';
     $('flSolCalWrap').hidden = v !== 'calendario';
     $('flSolBuscarWrap').hidden = v === 'calendario';     // la agenda filtra por vehículo y área con sus propios botones
-    if (v === 'calendario') cargarCal(true);
+    if (v === 'calendario') cargarCal(true); else refrescarListaViva(5);
   }
   /* Tocar un hueco de la pista: abre la solicitud llena con ese vehículo, día y hora (2 h por defecto; la persona lo cambia). */
   function minutoEnPista(pista, clientY) {
@@ -2658,12 +2692,9 @@
       var id = this.getAttribute('data-id');
       if (id) abrirDetalle(id);
     });
-    var ticks = 0;
-    setInterval(function () {                 // en vivo: la cuenta regresiva cada 30 s y la agenda cada 2 min
-      if (document.hidden || S.tab !== 'solicitudes' || S.vista !== 'calendario') return;
-      ticks++;
-      if (ticks % 4 === 0) cargarCal(true); else pintarProximo();
-    }, 30000);
+    setInterval(latidoFlota, 30000);          // en vivo: la cuenta regresiva y la agenda cada 2 min, o la lista cada minuto
+    document.addEventListener('visibilitychange', alCambiarVisibilidad);
+    window.addEventListener('pageshow', function (e) { if (e.persisted) alVolverALaPantalla(); });       // el iPhone devuelve la página guardada, con datos viejos
     $('flDiaCuerpo').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-id]');
       if (b) { var id = b.getAttribute('data-id'); despuesDeCerrar('flModalDia', function () { abrirDetalle(id); }); }
