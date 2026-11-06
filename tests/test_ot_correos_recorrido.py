@@ -24,7 +24,8 @@ from tests.test_ot_comunicacion_envio import MundoOT
 from tests.test_ot_recordatorio_24h import MundoRec, LUN, PLATA, _t
 
 
-_BARRA = "line-height:5px;font-size:0;background:"
+# 6-nov-2026 (REGLA #67): el recorrido pasó a círculos numerados + barra de 4 px a prueba de Outlook; la barra de cada paso lleva su color.
+_BARRA = "line-height:4px;font-size:0;background:"
 
 
 def _verde(h):       # barras de los pasos ya hechos
@@ -36,7 +37,7 @@ def _rojo(h):        # la barra del paso actual
 
 
 def _gris(h):        # barras de los pasos que faltan
-    return h.count(_BARRA + "#e5e7eb")
+    return h.count(_BARRA + "#d1d5db")
 
 
 class TestRecorridoPuro(unittest.TestCase):
@@ -44,15 +45,17 @@ class TestRecorridoPuro(unittest.TestCase):
         self.assertEqual([c for c, _n in C.PASOS_SERVICIO], ["agendada", "recordatorio", "visita", "documento"])
         h = C.recorrido_html("agendada")
         t = _t(h)
-        for esperado in ("TU SERVICIO, PASO A PASO", "1 · Visita agendada", "2 · Recordatorio", "3 · Visita y firma", "4 · Documento firmado"):
+        for esperado in ("TU SERVICIO, PASO A PASO", "Visita agendada", "Recordatorio", "Visita y firma", "Documento firmado"):
             self.assertIn(esperado, t, esperado)
-        self.assertEqual(h.count('<td width="25%"'), 4)
+        self.assertEqual(h.count('<td width="25%" align="center" valign="top"'), 4)     # los 4 nombres
+        for n in ("1", "2", "3", "4"):                                                   # y los 4 números en sus círculos
+            self.assertIn(f'font-weight:700;mso-line-height-rule:exactly">{n}</td>', h)
 
     def test_el_paso_actual_se_resalta_los_anteriores_van_hechos_y_los_siguientes_pendientes(self):
         h = C.recorrido_html("recordatorio")
         self.assertEqual((_verde(h), _rojo(h), _gris(h)), (1, 1, 2))      # agendada hecha · recordatorio actual · visita y documento pendientes
-        self.assertIn("✓ Visita agendada", _t(h))
-        self.assertIn("2 · Recordatorio", _t(h))
+        self.assertEqual(_t(h).count("✓"), 1)                             # un solo círculo con ✓ (el paso hecho)
+        self.assertIn("Recordatorio", _t(h))
         h3 = C.recorrido_html("visita")
         self.assertEqual((_verde(h3), _rojo(h3), _gris(h3)), (2, 1, 1))
 
@@ -189,10 +192,11 @@ class TestCorreosDeExtremoAExtremo(unittest.TestCase):
         w.barrer(LUN(10, 5))
         h = w.para("contacto@gimnasio.cl")[0]["html"]
         t = _t(h)
-        for esperado in ("TU SERVICIO, PASO A PASO", "✓ Visita agendada", "2 · Recordatorio", "3 · Visita y firma", "4 · Documento firmado",
-                         "Equipo de Servicio Técnico", "Gracias por confiar en nosotros"):
+        for esperado in ("TU SERVICIO, PASO A PASO", "Visita agendada", "Recordatorio", "Visita y firma", "Documento firmado",
+                         "Equipo de Servicio Técnico", "Gracias por confiar en nosotros", "Ver seguimiento en vivo"):
             self.assertIn(esperado, t, esperado)
         self.assertEqual((_verde(h), _rojo(h), _gris(h)), (1, 1, 2))      # paso 2 de 4
+        self.assertIn('href="https://ilus.test/ot-seguimiento/SEG77"', h)        # el botón lleva al seguimiento de ESTA OT
         # el técnico NO recibe el recorrido del cliente ni su firma
         th = w.para("lenin@sphs.cl")[0]["html"]
         self.assertNotIn("TU SERVICIO, PASO A PASO", th)
@@ -244,7 +248,8 @@ class TestCorreosDeExtremoAExtremo(unittest.TestCase):
         self.assertEqual(_verde(h), 4)
         t = _t(h)
         self.assertIn("Equipo de Servicio Técnico", t)
-        self.assertIn("4 · Documento firmado".replace("4 · ", "✓ "), t)
+        self.assertIn("Documento firmado", t)
+        self.assertIn('href="https://ilus.test/ot-seguimiento/SEG77"', h)
         th = next(e["html"] for e in w.m.enviados_reales if e["to"] == "lenin@sphs.cl")
         self.assertNotIn("TU SERVICIO, PASO A PASO", th)
 
@@ -268,7 +273,7 @@ class TestCableado(unittest.TestCase):
 
     def test_la_ot_terminada_pasa_el_recorrido_completo(self):
         f = FC.funcion_top("app.py", "_ot_terminada_notificar")
-        self.assertIn('recorrido=_ocom.recorrido_html("documento")', f)
+        self.assertIn('recorrido=_ocom.recorrido_html("documento", url_seguimiento=_ot_seg_url(v_id))', f)
 
 
 if __name__ == "__main__":
