@@ -2,7 +2,7 @@
    FICHA DEL CLIENTE — SECCIONES (Daniel, 5-nov-2026: «ese módulo es viejo, quisiera enchularlo y AHORRAR PESTAÑAS»)
    Las 15 pestañas de siempre se agrupan en 5 secciones. NADA se quita (REGLA #4.2): cada pestaña sigue existiendo como un «chip» dentro de su
    sección, y `switchTab()` sigue siendo la única puerta. La capa la arma static/ficha_grupos.js moviendo los botones originales (con sus ids,
-   contadores y eventos) y se puede apagar con «Vista clásica» (localStorage `ficha_vista`).
+   contadores y eventos) y se puede apagar con «Vista clásica» (localStorage `ficha_vista_2`; desde el 6-nov la vista clásica es la de omisión).
    Medidas (REGLA #61): botones de 44 px, letra ≥ 13 px, sin scroll de lado a 390 / 820 / 1280 / 1366 / 1440.
    ══════════════════════════════════════════════════════════════════════════════════════════════════════════ */
 
