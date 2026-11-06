@@ -197,15 +197,10 @@ def _plural(n, uno, varios):
 
 
 def que_esperar_html(equipos, personas):
-    """«Qué va a pasar» para el CLIENTE: quién llega, a cuántos equipos y cómo cierra la visita (con su firma, como dice el manual)."""
-    eq = [str(e).strip() for e in (equipos or []) if str(e or "").strip()]
-    pe = [str(p).strip() for p in (personas or []) if str(p or "").strip()]
-    lineas = [("Llegará " + ", ".join(pe) + " en el horario indicado." if pe else "Nuestro equipo técnico llegará en el horario indicado.")]
-    if eq:
-        # SOLO la cantidad (Daniel, 6-nov: «excluye los productos de los correos… se agrandarían»): los nombres están en la OT.
-        lineas.append(f"Trabajará en {len(eq)} {_plural(len(eq), 'equipo', 'equipos')}.")
-    lineas.append("Al terminar, el técnico te pedirá confirmar la recepción del trabajo con tu firma.")
-    return _ocom.caja_valor("Qué va a pasar", _ocom.lista_valor(lineas), "#0ea5e9")
+    """«Qué va a pasar» para el CLIENTE. 6-nov (auditoría de diseño; Daniel: «no me gusta tanta letra»): antes decía quién llega, a cuántos equipos y cómo cierra la visita,
+    pero la tabla de arriba YA dice el técnico, el horario y «N equipos»: eran tres líneas repetidas. Ahora solo queda lo que no está en ningún otro lado: que al terminar el
+    técnico pide la firma del cliente (como dice el manual). Los parámetros se aceptan por compatibilidad; ya no se usan."""
+    return _ocom.caja_valor("Qué va a pasar", _ocom.lista_valor(["Al terminar, el técnico te pedirá confirmar la recepción del trabajo con tu firma."]), "#0ea5e9")
 
 
 def preparacion_html(tipo):
@@ -284,9 +279,8 @@ def variables_recordatorio(ot, inicio, hoy, *, nombre_destinatario="", link_ot="
         base["que_esperar_html"] = que_esperar_html(ot.get("equipos"), ot.get("tecnicos"))
         base["preparacion_html"] = preparacion_html(ot.get("tipo"))
         # «Tu servicio, paso a paso»: el recordatorio es el paso 2; lo que sigue es la visita (siempre es verdad: es el proceso de Servicio Técnico).
-        base["recorrido_html"] = _ocom.recorrido_html(
-            "recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma.",
-            url_seguimiento=url_seguimiento)
+        # 6-nov (auditoría de diseño): sin «Qué sigue»: la caja «Qué va a pasar» de abajo ya dice exactamente eso (llega el técnico y firma al terminar); repetirlo era ruido.
+        base["recorrido_html"] = _ocom.recorrido_html("recordatorio", "", url_seguimiento=url_seguimiento)
     else:
         if not oculto:
             base["como_llegar_html"] = como_llegar_html(ot.get("direccion"))

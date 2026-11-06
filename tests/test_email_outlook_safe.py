@@ -233,7 +233,7 @@ class TestElEnvioReal(unittest.TestCase):
             "_apply_test_redirect": lambda to, s: (to, s), "_get_marca": lambda: {"from_name": "ILUS", "from_email": "no-reply@sphs.cl", "reply_to": "soportetec@sphs.cl"},
             "_get_resend_cfg": lambda: {}, "_get_smtp_cfg": lambda: {"smtp_host": "h", "smtp_port": 587, "smtp_user": "u@sphs.cl", "smtp_pass": "x", "secure": False},
             "EMAIL_CONFIG": {}, "_open_smtp_client": lambda *a, **k: _Srv(), "_send_via_resend": lambda *a, **k: False,
-            "g": type("G", (), {})(), "print": lambda *a, **k: None, "_eos": E,
+            "g": type("G", (), {})(), "print": lambda *a, **k: None, "_eos": E, "_leg": __import__("email_legible"),
         }
         FC.extraer(self.amb, "app.py", ("_send_ilus_email_real", "_email_normalize_attachments"), ())
 
@@ -300,7 +300,7 @@ class TestCableado(unittest.TestCase):
         app = FC.texto("app.py")
         self.assertIn("import email_outlook_safe as _eos", app)
         cod = FC.funcion_top("app.py", "_send_ilus_email_real")
-        i = cod.index("html_body = _eos.outlook_safe(html_body)")
+        i = cod.index("html_body = _eos.outlook_safe(_leg.frase_ticket_legible(html_body))")
         self.assertLess(i, cod.index("att_norm = _email_normalize_attachments(attachments)"))
         self.assertLess(cod.rindex("try:", 0, i), i)
         self.assertIn("except Exception", cod[i:i + 200])

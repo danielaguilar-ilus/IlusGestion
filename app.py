@@ -82,6 +82,7 @@ import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién pued
 import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
 import ot_equipos_filas as _oef       # 2026-11-05: Paso «Equipos y su checklist»: una fila con cantidad ↔ una fila por unidad + checklist por producto (módulo puro con pruebas)
 import ot_firma_vigencia as _ofv      # 2026-11-05: el enlace de firma remota del cliente vence en 48 HORAS HÁBILES (módulo puro con pruebas)
+import email_legible as _leg          # 2026-11-06: la frase del ticket sale legible en todo correo (14 px, oscura, en negrita), aunque la plantilla guardada traiga el estilo viejo
 import email_outlook_safe as _eos     # 2026-11-06: el HTML del correo se reescribe para Outlook de escritorio (relleno y margen de tablas, botones) justo antes de enviar
 import correos_sin_responder as _csr   # 2026-11-06: ningún correo al cliente dice «responde este correo»: todo va por TICKET (frases + arranque; módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
@@ -8937,6 +8938,11 @@ def _ilus_email_master(ctx: dict) -> str:
     status_label  = _esc(ctx.get("status_label") or "")
     title         = _esc(ctx.get("title") or "")
     subtitle      = _esc(ctx.get("subtitle") or "")
+    # 6-nov (auditoría de diseño): si el subtítulo ya está en el título («OT-2026-00123» dos veces seguidas) se omite; y el número de OT no se parte en dos líneas
+    # («OT-2026-» / «00123») en el título grande.
+    if str(subtitle).strip() and str(subtitle).strip().lower() in str(title).lower():
+        subtitle = ""
+    title = re.sub(r"OT-\d{4}-\d{5}", lambda m: f'<span style="white-space:nowrap">{m.group(0)}</span>', str(title))
     customer_name = _esc(ctx.get("customer_name") or "")
     se            = _esc(support_email)
     message     = ctx.get("message") or ""            # HTML safe (caller)
@@ -9012,8 +9018,8 @@ def _ilus_email_master(ctx: dict) -> str:
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#eef0f3">
 <tr><td align="center" style="padding:32px 12px">
 <table role="presentation" class="email-shell" width="620" cellspacing="0" cellpadding="0" border="0" style="width:620px;max-width:620px;background:#ffffff;border-collapse:separate;border-spacing:0;border-radius:10px;overflow:hidden;box-shadow:0 12px 35px rgba(15,23,42,.10)">
-<tr><td align="center" style="background:#050505;padding:25px 32px 22px;border-bottom:4px solid #e30613">
-<a href="https://ilusfitness.com" target="_blank" style="display:inline-block"><img src="{logo_url}" width="306" alt="ILUS Fitness" style="display:block;width:306px;max-width:306px;height:auto;border:0;outline:none;text-decoration:none"></a></td></tr>
+<tr><td align="center" style="background:#050505;padding:25px 16px 22px;border-bottom:4px solid #e30613">
+<a href="https://ilusfitness.com" target="_blank" style="display:inline-block"><img src="{logo_url}" width="306" alt="ILUS Fitness" style="display:block;width:306px;max-width:306px;height:auto;border:0;outline:none;text-decoration:none;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:30px;line-height:36px;font-weight:800"></a></td></tr>
 <tr><td class="email-pad" style="padding:34px 44px 12px">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">{badge_html}
 <tr><td class="email-title" style="padding-top:17px;font-size:30px;line-height:36px;font-weight:800;color:#111111">{title}</td></tr>{subtitle_html}
@@ -9027,7 +9033,7 @@ def _ilus_email_master(ctx: dict) -> str:
 <tr><td align="center" bgcolor="#e30613" style="background:#e30613;border-radius:6px;padding:14px 32px">
 <a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:block;color:#ffffff;text-decoration:none;font-size:15px;line-height:20px;font-weight:700;font-family:Arial,Helvetica,sans-serif">Crear ticket de soporte</a>
 </td></tr></table></td></tr>
-<tr><td align="center" style="padding-top:20px;font-size:11px;line-height:18px;color:#646b74">Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>© {year} ILUS Fitness · Equipamiento profesional para alto rendimiento</td></tr>
+<tr><td align="center" style="padding-top:20px;font-size:12px;line-height:18px;color:#9ca3af">Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>© {year} ILUS Fitness · Equipamiento profesional para alto rendimiento</td></tr>
 </table></td></tr>
 </table></td></tr></table></body></html>"""
 
@@ -10824,7 +10830,7 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     # 2026-11-06 (Daniel: «en Outlook no se ve bien… sin dañar celular ni Gmail»): Outlook de escritorio ignora el padding/margin de las tablas y el padding de un <a>; el
     # filtro (puro, idempotente, nunca lanza) deja el relleno y el fondo en una celda. Gmail y el celular lo ven igual que antes.
     try:
-        html_body = _eos.outlook_safe(html_body)
+        html_body = _eos.outlook_safe(_leg.frase_ticket_legible(html_body))
     except Exception:
         pass
     marca = _get_marca()
@@ -55675,6 +55681,10 @@ def _comm_correo_demo(c):
                       lambda m: str(mapa.get(m.group(1).strip(), f"[{m.group(1).strip()} demo]")), texto or "")
     asunto = _sub(fila.get("asunto") or "").strip() or c["nombre"]
     cuerpo = _sub(fila.get("cuerpo") or "")
+    try:
+        cuerpo = _leg.frase_ticket_legible(cuerpo)            # la vista previa muestra lo que de verdad sale (la frase del ticket, legible)
+    except Exception:
+        pass
     return asunto, cuerpo, {"origen": "plantilla", "plantilla_activa": bool(int(fila.get("activo") or 0))}
 
 
