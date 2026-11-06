@@ -142325,8 +142325,9 @@ def mant_visita_enviar_email(vid):
         {costo_html}
         {reps_html}
         <p style="font-size:13px;color:#6b7280;margin-top:18px">
-          Si necesita reagendar o cancelar la visita, por favor responda este correo
-          o comuníquese con su ejecutivo asignado.
+          Si necesita reagendar o cancelar la visita, cree un ticket de soporte con el botón
+          «Crear ticket de soporte» que está al final de este correo: así su solicitud queda
+          registrada y la atiende nuestro equipo de Servicio Técnico.
         </p>
         """
         asunto = f"Visita técnica programada — {ot} ({fecha_str})"
@@ -142599,7 +142600,7 @@ def _mant_ot_email_cliente_creacion(vid):
                 f"<tr><td style=\"padding:7px 10px;background:#f9fafb;font-weight:600\">Técnico(s)</td><td style=\"padding:7px 10px\">{variables['tecnico']}</td></tr>"
                 f"<tr><td style=\"padding:7px 10px;background:#f9fafb;font-weight:600\">Dirección</td><td style=\"padding:7px 10px\">{variables['direccion']}</td></tr>"
                 f"</table>"
-                f"<p style=\"font-size:13px;color:#6b7280;margin-top:18px\">Si necesitas reagendar o cancelar la visita, responde este correo o comunícate con tu ejecutivo asignado.</p>"
+                f"<p style=\"font-size:13px;color:#6b7280;margin-top:18px\">Si necesitas reagendar o cancelar la visita, crea un ticket de soporte con el botón «Crear ticket de soporte» que está al final de este correo: así tu solicitud queda registrada y la atiende nuestro equipo de Servicio Técnico.</p>"
             )
         html = _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {variables['ot']}")
         res = _mant_send_email_multi(v["cliente_id"], asunto, html, correo="ot_creada_cliente",
@@ -143677,10 +143678,15 @@ def _ensure_comm_template_ot_comunicacion():
         anteriores_todas = dict(getattr(_ocom, "SEMILLAS_ANTERIORES", None) or {})
         nuevas_todas = dict(_ocom.SEMILLAS)
         nuevas_todas.update(getattr(_ocom, "SEMILLAS_EXTRA", None) or {})
-        try:
-            anteriores_todas[_ocom.PLANTILLA_VISITA_AGENDADA] = (_mantenciones_tpl_seed()[_ocom.PLANTILLA_VISITA_AGENDADA],)
-        except Exception as _e_va:
-            print(f"[ensure_comm_tpl] semilla original de visita_agendada no disponible: {type(_e_va).__name__}", flush=True)
+        # 2026-11-05 («siempre crear un ticket»): lo mismo para cada plantilla de SEMILLAS_EXTRA (`visita_agendada` y `ot_completada`): la cadena empieza en la
+        # semilla ORIGINAL de `_mantenciones_tpl_seed` y sigue con las versiones que ya estuvieron sembradas (SEMILLAS_EXTRA_ANTERIORES). Una falla leyendo
+        # la semilla de una plantilla omite solo esa.
+        for _slug_x in (getattr(_ocom, "SEMILLAS_EXTRA", None) or {}):
+            try:
+                anteriores_todas[_slug_x] = ((_mantenciones_tpl_seed()[_slug_x],)
+                                             + tuple((getattr(_ocom, "SEMILLAS_EXTRA_ANTERIORES", None) or {}).get(_slug_x, ())))
+            except Exception as _e_va:
+                print(f"[ensure_comm_tpl] semilla original de {_slug_x} no disponible: {type(_e_va).__name__}", flush=True)
         for slug_a, anteriores in anteriores_todas.items():
             fila_a = mysql_fetchone(
                 "SELECT id, asunto, cuerpo FROM comm_templates WHERE modulo=%s AND estado=%s AND canal='email' LIMIT 1",
