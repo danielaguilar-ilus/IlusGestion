@@ -19,6 +19,7 @@
     config: { areas: [], clases: [], clase_sugerida: 'B', dias_alerta: 30, max_dias_uso: 7, antelacion_horas: 24 },
     veh: [], chof: [], resumenCh: {},
     sol: [], solVista: 'proximas', solEstado: 'todas', solQ: '', solVeh: '', solPag: 1, solPor: 25, ocup: [],
+    solMias: !(PERM.gestionar || PERM.admin),                // quien solo pide vehículos arranca en «Mis solicitudes»; quien gestiona, en «De todos»
     vista: 'lista', mes: null, cal: null, diaSel: null, det: null,
     meses: {}, semana: null, mesVista: null, calArea: '', pk: { mes: null, ancla: null },
     horario: { tramos: [[480, 780], [840, 1020]], texto: 'lunes a viernes hábiles de 08:00 a 13:00 y de 14:00 a 17:00 (colación 13:00–14:00)' },
@@ -168,7 +169,7 @@
   function cargarSol(silencio) {                              // `silencio`: la carga automática no avisa ni vacía la lista si falla (la señal puede fallar un rato)
     var mia = S.solSeq = (S.solSeq || 0) + 1;                // si dos cargas se cruzan, solo vale la última que se pidió
     S.cargandoSol = Date.now();
-    return api(API + '/solicitudes?vista=' + S.solVista).then(function (d) {
+    return api(API + '/solicitudes?vista=' + S.solVista + '&mias=' + (S.solMias ? '1' : '0')).then(function (d) {
       if (mia !== S.solSeq) return;
       S.cargandoSol = 0;
       if (!d.ok && silencio) return;
@@ -260,6 +261,13 @@
       return norm([s.numero, s.vehiculo.patente_fmt, s.vehiculo.titulo, s.area, s.solicitante, s.chofer.nombre, s.motivo].join(' ')).indexOf(q) >= 0;
     });
   }
+  function pintarQuien() {                                   // «Mis solicitudes» / «De todos»: marca la opción activa
+    Array.prototype.forEach.call(document.querySelectorAll('.fl-fchip[data-smias]'), function (b) {
+      var on = (b.getAttribute('data-smias') === '1') === !!S.solMias;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
   function pintarSolVacio(titulo, texto) {
     var v = $('flSolVacio');
     v.innerHTML = '<b>' + esc(titulo) + '</b>' + esc(texto || '');
@@ -290,7 +298,8 @@
   }
   function filaSol(s) {
     return '<tr class="' + semaforoFila(s) + (s.estado === 'cancelada' ? ' inhab' : '') + '" data-id="' + s.id + '">' +
-      '<td class="fl-td-veh"><span class="fl-num">' + esc(s.numero) + '</span><span class="fl-sub">Sellada el ' + esc(s.sello_fmt) + '</span></td>' +
+      '<td class="fl-td-veh"><span class="fl-num">' + esc(s.numero) + '</span><span class="fl-sub">Sellada el ' + esc(s.sello_fmt) + '</span>' +
+      (s.a_mi_nombre && !S.solMias ? '<span class="fl-mia"><i class="bi bi-person-check" aria-hidden="true"></i>A tu nombre</span>' : '') + '</td>' +
       '<td data-label="Vehículo"><span class="fl-pat">' + esc(s.vehiculo.patente_fmt) + '</span><span class="fl-tit">' + esc(s.vehiculo.titulo) + '</span></td>' +
       '<td data-label="Cuándo"><b class="fl-cuando">' + esc(s.rango_texto) + '</b></td>' +
       '<td data-label="Área y quién pidió"><b>' + esc(s.area) + '</b><span class="fl-sub">Pidió ' + esc(s.solicitante || '—') + '</span>' +
@@ -318,6 +327,11 @@
     var nHoy = S.sol.filter(esLlaveHoy).length;
     escribir($('flChipLlaveHoyN'), nHoy ? String(nHoy) : '');
     if (!S.sol.length) {
+      if (S.solMias) {                                         // vacío «a mi nombre»: se dice por qué y cómo ver las demás
+        pintarSolVacio(S.solVista === 'pasadas' ? 'No tienes solicitudes pasadas a tu nombre' : 'No tienes solicitudes por delante a tu nombre',
+          'Aquí salen las que pediste tú o en las que vas de chofer. Para ver las de todos, toca «De todos».');
+        return;
+      }
       pintarSolVacio(S.solVista === 'pasadas' ? 'No hay solicitudes pasadas' : 'Aún no hay solicitudes por delante',
         S.veh.length ? 'Crea la primera con «Nueva solicitud».' : 'Primero agrega un vehículo y un chofer; después podrás reservar.');
       return;
@@ -2581,6 +2595,8 @@
     chips('.fl-fchip[data-vista]', 'data-vista', cambiarVista);
     chips('.fl-fchip[data-sest]', 'data-sest', function (v) { S.solEstado = v; S.solPag = 1; pintarSolLista(); });
     chips('.fl-fchip[data-svista]', 'data-svista', function (v) { S.solVista = v; S.solPag = 1; cargarSol(); });
+    chips('.fl-fchip[data-smias]', 'data-smias', function (v) { S.solMias = v === '1'; S.solPag = 1; pintarQuien(); cargarSol(); });
+    pintarQuien();
     var t;
     $('flSolBuscar').addEventListener('input', function (e) {
       clearTimeout(t);

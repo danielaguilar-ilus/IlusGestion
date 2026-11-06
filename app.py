@@ -11973,6 +11973,9 @@ def _redirect_to_first_accessible(perms):
     if perms.get("transporte"):   return redirect(url_for("transporte_index"))
     if perms.get("cubicador"):    return redirect(url_for("cubicador"))
     if perms.get("comunicaciones"): return redirect(url_for("comm_index"))
+    # Perfil que solo tiene «Solicitudes de vehículo» (el de chofer, Daniel 06-nov-2026): aterriza en la flota y no en «Mi cuenta» con el aviso de
+    # que no tiene ningún módulo. Va AL FINAL a propósito: a quien ya tiene otro módulo no le cambia el aterrizaje. href fijo, como el menú.
+    if perms.get("flota_solicitar") or perms.get("flota_gestionar") or perms.get("flota_administrar"): return redirect("/flota")
     flash("Tu rol no tiene permisos para ningún módulo. Contacta al administrador.", "warning")
     return redirect(url_for("mi_cuenta"))
 
