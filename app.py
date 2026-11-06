@@ -134170,6 +134170,10 @@ def mant_ot_enviar_firma_remota(vid):
                     "message": ("El servicio técnico de tus equipos fue realizado. Para dejarlo conforme, "
                                 "revisa el detalle y firma en línea (puedes hacerlo desde tu celular). "
                                 f"El enlace es personal y vence {_vence_txt} ({_ofv.TEXTO_PLAZO})."),
+                    # 2026-11-05 («correos ordenados, comunicativos»): «Tu servicio, paso a paso» (paso 3) y lo que sigue, solo lo que de verdad va a salir.
+                    "detail_rows_html": "<tr><td>" + _ocom.recorrido_html(
+                        "visita", ("apenas firmes, nuestro equipo cierra tu orden y te envía el documento firmado por correo."
+                                   if _ot_com_promesas()["documento"] else "apenas firmes, nuestro equipo de Servicio Técnico cierra tu orden.")) + "</td></tr>",
                     "primary_cta_url": link,
                     "primary_cta_label": "Revisar y firmar la OT",
                 })
@@ -142354,8 +142358,9 @@ def mant_visita_enviar_email(vid):
         {costo_html}
         {reps_html}
         <p style="font-size:13px;color:#6b7280;margin-top:18px">
-          Si necesita reagendar o cancelar la visita, por favor responda este correo
-          o comuníquese con su ejecutivo asignado.
+          Si necesita reagendar o cancelar la visita, cree un ticket de soporte con el botón
+          «Crear ticket de soporte» que está al final de este correo: así su solicitud queda
+          registrada y la atiende nuestro equipo de Servicio Técnico.
         </p>
         """
         asunto = f"Visita técnica programada — {ot} ({fecha_str})"
@@ -142537,6 +142542,41 @@ def _ot_cliente_ics_fn(v, variables):
     return _fn
 
 
+def _ot_com_promesas():
+    """Lo que el sistema de verdad le va a mandar al cliente, mirando los interruptores AHORA (interruptor general, llave de Servicio Técnico, el
+    interruptor de cada correo en Control de correos y el freno de emergencia): {recordatorio, documento}. Los correos solo PROMETEN («te enviaremos un
+    recordatorio…») lo que va a salir; si Daniel apaga uno, el texto deja de prometerlo. Nunca lanza."""
+    out = {"recordatorio": False, "documento": False}
+    try:
+        activo = bool(_ocom.cliente_activo())
+        out["recordatorio"] = activo and _correo_bloqueo_previo(_ocom.MODULO_GENERAL, _ocom.CORREO_RECORDATORIO_CLIENTE) is None
+        out["documento"] = activo and _correo_bloqueo_previo(_ocom.MODULO_GENERAL, _ocom.CORREO_TERMINADA_CLIENTE) is None
+    except Exception as e:
+        print(f"[ot-com] promesas: {type(e).__name__}: {e}", flush=True)
+    return out
+
+
+def _ot_com_bloques_creacion(v, variables, con_invitacion=False):
+    """Las variables de valor del correo «OT creada» al cliente (ver la plantilla `visita_agendada`): invitación de calendario (solo si el correo la lleva),
+    «Tu servicio, paso a paso» (paso 1; lo que sigue solo si se va a cumplir), «Qué va a pasar», «Para dejar todo listo» según el tipo de trabajo y la
+    firma del equipo de Servicio Técnico. `variables` es el diccionario de `_mant_ot_creacion_variables` (texto sin escapar). Nunca lanza."""
+    try:
+        tec_txt = (variables.get("tecnico") or "").strip()
+        personas = [] if tec_txt in ("", "Por confirmar") else [p.strip() for p in tec_txt.split(",") if p.strip()]
+        eq_txt = (variables.get("maquina") or "").strip()
+        equipos = [] if eq_txt in ("", "—") else [p.strip() for p in eq_txt.split(",") if p.strip()]
+        sigue = ("te enviaremos un recordatorio 24 horas antes de la visita." if _ot_com_promesas()["recordatorio"]
+                 else "nuestro técnico llegará en el horario indicado.")
+        return {"invitacion_html": _ocom.invitacion_html() if con_invitacion else "",
+                "recorrido_html": _ocom.recorrido_html("agendada", sigue),
+                "que_esperar_html": _orec.que_esperar_html(equipos, personas),
+                "preparacion_html": _orec.preparacion_html(v.get("tipo")),
+                "firma_sstt_html": _ocom.firma_sstt_html()}
+    except Exception as e:
+        print(f"[ot-com] bloques de la creación: {type(e).__name__}: {e}", flush=True)
+        return {}
+
+
 def _mant_ot_email_cliente_creacion(vid):
     """Correo al CLIENTE apenas se crea la OT (plantilla 'visita_agendada',
     ya sembrada). Solo aplica a OT con cliente real -- trabajo interno no
@@ -142565,6 +142605,12 @@ def _mant_ot_email_cliente_creacion(vid):
                 destinos.append(_e_cli)
         if not destinos:
             return
+        # 2026-11-05 («correos ordenados, de Servicio Técnico, comunicativos» y «que aporte valor»): la plantilla nueva trae «Tu servicio, paso a paso»,
+        # «Qué va a pasar», «Para dejar todo listo», la invitación de calendario y la firma del equipo. Los arma el código con datos reales de la OT; una
+        # plantilla editada a mano que no tenga esas variables simplemente no las muestra (el reemplazo borra lo que no se usa).
+        _ics_fn = _ot_cliente_ics_fn(v, variables)
+        variables = dict(variables)
+        variables.update(_ot_com_bloques_creacion(v, variables, con_invitacion=bool(_ics_fn)))
         tpl = None
         try:
             tpl = _render_comm_template("visita_agendada", "email", variables, modulo="mantenciones")
@@ -142587,12 +142633,12 @@ def _mant_ot_email_cliente_creacion(vid):
                 f"<tr><td style=\"padding:7px 10px;background:#f9fafb;font-weight:600\">Técnico(s)</td><td style=\"padding:7px 10px\">{variables['tecnico']}</td></tr>"
                 f"<tr><td style=\"padding:7px 10px;background:#f9fafb;font-weight:600\">Dirección</td><td style=\"padding:7px 10px\">{variables['direccion']}</td></tr>"
                 f"</table>"
-                f"<p style=\"font-size:13px;color:#6b7280;margin-top:18px\">Si necesitas reagendar o cancelar la visita, responde este correo o comunícate con tu ejecutivo asignado.</p>"
+                f"<p style=\"font-size:13px;color:#6b7280;margin-top:18px\">Si necesitas reagendar o cancelar la visita, crea un ticket de soporte con el botón «Crear ticket de soporte» que está al final de este correo: así tu solicitud queda registrada y la atiende nuestro equipo de Servicio Técnico.</p>"
             )
         html = _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {variables['ot']}")
         res = _mant_send_email_multi(v["cliente_id"], asunto, html, correo="ot_creada_cliente",
                                      evento="visita_agendada", emails=destinos,
-                                     attachments=_ot_cliente_ics_fn(v, variables))
+                                     attachments=_ics_fn)
         if res["enviados"]:
             _mant_log("visita", vid, "email_creacion_cliente", f"a {', '.join(res['enviados'])} — OT {variables['ot']}")
     except Exception as e:
@@ -143660,7 +143706,21 @@ def _ensure_comm_template_ot_comunicacion():
         # 2026-11-05 («que el mensaje aporte valor»): una plantilla que SIGUE EXACTAMENTE igual a su versión anterior —nadie la editó en
         # Comunicaciones— pasa a la versión vigente (con «Resumen del trabajo», «Qué va a pasar», «Cómo llegar»…). Si una persona la tocó,
         # queda como la dejó. El UPDATE lleva `AND cuerpo=%s`: si alguien la edita justo ahora, no se pisa.
-        for slug_a, anteriores in (getattr(_ocom, "SEMILLAS_ANTERIORES", None) or {}).items():
+        # 2026-11-05 («correos ordenados, de Servicio Técnico, comunicativos»): lo mismo para «OT creada: visita agendada» (`visita_agendada`), la plantilla
+        # más antigua, cuya semilla original vive en `_mantenciones_tpl_seed` (fuente única de lo que se sembró). Si algo falla al leerla, solo esa se omite.
+        anteriores_todas = dict(getattr(_ocom, "SEMILLAS_ANTERIORES", None) or {})
+        nuevas_todas = dict(_ocom.SEMILLAS)
+        nuevas_todas.update(getattr(_ocom, "SEMILLAS_EXTRA", None) or {})
+        # 2026-11-05 («siempre crear un ticket»): lo mismo para cada plantilla de SEMILLAS_EXTRA (`visita_agendada` y `ot_completada`): la cadena empieza en la
+        # semilla ORIGINAL de `_mantenciones_tpl_seed` y sigue con las versiones que ya estuvieron sembradas (SEMILLAS_EXTRA_ANTERIORES). Una falla leyendo
+        # la semilla de una plantilla omite solo esa.
+        for _slug_x in (getattr(_ocom, "SEMILLAS_EXTRA", None) or {}):
+            try:
+                anteriores_todas[_slug_x] = ((_mantenciones_tpl_seed()[_slug_x],)
+                                             + tuple((getattr(_ocom, "SEMILLAS_EXTRA_ANTERIORES", None) or {}).get(_slug_x, ())))
+            except Exception as _e_va:
+                print(f"[ensure_comm_tpl] semilla original de {_slug_x} no disponible: {type(_e_va).__name__}", flush=True)
+        for slug_a, anteriores in anteriores_todas.items():
             fila_a = mysql_fetchone(
                 "SELECT id, asunto, cuerpo FROM comm_templates WHERE modulo=%s AND estado=%s AND canal='email' LIMIT 1",
                 (_ocom.MODULO_PLANTILLAS, slug_a))
@@ -143668,7 +143728,7 @@ def _ensure_comm_template_ot_comunicacion():
                 continue
             _nn = lambda s: (s or "").replace("\r\n", "\n").strip()
             if any(_nn(fila_a.get("asunto")) == _nn(a0) and _nn(fila_a.get("cuerpo")) == _nn(c0) for a0, c0 in anteriores):
-                a2, c2 = _ocom.SEMILLAS[slug_a]
+                a2, c2 = nuevas_todas[slug_a]
                 mysql_execute("UPDATE comm_templates SET asunto=%s, cuerpo=%s, updated_by=%s WHERE id=%s AND cuerpo=%s",
                               (a2, c2, "sistema", fila_a["id"], fila_a.get("cuerpo")))
                 print(f"[ensure_comm_tpl] '{slug_a}' (semilla anterior sin editar) pasó a la versión con más valor", flush=True)
@@ -143870,8 +143930,9 @@ def _ot_terminada_notificar(vid, origen="aprobar_cierre"):
         ot, numero = datos["ot"], datos["numero"]
         ref = {"tipo": "OT", "id": v_id, "codigo": numero}
         enlace_doc = _ot_com_enlace_firmada(v_id)
+        # «Tu servicio, paso a paso»: con el documento firmado, los cuatro pasos quedan completos (solo lo usa el correo al cliente).
         comunes = dict(link_ot_firmada=enlace_doc, link_ot=f"{_public_base_url()}/ot/{v_id}", aprobado_por=datos["aprobado_por"],
-                       cerrada_en=datos["cerrada_en"], tecnicos_nombres=datos["personas"])
+                       cerrada_en=datos["cerrada_en"], tecnicos_nombres=datos["personas"], recorrido=_ocom.recorrido_html("documento"))
         contacto = (datos["fila"].get("contacto_nombre") or datos["fila"].get("cli_contacto_nombre") or "").strip()
 
         # 1) al cliente (UN correo por dirección: cada uno queda con su resultado)
