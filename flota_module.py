@@ -2004,7 +2004,10 @@ def register_flota_routes(app, ctx):
             avisos += list(_avisos_dia_no_laboral(inicio, fin))
             avisos += list(fr.avisos_horario(inicio, fin, _feriados(inicio.year, fin.year)))      # llaves: lunes a viernes hábiles, 08–13 y 14–17
         return {"ok": True, "horario_ok": horario_ok, "vehiculos": vehiculos, "choferes": choferes, "avisos": avisos,
-                "horario_llaves": fr.HORARIO_TEXTO, "antelacion_horas": fr.MIN_ANTELACION_H, "sla_respuesta_min": fr.SLA_RESPUESTA_MIN}
+                "horario_llaves": fr.HORARIO_TEXTO, "antelacion_horas": fr.MIN_ANTELACION_H, "sla_respuesta_min": fr.SLA_RESPUESTA_MIN,
+                # 2026-11-05 (Daniel: «déjalo en bloques y déjalo como regla del sistema»): el asistente dibuja los BLOQUES de 30 min con ESTO (tramos,
+                # texto y paso); no tiene un horario propio. Una sola fuente: flota_reglas.HORARIO_LLAVES / PASO_BLOQUE_MIN.
+                "horario": fr.horario_para_pantalla()}
 
     def _ot_puede_reservar():
         """Reservar desde una OT pasa por la MISMA puerta que Solicitudes de vehículo (`flota_solicitar`, que Daniel asigna por el front) y
@@ -2217,8 +2220,7 @@ def register_flota_routes(app, ctx):
             "ok": True, "vista": vista, "solicitudes": [_sol_json(dict(f)) for f in filas],
             "resumen": {"por_confirmar": cuentas.get("solicitada", 0), "confirmadas": cuentas.get("confirmada", 0),
                         "llave_entregada": cuentas.get("llave_entregada", 0), "hoy": hoy_n, "por_cerrar": por_cerrar},
-            "horario": {"tramos": [list(t) for t in fr.HORARIO_LLAVES], "texto": fr.HORARIO_TEXTO,
-                        "tolerancia_min": fr.SLA_TOLERANCIA_MIN, "critico_min": fr.SLA_CRITICO_MIN},
+            "horario": dict(fr.horario_para_pantalla(), tolerancia_min=fr.SLA_TOLERANCIA_MIN, critico_min=fr.SLA_CRITICO_MIN),
             "hoy": ahora.date().isoformat(), "ahora_hhmm": ahora.strftime("%H:%M"),
             "areas": list(fr.AREAS_SUGERIDAS), "max_dias": fr.MAX_DIAS_USO,
             # Cuántas personas están registradas para recibir los avisos por correo (solo lo ve quien gestiona): 0 = no sale ninguno.
