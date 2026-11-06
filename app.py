@@ -82,6 +82,7 @@ import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién pued
 import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
 import ot_equipos_filas as _oef       # 2026-11-05: Paso «Equipos y su checklist»: una fila con cantidad ↔ una fila por unidad + checklist por producto (módulo puro con pruebas)
 import ot_firma_vigencia as _ofv      # 2026-11-05: el enlace de firma remota del cliente vence en 48 HORAS HÁBILES (módulo puro con pruebas)
+import email_legible as _leg          # 2026-11-06: la frase del ticket sale legible en todo correo (14 px, oscura, en negrita), aunque la plantilla guardada traiga el estilo viejo
 import email_outlook_safe as _eos     # 2026-11-06: el HTML del correo se reescribe para Outlook de escritorio (relleno y margen de tablas, botones) justo antes de enviar
 import correos_sin_responder as _csr   # 2026-11-06: ningún correo al cliente dice «responde este correo»: todo va por TICKET (frases + arranque; módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
@@ -8937,6 +8938,11 @@ def _ilus_email_master(ctx: dict) -> str:
     status_label  = _esc(ctx.get("status_label") or "")
     title         = _esc(ctx.get("title") or "")
     subtitle      = _esc(ctx.get("subtitle") or "")
+    # 6-nov (auditoría de diseño): si el subtítulo ya está en el título («OT-2026-00123» dos veces seguidas) se omite; y el número de OT no se parte en dos líneas
+    # («OT-2026-» / «00123») en el título grande.
+    if str(subtitle).strip() and str(subtitle).strip().lower() in str(title).lower():
+        subtitle = ""
+    title = re.sub(r"OT-\d{4}-\d{5}", lambda m: f'<span style="white-space:nowrap">{m.group(0)}</span>', str(title))
     customer_name = _esc(ctx.get("customer_name") or "")
     se            = _esc(support_email)
     message     = ctx.get("message") or ""            # HTML safe (caller)
@@ -9012,8 +9018,8 @@ def _ilus_email_master(ctx: dict) -> str:
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#eef0f3">
 <tr><td align="center" style="padding:32px 12px">
 <table role="presentation" class="email-shell" width="620" cellspacing="0" cellpadding="0" border="0" style="width:620px;max-width:620px;background:#ffffff;border-collapse:separate;border-spacing:0;border-radius:10px;overflow:hidden;box-shadow:0 12px 35px rgba(15,23,42,.10)">
-<tr><td align="center" style="background:#050505;padding:25px 32px 22px;border-bottom:4px solid #e30613">
-<a href="https://ilusfitness.com" target="_blank" style="display:inline-block"><img src="{logo_url}" width="306" alt="ILUS Fitness" style="display:block;width:306px;max-width:306px;height:auto;border:0;outline:none;text-decoration:none"></a></td></tr>
+<tr><td align="center" style="background:#050505;padding:25px 16px 22px;border-bottom:4px solid #e30613">
+<a href="https://ilusfitness.com" target="_blank" style="display:inline-block"><img src="{logo_url}" width="306" alt="ILUS Fitness" style="display:block;width:306px;max-width:306px;height:auto;border:0;outline:none;text-decoration:none;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:30px;line-height:36px;font-weight:800"></a></td></tr>
 <tr><td class="email-pad" style="padding:34px 44px 12px">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">{badge_html}
 <tr><td class="email-title" style="padding-top:17px;font-size:30px;line-height:36px;font-weight:800;color:#111111">{title}</td></tr>{subtitle_html}
@@ -9027,7 +9033,7 @@ def _ilus_email_master(ctx: dict) -> str:
 <tr><td align="center" bgcolor="#e30613" style="background:#e30613;border-radius:6px;padding:14px 32px">
 <a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:block;color:#ffffff;text-decoration:none;font-size:15px;line-height:20px;font-weight:700;font-family:Arial,Helvetica,sans-serif">Crear ticket de soporte</a>
 </td></tr></table></td></tr>
-<tr><td align="center" style="padding-top:20px;font-size:11px;line-height:18px;color:#646b74">Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>© {year} ILUS Fitness · Equipamiento profesional para alto rendimiento</td></tr>
+<tr><td align="center" style="padding-top:20px;font-size:12px;line-height:18px;color:#9ca3af">Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>© {year} ILUS Fitness · Equipamiento profesional para alto rendimiento</td></tr>
 </table></td></tr>
 </table></td></tr></table></body></html>"""
 
@@ -10824,7 +10830,7 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     # 2026-11-06 (Daniel: «en Outlook no se ve bien… sin dañar celular ni Gmail»): Outlook de escritorio ignora el padding/margin de las tablas y el padding de un <a>; el
     # filtro (puro, idempotente, nunca lanza) deja el relleno y el fondo en una celda. Gmail y el celular lo ven igual que antes.
     try:
-        html_body = _eos.outlook_safe(html_body)
+        html_body = _eos.outlook_safe(_leg.frase_ticket_legible(html_body))
     except Exception:
         pass
     marca = _get_marca()
@@ -11967,6 +11973,9 @@ def _redirect_to_first_accessible(perms):
     if perms.get("transporte"):   return redirect(url_for("transporte_index"))
     if perms.get("cubicador"):    return redirect(url_for("cubicador"))
     if perms.get("comunicaciones"): return redirect(url_for("comm_index"))
+    # Perfil que solo tiene «Solicitudes de vehículo» (el de chofer, Daniel 06-nov-2026): aterriza en la flota y no en «Mi cuenta» con el aviso de
+    # que no tiene ningún módulo. Va AL FINAL a propósito: a quien ya tiene otro módulo no le cambia el aterrizaje. href fijo, como el menú.
+    if perms.get("flota_solicitar") or perms.get("flota_gestionar") or perms.get("flota_administrar"): return redirect("/flota")
     flash("Tu rol no tiene permisos para ningún módulo. Contacta al administrador.", "warning")
     return redirect(url_for("mi_cuenta"))
 
@@ -55654,7 +55663,7 @@ def _comm_correo_demo(c):
     # «Tu servicio, paso a paso»: cada correo muestra SU paso, calculado con la misma función que el correo real (Daniel, 6-nov: la OT terminada decía «2 · Recordatorio»
     # y «Qué sigue: el técnico llega…» en la vista previa, porque usaba un recorrido de ejemplo fijo).
     _paso = {"ot_creada_cliente": ("agendada", "te enviaremos un recordatorio 24 horas antes de la visita."),
-             "ot_recordatorio_cliente": ("recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma."),
+             "ot_recordatorio_cliente": ("recordatorio", ""),
              "ot_firma_remota": ("visita", "apenas firmes, nuestro equipo cierra tu orden y te envía el documento firmado por correo."),
              "ot_terminada_cliente": ("documento", ""), "ot_envio_manual": ("documento", "")}.get(c.get("clave"))
     if _paso:
@@ -55663,6 +55672,14 @@ def _comm_correo_demo(c):
             mapa["recorrido_html"] = _ocom.recorrido_html(*_paso, url_seguimiento=f"{_public_base_url()}/ot-seguimiento/ejemplo")
         except Exception as exc:
             print(f"[comm-correos] demo {c['clave']}: recorrido {type(exc).__name__}", flush=True)
+    # Los bloques de valor de la vista previa salen de las MISMAS funciones que arman el correo real (antes eran textos de ejemplo fijos y se quedaban atrás: el 6-nov la
+    # vista previa seguía mostrando «Llegará…» y «Qué sigue» después de que el correo real los quitó).
+    try:
+        mapa["que_esperar_html"] = _orec.que_esperar_html([], [])
+        mapa["preparacion_html"] = _orec.preparacion_html("mantencion")
+        mapa["resumen_trabajo_html"] = _ocom.resumen_trabajo_html({})
+    except Exception as exc:
+        print(f"[comm-correos] demo {c['clave']}: bloques {type(exc).__name__}", flush=True)
     # Encuesta corta «¿Cómo fue tu servicio?» (REGLA #68): la vista previa y «Enviarme una prueba» la muestran SIEMPRE, aunque el correo real todavía no la lleve
     # (OT_ENCUESTA_ACTIVA apagada). Sus enlaces van a la página de ejemplo (`vista-previa`), que no guarda nada. Si algo falla queda el bloque fijo de DEMO_EXTRA.
     try:
@@ -55675,6 +55692,10 @@ def _comm_correo_demo(c):
                       lambda m: str(mapa.get(m.group(1).strip(), f"[{m.group(1).strip()} demo]")), texto or "")
     asunto = _sub(fila.get("asunto") or "").strip() or c["nombre"]
     cuerpo = _sub(fila.get("cuerpo") or "")
+    try:
+        cuerpo = _leg.frase_ticket_legible(cuerpo)            # la vista previa muestra lo que de verdad sale (la frase del ticket, legible)
+    except Exception:
+        pass
     return asunto, cuerpo, {"origen": "plantilla", "plantilla_activa": bool(int(fila.get("activo") or 0))}
 
 

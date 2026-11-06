@@ -300,7 +300,24 @@ class Falsa(BaseFalsa):
             {"v_patente": self.veh[s["vehiculo_id"]]["patente"]}
 
     # ── lecturas
+    MIAS_S = " AND (s.solicitante_id=%s OR c.usuario_id=%s)"
+    MIAS_T = " AND (solicitante_id=%s OR chofer_id IN (SELECT id FROM flota_choferes WHERE usuario_id=%s))"
+
+    def _visibles(self):
+        """Las solicitudes que ve la consulta en curso: todas, o solo las «a nombre» de ese usuario (la pidió o va de chofer)."""
+        if self.mias is None:
+            return list(self.sol.values())
+        return [x for x in self.sol.values()
+                if x.get("solicitante_id") == self.mias or (self.cho.get(x["chofer_id"]) or {}).get("usuario_id") == self.mias]
+
     def select(self, s, p):
+        self.mias = None
+        for marca in (self.MIAS_S, self.MIAS_T):                # «a su nombre» (06-nov-2026): se reconoce por su texto exacto
+            if marca in s:
+                assert p[-1] == p[-2], p                        # el mismo id dos veces: el solicitante y el usuario del chofer
+                self.mias, s, p = p[-1], s.replace(marca, ""), tuple(p[:-2])
+        s = s.replace("WHERE (s.fin >= %s OR (s.estado='devuelta' AND s.dev_confirmada_at IS NULL))",
+                      "WHERE s.fin >= %s OR (s.estado='devuelta' AND s.dev_confirmada_at IS NULL)")
         if s.startswith("SELECT * FROM flota_vehiculos WHERE id=%s"):
             return [dict(self.veh[p[0]])] if p[0] in self.veh else []
         if s.startswith("SELECT * FROM flota_solicitudes WHERE id=%s FOR UPDATE"):
@@ -338,7 +355,7 @@ class Falsa(BaseFalsa):
             ya = {c["usuario_id"] for c in self.cho.values() if c["usuario_id"] is not None}
             return sorted((dict(u) for u in self.usr.values() if u["active"] and u["id"] not in ya), key=lambda u: u["nombre"])
         if s.startswith("SELECT s.*, v.patente AS v_patente"):
-            filas = list(self.sol.values())
+            filas = self._visibles()
             if s.endswith("WHERE s.id=%s"):
                 return [self._sol_row(self.sol[p[0]])] if p[0] in self.sol else []
             if s.endswith("WHERE s.ot_id=%s ORDER BY s.inicio, s.id LIMIT 20"):
@@ -373,14 +390,14 @@ class Falsa(BaseFalsa):
             return [{"id": x["id"]}] if igual else []
         if s.startswith("SELECT estado, COUNT(*) AS n FROM flota_solicitudes WHERE fin >= %s GROUP BY estado"):
             out = {}
-            for x in self.sol.values():
+            for x in self._visibles():
                 if x["fin"] >= p[0]:
                     out[x["estado"]] = out.get(x["estado"], 0) + 1
             return [{"estado": k, "n": v} for k, v in out.items()]
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado='devuelta' AND dev_confirmada_at IS NULL"):
-            return [{"n": sum(1 for x in self.sol.values() if x["estado"] == "devuelta" and not x.get("dev_confirmada_at"))}]
+            return [{"n": sum(1 for x in self._visibles() if x["estado"] == "devuelta" and not x.get("dev_confirmada_at"))}]
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado IN"):
-            return [{"n": sum(1 for x in self.sol.values() if x["estado"] in R.ESTADOS_OCUPAN and x["inicio"] < p[0] and x["fin"] > p[1])}]
+            return [{"n": sum(1 for x in self._visibles() if x["estado"] in R.ESTADOS_OCUPAN and x["inicio"] < p[0] and x["fin"] > p[1])}]
         if s.startswith("SELECT id, numero, estado FROM flota_solicitudes WHERE chofer_id=%s"):
             return [{"id": x["id"], "numero": x.get("numero"), "estado": x["estado"]} for x in self.sol.values() if x["chofer_id"] == p[0]]
         if s.startswith("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE vehiculo_id=%s") or \

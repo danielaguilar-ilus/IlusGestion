@@ -62,6 +62,12 @@
 
   <div id="flSolListaWrap">
     <div class="fl-toolbar" id="flSolFiltros">
+      {# Daniel, 06-nov-2026: «un filtro para que el usuario vea las solicitudes a su nombre» (las que pidió o en las que va de chofer). Quien solo
+         pide vehículos arranca en «Mis solicitudes»; quien gestiona (entrega las llaves) arranca viendo las de todos. #}
+      <div class="fl-chips" role="group" aria-label="De quién son las solicitudes" id="flSolQuien">
+        <button type="button" class="fl-fchip" data-smias="1"><i class="bi bi-person-check" aria-hidden="true"></i>Mis solicitudes</button>
+        <button type="button" class="fl-fchip" data-smias="0"><i class="bi bi-people" aria-hidden="true"></i>De todos</button>
+      </div>
       <div class="fl-chips" role="group" aria-label="Filtrar por estado">
         <button type="button" class="fl-fchip on" data-sest="todas">Todas</button>
         {# Daniel, 03-nov-2026: «filtrar por la fecha de hoy, las que están gestionadas para entrega de llave hoy» #}

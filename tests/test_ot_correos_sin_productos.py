@@ -58,12 +58,13 @@ class TestSoloLaCantidad(unittest.TestCase):
 
     def test_con_24_equipos_los_bloques_no_crecen(self):
         qp = _t(O.que_esperar_html(_NOMBRES, ["Lenin"]))
-        self.assertIn("Trabajará en 24 equipos.", qp)
-        self.assertNotIn("Trotadora", qp)
+        self.assertNotIn("Trotadora", qp)                                                      # (6-nov, auditoría: la caja ya no repite cuántos equipos; lo dice la tabla)
+        self.assertNotIn("24", qp)
         self.assertEqual(O.equipos_lista_html(_NOMBRES), "")
         rt = _t(C.resumen_trabajo_html({"equipos": _NOMBRES, "tecnicos": ["Lenin"]}))
-        self.assertIn("Se atendieron 24 equipos; el detalle está en el documento.", rt)
+        self.assertIn("Documento firmado", rt)                                                 # (6-nov, auditoría: ni nombres ni cantidad; ya están en la tabla del correo)
         self.assertNotIn("Trotadora", rt)
+        self.assertNotIn("24", rt)
         self.assertLess(len(O.que_esperar_html(_NOMBRES, ["Lenin"])), len(O.que_esperar_html(["A"], ["Lenin"])) + 40)     # no crece con la cantidad
 
     def test_el_resumen_y_la_invitacion_cuentan_bien_el_texto_de_la_cantidad(self):
@@ -74,11 +75,12 @@ class TestSoloLaCantidad(unittest.TestCase):
         amb = {"_ot_com_promesas": lambda: {"recordatorio": True, "documento": True}, "_orec": O, "_ocom": C, "_otc": T}
         FC.extraer(amb, "app.py", ("_ot_com_bloques_creacion",), ())
         b = amb["_ot_com_bloques_creacion"]({"tipo": "instalacion"}, {"tecnico": "Lenin Urbina", "maquina": "24 equipos"}, con_invitacion=True)
-        self.assertIn("Trabajará en 24 equipos.", _t(b["que_esperar_html"]))
+        self.assertNotIn("Trotadora", _t(b["que_esperar_html"]))
+        self.assertIn("confirmar la recepción del trabajo con tu firma", _t(b["que_esperar_html"]))
         b1 = amb["_ot_com_bloques_creacion"]({"tipo": "instalacion"}, {"tecnico": "Lenin Urbina", "maquina": "1 equipo"}, con_invitacion=False)
-        self.assertIn("Trabajará en 1 equipo.", _t(b1["que_esperar_html"]))
+        self.assertEqual(b1["que_esperar_html"], b["que_esperar_html"])                       # igual con 1 o con 24 equipos
         b0 = amb["_ot_com_bloques_creacion"]({"tipo": "instalacion"}, {"tecnico": "Lenin Urbina", "maquina": "—"}, con_invitacion=False)
-        self.assertNotIn("Trabajará en", _t(b0["que_esperar_html"]))
+        self.assertEqual(b0["que_esperar_html"], b["que_esperar_html"])                       # y sin equipos
 
     def test_la_invitacion_de_calendario_dice_la_cantidad_y_no_los_nombres(self):
         import datetime as dt
@@ -104,9 +106,9 @@ class TestSoloLaCantidad(unittest.TestCase):
 class TestElRecorridoDeLaVistaPrevia(unittest.TestCase):
     """Daniel (6-nov): la prueba de «OT terminada» mostraba «2 · Recordatorio» y «Qué sigue: el técnico llega…». Ahora cada correo muestra SU paso."""
 
-    def _demo(self, clave):
-        amb = {"mysql_fetchone": lambda *a, **k: {"asunto": "x", "cuerpo": "{{recorrido_html}}", "activo": 1},
-               "_comm_demo_replacements": lambda: {}, "_ccr": CCR, "_ocom": C, "re": re, "print": lambda *a, **k: None,
+    def _demo(self, clave, cuerpo="{{recorrido_html}}"):
+        amb = {"mysql_fetchone": lambda *a, **k: {"asunto": "x", "cuerpo": cuerpo, "activo": 1},
+               "_comm_demo_replacements": lambda: {}, "_ccr": CCR, "_ocom": C, "_orec": O, "re": re, "print": lambda *a, **k: None,
                "_public_base_url": lambda: "https://ilus.test"}
         FC.extraer(amb, "app.py", ("_comm_correo_demo",), ())
         _a, cuerpo, _i = amb["_comm_correo_demo"]({"clave": clave, "plantilla": ("mantenciones", "x"), "nombre": clave, "demo": {}})
@@ -132,11 +134,20 @@ class TestElRecorridoDeLaVistaPrevia(unittest.TestCase):
         # la vista previa lleva el botón «Ver seguimiento en vivo» a un enlace de EJEMPLO (nunca a una OT real); el resto es idéntico al correo real
         ejemplo = "https://ilus.test/ot-seguimiento/ejemplo"
         self.assertEqual(self._demo("ot_terminada_cliente"), C.recorrido_html("documento", "", url_seguimiento=ejemplo))
-        self.assertEqual(self._demo("ot_recordatorio_cliente"),
-                         C.recorrido_html("recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma.",
-                                          url_seguimiento=ejemplo))
+        self.assertEqual(self._demo("ot_recordatorio_cliente"), C.recorrido_html("recordatorio", "", url_seguimiento=ejemplo))        # sin «Qué sigue» (6-nov, auditoría)
         # y el correo real de «OT terminada» sigue pasando el paso «documento» (cerrado), con el enlace de seguimiento de ESA OT
         self.assertIn('recorrido=_ocom.recorrido_html("documento", url_seguimiento=_ot_seg_url(v_id))', FC.texto("app.py"))
+
+    def test_los_bloques_de_valor_de_la_vista_previa_salen_de_las_funciones_reales(self):
+        """Antes eran textos de ejemplo fijos: el 6-nov la vista previa seguía mostrando «Llegará…» y «Qué sigue» cuando el correo real ya los había quitado."""
+        h = self._demo("ot_recordatorio_cliente", "{{que_esperar_html}}|{{preparacion_html}}|{{resumen_trabajo_html}}")
+        qe, prep, res = h.split("|")
+        self.assertEqual(qe, O.que_esperar_html([], []))
+        self.assertEqual(prep, O.preparacion_html("mantencion"))
+        self.assertEqual(res, C.resumen_trabajo_html({}))
+        for viejo in ("Llegará", "Trabajará en", "Se atendieron", "Lo realizó"):
+            self.assertNotIn(viejo, _t(h), viejo)
+        self.assertNotIn("Qué sigue", _t(self._demo("ot_recordatorio_cliente")))
 
     def test_la_demo_de_equipos_del_registro_ya_es_solo_la_cantidad(self):
         self.assertEqual(CCR.DEMO_EXTRA["maquina"], "2 equipos")
