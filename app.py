@@ -85,6 +85,7 @@ import ot_firma_vigencia as _ofv      # 2026-11-05: el enlace de firma remota de
 import email_outlook_safe as _eos     # 2026-11-06: el HTML del correo se reescribe para Outlook de escritorio (relleno y margen de tablas, botones) justo antes de enviar
 import correos_sin_responder as _csr   # 2026-11-06: ningún correo al cliente dice «responde este correo»: todo va por TICKET (frases + arranque; módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
+import ot_encuesta as _oenc        # 2026-11-06 (REGLA #68): encuesta corta «¿Cómo fue tu servicio?» en el correo «OT terminada» (token, bloque Outlook-safe y rutas; módulo con pruebas)
 import ot_seguimiento as _oseg     # 2026-11-06 (REGLA #67): seguimiento en vivo de la OT para el cliente (paso del servicio, textos y token propio; módulo puro con pruebas)
 import ficha_cliente_cabecera as _fcc  # 2026-11-05: semáforo, motivos y KPIs de la cabecera de la ficha del cliente (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
@@ -6427,6 +6428,10 @@ def _csrf_is_exempt(path: str) -> bool:
         return True
     # Firma de recepción por WhatsApp (2026-10-15): SOLO /retiros/firmar/<token> (quien recibe, sin sesión; token aleatorio de un uso).
     if re.fullmatch(r"/retiros/firmar/[A-Za-z0-9_-]{24,64}", path or ""):
+        return True
+    # Encuesta corta de la OT (2026-11-06, REGLA #68): SOLO /ot-encuesta/<token> (el cliente sin sesión; el token HMAC ya autentica el enlace, y
+    # «vista-previa» es la página de ejemplo que no guarda nada). Los resultados internos (/ot/encuestas) son GET y siguen con sesión.
+    if re.fullmatch(r"/ot-encuesta/(?:vista-previa|[A-Za-z0-9_\-]{8,160}\.[0-9a-f]{24})", path or ""):
         return True
     for pref in _CSRF_EXEMPT_PREFIXES:
         if path.startswith(pref):
@@ -55658,6 +55663,12 @@ def _comm_correo_demo(c):
             mapa["recorrido_html"] = _ocom.recorrido_html(*_paso, url_seguimiento=f"{_public_base_url()}/ot-seguimiento/ejemplo")
         except Exception as exc:
             print(f"[comm-correos] demo {c['clave']}: recorrido {type(exc).__name__}", flush=True)
+    # Encuesta corta «¿Cómo fue tu servicio?» (REGLA #68): la vista previa y «Enviarme una prueba» la muestran SIEMPRE, aunque el correo real todavía no la lleve
+    # (OT_ENCUESTA_ACTIVA apagada). Sus enlaces van a la página de ejemplo (`vista-previa`), que no guarda nada. Si algo falla queda el bloque fijo de DEMO_EXTRA.
+    try:
+        mapa["encuesta_html"] = _oenc.bloque_html(_oenc.enlace_publico(_public_base_url(), _oenc.TOKEN_VISTA_PREVIA))
+    except Exception as exc:
+        print(f"[comm-correos] demo {c['clave']}: encuesta {type(exc).__name__}", flush=True)
 
     def _sub(texto):
         return re.sub(r"\{\{\s*([\w\.]+)\s*\}\}",
@@ -144293,6 +144304,51 @@ def _ensure_ot_comunicacion_tablas():
         print(f"[ensure_ot_comunicacion_tablas] {e}", flush=True)
 
 
+# ── ENCUESTA CORTA DE LA OT (Daniel, 6-nov-2026, REGLA #68) ──────────────────────────────────────────────────────────
+def _ensure_ot_encuesta_tabla():
+    """ot_encuesta_respuestas — la respuesta de la encuesta corta «¿Cómo fue tu servicio?» (nota 1 a 5 y comentario opcional), una por OT y por aprobación
+    del cierre (UNIQUE visita + cierre_clave). UN solo CREATE TABLE IF NOT EXISTS y NINGÚN ALTER (REGLA #18: el arranque no bloquea tablas); barata si
+    ya existe. Sin datos personales del cliente (Ley 21.719): ni nombre, ni correo, ni IP."""
+    try:
+        mysql_execute(_oenc.SQL_TABLA)
+    except Exception as e:
+        print(f"[ensure_ot_encuesta_tabla] {e}", flush=True)
+
+
+def _ot_encuesta_html(vid, cierre_clave, demo=False):
+    """El bloque «¿Cómo fue tu servicio?» del correo AL CLIENTE (variable `{{encuesta_html}}`). En los correos REALES solo existe con la encuesta activa
+    (`OT_ENCUESTA_ACTIVA`: REGLA #23, no se manda nada nuevo a clientes sin el «sí» de Daniel); con `demo=True` (vista previa y «Enviarme una prueba») se
+    dibuja SIEMPRE y apunta a la página de ejemplo, que no guarda nada. Nunca lanza: ante cualquier error el correo sale sin el bloque."""
+    try:
+        if demo:
+            token = _oenc.TOKEN_VISTA_PREVIA
+        else:
+            if not _oenc.encuesta_activa():
+                return ""
+            token = _oenc.generar_token(_oenc.secreto_de(app), vid, cierre_clave)
+        return _oenc.bloque_html(_oenc.enlace_publico(_public_base_url(), token)) if token else ""
+    except Exception as e:
+        print(f"[ot-encuesta] bloque vid={vid}: {type(e).__name__}", flush=True)
+        return ""
+
+
+def _ot_encuesta_para_ficha(vid, cierre_clave):
+    """Lo que la ficha de una OT CERRADA muestra de la encuesta (solo gestión: la llama `_ot_com_contexto_ficha`, que a un técnico no le arma nada):
+    {activa, respondida, puntaje, estrellas, etiqueta, comentario, cuando, de_otro_cierre}. Nunca lanza."""
+    out = {"activa": _oenc.encuesta_activa(), "respondida": False}
+    try:
+        r = mysql_fetchone(
+            "SELECT puntaje, comentario, creada_at, cierre_clave FROM ot_encuesta_respuestas WHERE visita_id=%s ORDER BY id DESC LIMIT 1", (int(vid),))
+        if r:
+            n = int(r.get("puntaje") or 0)
+            out.update(respondida=True, puntaje=n, estrellas=_oenc.estrellas_txt(n), etiqueta=(_oenc.ESCALA.get(n) or {}).get("etiqueta", ""),
+                       comentario=(r.get("comentario") or ""), cuando=(chile_fmt_filter(r.get("creada_at")) if r.get("creada_at") else ""),
+                       de_otro_cierre=(str(r.get("cierre_clave") or "") != str(cierre_clave or "")))
+    except Exception as e:
+        print(f"[ot-encuesta] ficha vid={vid}: {type(e).__name__}", flush=True)
+    return out
+
+
 def _ensure_comm_template_ot_comunicacion():
     """Siembra las cuatro plantillas de la comunicación de la OT (ot_terminada, ot_terminada_interno, ot_terminada_tecnico, ot_envio_manual)
     en el editor de Comunicaciones AUNQUE ILUS_SKIP_MIGRATIONS=1. Solo si NO existen: jamás pisa lo que Daniel editó."""
@@ -144581,11 +144637,14 @@ def _ot_terminada_notificar(vid, origen="aprobar_cierre"):
                        cerrada_en=datos["cerrada_en"], tecnicos_nombres=datos["personas"],
                        recorrido=_ocom.recorrido_html("documento", url_seguimiento=_ot_seg_url(v_id)))
         contacto = (datos["fila"].get("contacto_nombre") or datos["fila"].get("cli_contacto_nombre") or "").strip()
+        # «¿Cómo fue tu servicio?» (REGLA #68): SOLO el correo al cliente la lleva y solo con la encuesta activa; el equipo y el técnico no la reciben.
+        encuesta_cli = _ot_encuesta_html(v_id, datos["cierre_clave"]) if _ocom.a_intentar(plan, "cliente") else ""
 
         # 1) al cliente (UN correo por dirección: cada uno queda con su resultado)
         for it in _ocom.a_intentar(plan, "cliente"):
             try:
-                vs = _ocom.variables_ot(ot, nombre_destinatario=(contacto if it.get("origen") == "contacto_ot" else ""), **comunes)
+                vs = _ocom.variables_ot(ot, nombre_destinatario=(contacto if it.get("origen") == "contacto_ot" else ""), encuesta=encuesta_cli,
+                                        **comunes)
                 asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_TERMINADA, vs)
                 asunto = _brand_subject(asunto)
                 ok = _send_ilus_email(it["correo"], asunto, _comm_render_email_document(asunto, cuerpo, subtitle=_otc.etiqueta_ot(numero)),
@@ -144759,7 +144818,8 @@ def ot2_api_com_vista_previa(vid):
         return _ot2_err("Esa OT no existe.", "OT_NO_EXISTE", http=404)
     d = request.get_json(silent=True) or {}
     vs = _ocom.variables_ot(datos["ot"], link_ot_firmada=_ot_com_enlace_firmada(vid), mensaje=_ocom.mensaje_para(d.get("mensaje")),
-                            enviado_por=(current_username() or ""), tecnicos_nombres=datos["personas"])
+                            enviado_por=(current_username() or ""), tecnicos_nombres=datos["personas"],
+                            encuesta=_ot_encuesta_html(vid, datos["cierre_clave"]))        # lo que verá el CLIENTE: con la encuesta solo si está activa
     asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_MANUAL, vs)
     asunto = _brand_subject(_ocom.asunto_para(d.get("asunto"), asunto))
     return jsonify({"ok": True, "asunto": asunto, "html": _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {datos['numero']}")})
@@ -144804,16 +144864,20 @@ def ot2_api_com_enviar(vid):
     usuario = (current_username() or "sistema")[:190]
     ref = {"tipo": "OT", "id": v_id, "codigo": numero}
     enlace_doc = _ot_com_enlace_firmada(v_id)
+    encuesta_cli = _ot_encuesta_html(v_id, datos["cierre_clave"])         # solo con la encuesta activa; '' si no (REGLA #68)
     resultados = []
     for p in pedidos_cl:
         item = {"grupo": "tecnico" if p["tecnico"] else ("cliente" if p["rol"] == "cliente" else "responsable"),
                 "rol": p["rol"], "rol_txt": p["rol_txt"], "nombre": p["nombre"], "correo": p["correo"], "estado": _ocom.EST_SALE,
                 "motivo": "", "tecnico": bool(p["tecnico"])}
         try:
+            # La encuesta es para el CLIENTE (o una persona suya que se escribió a mano): jamás para el equipo de ILUS ni para un técnico, porque
+            # quien toca un número del correo responde la encuesta.
+            con_encuesta = (not p["tecnico"]) and p["rol"] in ("cliente", "otro")
             vs = _ocom.variables_ot(datos["ot"], nombre_destinatario=p["nombre"], link_ot_firmada=enlace_doc,
                                     link_ot=(f"{_public_base_url()}/ot/{v_id}" if p["tecnico"] else ""),
                                     mensaje=_ocom.mensaje_para(d.get("mensaje"), p["tecnico"]), enviado_por=usuario,
-                                    tecnicos_nombres=datos["personas"])
+                                    tecnicos_nombres=datos["personas"], encuesta=(encuesta_cli if con_encuesta else ""))
             asunto_def, cuerpo = _ot_com_armar(_ocom.PLANTILLA_MANUAL, vs)
             asunto = _brand_subject(_ocom.asunto_para(d.get("asunto"), asunto_def, p["tecnico"]))
             html = _comm_render_email_document(asunto, cuerpo, subtitle=_otc.etiqueta_ot(numero))
@@ -144874,6 +144938,8 @@ def _ot_com_contexto_ficha(vid, v):
                 "SELECT id, tipo, cierre_clave, cliente_estado, detalle_json FROM mant_ot_comunicaciones "
                 " WHERE visita_id=%s ORDER BY id DESC LIMIT 30", (int(vid),)) or []
             ctx["franja"] = _ocom.franja_pendiente(filas, _ocom.cierre_clave(v.get("cerrada_at")))
+            # 😊 REGLA #68: lo que respondió el cliente en «¿Cómo fue tu servicio?» (solo gestión, solo OT cerrada). Una falla aquí no toca lo demás.
+            ctx["encuesta"] = _ot_encuesta_para_ficha(vid, _ocom.cierre_clave(v.get("cerrada_at")))
         if puede:
             r = mysql_fetchone(
                 "SELECT id, detalle_json, creado_por, creado_at FROM mant_ot_comunicaciones "
@@ -168996,6 +169062,14 @@ try:
 except Exception as _enc_reg_err:
     print(f"[ILUS][WARN] register_encuesta_routes: {_enc_reg_err}")
 
+# Encuesta corta de la OT (Daniel 2026-11-06, REGLA #68): página pública /ot-encuesta/<token> y resultados internos /ot/encuestas. El bloque solo viaja en
+# los correos REALES con OT_ENCUESTA_ACTIVA=1 (nace APAGADA); la página existe siempre porque no guarda nada al abrirse.
+try:
+    _oenc.register_ot_encuesta_routes(app, globals())
+    print("[ILUS] Encuesta corta de la OT registrada.")
+except Exception as _oenc_reg_err:
+    print(f"[ILUS][WARN] register_ot_encuesta_routes: {_oenc_reg_err}")
+
 # Modulo TICKETS CENTRAL (fork de ilus-back/front replicado en Flask). Fase 1:
 # CRUD interno + conversacion interna + adjuntos GCS + autocompletar cliente
 # desde el ERP. Ver BLUEPRINT-TICKETS-CENTRAL.md. No toca mant_tickets (Regla #4.2).
@@ -186513,6 +186587,7 @@ except Exception as _ensure_ottec_err:
 try:
     with app.app_context():
         _ensure_ot_comunicacion_tablas()
+        _ensure_ot_encuesta_tabla()           # 2026-11-06 (REGLA #68): respuestas de la encuesta corta de la OT (un solo CREATE TABLE IF NOT EXISTS, sin ALTER)
         _ensure_comm_template_ot_comunicacion()
         _ensure_correos_sin_responder()       # 2026-11-06: «nunca se responde al correo»: las frases viejas de las plantillas guardadas pasan al ticket
         _ensure_ot_recordatorios_tabla()      # 2026-11-05: constancia del recordatorio de 24 horas (CREATE TABLE IF NOT EXISTS, barata)

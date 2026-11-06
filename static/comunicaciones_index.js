@@ -860,6 +860,7 @@ const TPL_VARS = {
     { v:'{{horario}}',             label:'Horario de la visita (solo en los recordatorios de 24 horas)' },
     { v:'{{resumen_trabajo_html}}',label:'Caja «Resumen del trabajo»: equipos atendidos, quién lo hizo y las tres firmas (OT terminada)' },
     { v:'{{recorrido_html}}',      label:'«Tu servicio, paso a paso»: agendada → recordatorio → visita y firma → documento firmado, con el paso actual resaltado (correos al cliente)' },
+    { v:'{{encuesta_html}}',       label:'Encuesta corta «¿Cómo fue tu servicio?» con los números del 1 al 5 (OT terminada y Enviar OT por correo, solo al cliente; sale únicamente con la encuesta activa)' },
     { v:'{{firma_sstt_html}}',     label:'Firma «Equipo de Servicio Técnico · ILUS Fitness» (correos al cliente)' },
     { v:'{{invitacion_html}}',     label:'Aviso de la invitación de calendario adjunta (solo «OT creada» al cliente)' },
     { v:'{{que_esperar_html}}',    label:'Caja «Qué va a pasar» (recordatorio al cliente)' },

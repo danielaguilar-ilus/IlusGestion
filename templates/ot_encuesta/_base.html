@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+{# ILUS Fitness · Encuesta corta de la orden de trabajo (REGLA #68) — layout público, sin menú ni base.html.
+   Mismo lenguaje de Retiros (barra negra, tarjetas, círculo rojo → verde) pero con UNA sola pregunta. Sin librerías por CDN ni tipografías externas
+   (no se le manda la IP de nadie a un tercero: Ley 21.719). #}
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>{% block titulo %}Tu opinión — ILUS Fitness{% endblock %}</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='Logo.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='ot_encuesta.css') }}">
+</head>
+<body class="oe-body{% block clase_body %}{% endblock %}">
+  <a class="oe-skip" href="#oe-main">Saltar al contenido</a>
+
+  <div class="oe-minibar">
+    <span class="oe-minipill">{% block pildora %}Tu opinión{% endblock %}</span>
+    <span class="oe-minitxt">Servicio técnico</span>
+  </div>
+
+  {% if vista_previa %}
+  <div class="oe-preview" role="status">
+    <strong>VISTA PREVIA.</strong> Así la ve un cliente. No se guarda nada y no se envía a nadie.
+  </div>
+  {% endif %}
+
+  <main id="oe-main" class="oe-main">
+    {% block contenido %}{% endblock %}
+  </main>
+
+  <footer class="oe-footer">
+    <img src="{{ url_for('static', filename='logo_ilus_black.png') }}" alt="ILUS Fitness" width="96" height="32" decoding="async" loading="lazy">
+    <p>ILUS Fitness · Servicio técnico</p>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -992,6 +992,13 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
         <i class="bi bi-tv me-1"></i>Monitor
       </a>
       {% endif %}
+      {#- 😊 2026-11-06 (REGLA #68): satisfacción de los clientes (encuesta corta «¿Cómo fue tu servicio?»). Solo gestión: la ruta lleva @_no_tecnico. -#}
+      {% if not es_tecnico %}
+      <a href="/ot/encuestas" class="btn btn-sm btn-outline-light"
+         title="Cómo calificaron los clientes el servicio: promedio, comentarios y notas por revisar">
+        <i class="bi bi-emoji-smile me-1"></i>Satisfacción
+      </a>
+      {% endif %}
       <button type="button" class="btn btn-sm btn-light fw-bold" onclick="OT2C.abrir()">
         <i class="bi bi-plus-lg me-1"></i>Generar OT
       </button>

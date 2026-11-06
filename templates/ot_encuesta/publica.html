@@ -1,0 +1,57 @@
+{% extends "ot_encuesta/_base.html" %}
+{# Encuesta corta de la OT — UNA pregunta (nota del 1 al 5) y un comentario opcional. Funciona sin JavaScript (POST normal); el JS solo agrega el contador,
+   la etiqueta de la nota elegida y la guía si falta la nota. NO se guarda nada al abrir el enlace: solo cuando la persona toca «Enviar». #}
+{% block titulo %}¿Cómo fue tu servicio? — ILUS Fitness{% endblock %}
+
+{% block contenido %}
+<form id="oeForm" class="oe-form{{ ' is-done' if nota else '' }}" method="post" action="{{ accion }}" novalidate>
+
+  <header class="oe-hero">
+    <img src="{{ url_for('static', filename='logo_ilus_fitness_blanco.png') }}" class="oe-hero-logo" alt="ILUS Fitness" width="140" height="50" decoding="async" fetchpriority="high">
+    <h1 class="oe-hero-title">¿Cómo fue tu <span class="oe-red">servicio</span>?</h1>
+    <p class="oe-hero-copy">Elige una nota. Te toma 10 segundos.</p>
+    {% if numero %}<p class="oe-hero-ot">Orden de trabajo <strong>{{ numero }}</strong></p>{% endif %}
+  </header>
+
+  {% if errores %}
+  <div class="oe-errores" role="alert" id="oeErrores">
+    <strong>{{ errores.get('_general') or errores.get('puntaje') or 'Revisa tu respuesta.' }}</strong>
+  </div>
+  {% endif %}
+
+  <section class="oe-card{{ ' has-error' if errores.get('puntaje') else '' }}" id="oePaso1">
+    <fieldset class="oe-q">
+      <legend class="oe-q-text" id="oeNotaT">¿Qué nota le pones?</legend>
+      <div class="oe-escala" role="radiogroup" aria-labelledby="oeNotaT">
+        {% for n in range(1, 6) %}
+          <input class="oe-radio" type="radio" name="n" id="oe-n{{ n }}" value="{{ n }}"{{ ' checked' if nota == n }}>
+          <label class="oe-pill esc-{{ n }}" for="oe-n{{ n }}" data-etiqueta="{{ escala[n].etiqueta }}">
+            <span class="oe-face" aria-hidden="true">{{ escala[n].cara }}</span>
+            <span class="oe-pill-n">{{ n }}<span class="oe-sr"> de 5, {{ escala[n].etiqueta }}</span></span>
+          </label>
+        {% endfor %}
+      </div>
+      <div class="oe-leyenda" aria-hidden="true"><span>1 · Mala</span><span>5 · Excelente</span></div>
+      <p class="oe-elegida" id="oeElegida" role="status" aria-live="polite">{% if nota %}Tu nota: <strong>{{ nota }} · {{ escala[nota].etiqueta }}</strong>{% endif %}</p>
+      {% if errores.get('puntaje') %}<p class="oe-error" role="alert">{{ errores.get('puntaje') }}</p>{% endif %}
+    </fieldset>
+  </section>
+
+  <section class="oe-card oe-card-suave">
+    <label for="oeComentario" class="oe-label">¿Algo que quieras contarnos? <span class="oe-opt">(opcional)</span></label>
+    <textarea id="oeComentario" name="comentario" rows="3" maxlength="{{ max_comentario }}" placeholder="Escríbelo aquí si quieres">{{ comentario or '' }}</textarea>
+    <div class="oe-count"><span id="oeCuenta">0</span> / {{ max_comentario }}</div>
+  </section>
+
+  <div class="oe-enviar">
+    <p class="oe-faltan" id="oeFaltan" role="status" aria-live="polite"></p>
+    <button type="submit" class="oe-btn" id="oeEnviar">Enviar</button>
+    <p class="oe-legal">Usamos tu respuesta solo para {{ aviso.finalidad }}. No te pedimos tu nombre ni tus datos, no guardamos tu dirección IP y la conservamos hasta {{ aviso.meses }} meses.
+      Si no quieres responder, simplemente cierra esta página. Dudas o derechos sobre tus datos: <a href="mailto:{{ aviso.contacto }}">{{ aviso.contacto }}</a> ({{ aviso.razon }}).</p>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='ot_encuesta.js') }}" defer></script>
+{% endblock %}

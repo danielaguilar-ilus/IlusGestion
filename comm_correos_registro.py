@@ -41,6 +41,8 @@ vista previa y las cifras salen solas del registro.
 import os
 import re
 
+import ot_encuesta as _oenc        # el bloque «¿Cómo fue tu servicio?» de la vista previa (módulo puro, sin dependencias del proyecto)
+
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 #  Catálogos de la pantalla
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -148,6 +150,9 @@ DEMO_EXTRA = {
                         'ILUS Fitness &middot; Gracias por confiar en nosotros.</p>'),
     "invitacion_html": ('<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65"><strong>Agrégala a tu calendario:</strong> te adjuntamos la '
                         'invitación (archivo .ics). Ábrela y acéptala para que la visita quede en tu agenda.</p>'),
+    # Encuesta corta de la OT (6-nov-2026, REGLA #68): la vista previa y «Enviarme una prueba» la muestran SIEMPRE (el correo real solo la lleva con la encuesta
+    # activa). Sus enlaces van a la página de ejemplo (`/ot-encuesta/vista-previa`), que no guarda nada. `_comm_correo_demo` la rearma con la URL real de la app.
+    "encuesta_html": _oenc.bloque_html("https://ilusfitness.com/ot-encuesta/vista-previa"),
     # Bloques de valor (5-nov-2026): solo para la vista previa, con datos de mentira.
     "resumen_trabajo_html": ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #16a34a;'
                              'border-radius:4px;padding:14px 18px;margin:18px 0"><tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;'
@@ -431,7 +436,9 @@ REGISTRO = (
             "cuando el responsable de Servicio Técnico firma el cierre, es decir, con las tres firmas puestas (técnico, cliente y responsable). "
             "No manda nada retroactivo: solo las OT que se aprueben desde que está encendido. Una OT terminada cuyo aviso al cliente no salió "
             "muestra en su ficha «todavía no se le envió al cliente» con el botón «Enviar OT por correo». Además de este interruptor, tiene que "
-            "estar abierta la llave de Servicio Técnico. Freno de emergencia: la variable OT_TERMINADA_CLIENTE_ACTIVA=0 lo apaga aunque esté encendido."),
+            "estar abierta la llave de Servicio Técnico. Freno de emergencia: la variable OT_TERMINADA_CLIENTE_ACTIVA=0 lo apaga aunque esté encendido. "
+            "Lleva la encuesta corta «¿Cómo fue tu servicio?» (del 1 al 5) solo cuando está activa (OT_ENCUESTA_ACTIVA, REGLA #68); la vista previa y "
+            "«Enviarme una prueba» la muestran siempre. Mientras OT_ENCUESTA_ACTIVA no esté encendida (solo con el «sí» de Daniel), el correo real sale sin ese bloque."),
     _c("ot_terminada_responsable", "OT terminada: aviso a quien la creó, al ejecutivo o al responsable", "ot", "mantenciones",
        "responsable_ot",
        "Al APROBAR el cierre de una OT: quien la creó, el ejecutivo del cliente o el responsable de la OT (los decide "
@@ -465,7 +472,8 @@ REGISTRO = (
        plantilla=("mantenciones", "ot_envio_manual"), adjunta="Enlace al documento firmado (sin montos)",
        avisa_a="A los correos que se elijan en el modal",
        nota="Dice la verdad por destinatario: «Se envió a…» o «No salió porque…». Un técnico nunca lo recibe por esta llave: sale por la "
-            "de «Correos a técnicos (OT)» (ot_tec_envio_manual)."),
+            "de «Correos a técnicos (OT)» (ot_tec_envio_manual). Al CLIENTE le suma la encuesta corta «¿Cómo fue tu servicio?» cuando está activa "
+            "(OT_ENCUESTA_ACTIVA, REGLA #68); al equipo y a los técnicos nunca."),
     _c("ot_tec_envio_manual", "Enviar OT por correo: copia al técnico (sin montos)", "ot", "ot_tecnicos", "tecnico",
        "Cuando el envío manual de la OT incluye a un técnico (de esa OT o de cualquiera): sale por la llave de «Correos a técnicos (OT)» y "
        "el mensaje que escribió quien envía pierde las líneas que mencionen plata, proveedores u OC.",

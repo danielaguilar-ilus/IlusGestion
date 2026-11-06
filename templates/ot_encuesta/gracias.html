@@ -1,0 +1,28 @@
+{% extends "ot_encuesta/_base.html" %}
+{# Gracias — cálido y corto. Con nota 1–2: «Lamentamos no haber estado a la altura» y el botón para crear un ticket de soporte. #}
+{% block titulo %}Gracias por tu opinión — ILUS Fitness{% endblock %}
+{% block pildora %}Gracias{% endblock %}
+{% block contenido %}
+<section class="oe-gracias oe-tono-{{ tono }}" aria-live="polite">
+  <div class="oe-gracias-circle" aria-hidden="true">{{ '✓' if tono != 'baja' else '♥' }}</div>
+  {% if ya_respondida %}
+    <h1>Ya recibimos tu respuesta, gracias</h1>
+    <p>Tu opinión ya está con nuestro equipo. No hace falta que hagas nada más.</p>
+  {% elif tono == 'baja' %}
+    <h1>Gracias por contárnoslo</h1>
+    <p><strong>Lamentamos no haber estado a la altura.</strong> Tu respuesta llega directo al equipo de Servicio Técnico. Si quieres que lo resolvamos, cuéntanos qué pasó en un ticket de soporte.</p>
+  {% elif tono == 'media' %}
+    <h1>¡Gracias por tu opinión!</h1>
+    <p>La usamos para que tu próximo servicio sea todavía mejor.</p>
+  {% else %}
+    <h1>¡Gracias por tu opinión!</h1>
+    <p>Nos alegra que te haya ido bien. Tu respuesta llega directo al equipo de Servicio Técnico.</p>
+  {% endif %}
+  {% if tono == 'baja' and not vista_previa %}
+    <p class="oe-gracias-btn"><a class="oe-btn oe-btn-link" href="{{ soporte_url }}" target="_blank" rel="noopener noreferrer">Crear ticket de soporte</a></p>
+  {% elif tono == 'baja' %}
+    <p class="oe-gracias-btn"><span class="oe-btn oe-btn-link" aria-disabled="true">Crear ticket de soporte</span></p>
+  {% endif %}
+  <p class="oe-gracias-firma">Equipo de Servicio Técnico · ILUS Fitness</p>
+</section>
+{% endblock %}

@@ -1,0 +1,22 @@
+{% extends "ot_encuesta/_base.html" %}
+{# Enlace inválido, vencido o demasiados intentos: un mensaje amable, sin detalles internos. #}
+{% block titulo %}Enlace no disponible — ILUS Fitness{% endblock %}
+{% block pildora %}Tu opinión{% endblock %}
+{% block contenido %}
+<section class="oe-gracias oe-nodisp" aria-live="polite">
+  <div class="oe-gracias-circle oe-gracias-gris" aria-hidden="true">i</div>
+  {% if demasiados %}
+    <h1>Demasiados intentos</h1>
+    <p>Espera unos minutos y vuelve a intentarlo con el enlace de tu correo.</p>
+  {% elif vencido %}
+    <h1>Este enlace ya venció</h1>
+    <p>La encuesta de tu servicio estuvo disponible por unos días y ese plazo terminó. Gracias igual por tu tiempo.</p>
+  {% else %}
+    <h1>Este enlace no está disponible</h1>
+    <p>Puede estar incompleto o haber dejado de servir. Prueba abrirlo de nuevo desde el correo que te enviamos.</p>
+  {% endif %}
+  <p class="oe-gracias-nota">Si necesitas ayuda con tu servicio, crea un ticket de soporte.</p>
+  <p class="oe-gracias-btn"><a class="oe-btn oe-btn-link" href="{{ soporte_url }}" target="_blank" rel="noopener noreferrer">Crear ticket de soporte</a></p>
+  <p class="oe-gracias-firma">Equipo de Servicio Técnico · ILUS Fitness</p>
+</section>
+{% endblock %}

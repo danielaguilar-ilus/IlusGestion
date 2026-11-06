@@ -18,6 +18,26 @@
   <button type="button" class="oe-btn" data-oe-abrir=""><i class="bi bi-envelope-paper-fill" aria-hidden="true"></i> Enviar OT por correo</button>
 </div>
 {% endif %}
+{#- 😊 2026-11-06 (REGLA #68): la nota y el comentario que dejó el cliente en «¿Cómo fue tu servicio?» de ESTA OT. Solo gestión (el servidor no arma `encuesta` para un técnico)
+    y solo una OT cerrada. El comentario lo escribió el cliente: se muestra siempre escapado. -#}
+{% if _ce.encuesta and _ce.puede_enviar %}
+{% set _en = _ce.encuesta %}
+{% if _en.respondida %}
+<section class="oen-card n{{ _en.puntaje }}" id="oeEncuesta" aria-label="Satisfacción del cliente con esta orden de trabajo">
+  <div class="oen-cab"><b><i class="bi bi-emoji-smile" aria-hidden="true"></i> Satisfacción del cliente</b>
+    <span class="oen-nota n{{ _en.puntaje }}"><span class="est" aria-hidden="true">{{ _en.estrellas }}</span> {{ _en.puntaje }} · {{ _en.etiqueta }}</span></div>
+  {% if _en.comentario %}<p class="oen-com">{{ _en.comentario }}</p>{% else %}<p class="oen-sub">Sin comentario.</p>{% endif %}
+  <p class="oen-sub">Respondió el {{ _en.cuando }}{% if _en.de_otro_cierre %} · fue por una aprobación anterior del cierre de esta OT{% endif %}.
+    <a href="/ot/encuestas">Ver todas las respuestas</a></p>
+</section>
+{% else %}
+<section class="oen-card" id="oeEncuesta" aria-label="Satisfacción del cliente con esta orden de trabajo">
+  <div class="oen-cab"><b><i class="bi bi-emoji-smile" aria-hidden="true"></i> Satisfacción del cliente</b></div>
+  <p class="oen-sub">{% if _en.activa %}El cliente todavía no responde la encuesta de esta OT.{% else %}La encuesta todavía no se envía a los clientes: se activa con el «sí» de Daniel.{% endif %}
+    <a href="/ot/encuestas">Ver todas las respuestas</a></p>
+</section>
+{% endif %}
+{% endif %}
 {% if _ce.creacion %}
 <div class="oe-creacion" id="oeCreacion" data-oe-id="{{ _ce.creacion.id }}" role="status">
   <div class="oe-creacion-cab"><b><i class="bi bi-envelope-check-fill" aria-hidden="true"></i> Avisos por correo de la creación de esta OT</b>
