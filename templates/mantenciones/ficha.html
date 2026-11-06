@@ -13,6 +13,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='modal_generar_ot.css') }}">
 {#- 🧾 2026-10-24 (Daniel): «Editar cliente» con semáforo, pasos y validación de Google, como el formulario de OT. -#}
 <link rel="stylesheet" href="{{ url_for('static', filename='cliente_form.css') }}">
+{#- 🗂️ 2026-11-05 (Daniel: «ahorrar pestañas»): las 15 pestañas en 5 secciones, con «Vista clásica» de respaldo. -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='ficha_grupos.css') }}">
 
 {# ── Breadcrumb ─────────────────────────────────────── #}
 <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
@@ -191,8 +193,29 @@
   </div>
 </div>
 
-{# ── Tabs ─────────────────────────────────────────── #}
+{# ── Tabs ───────────────────────────────────────────
+   2026-11-05 (Daniel: «ese módulo es viejo, quisiera enchularlo y AHORRAR PESTAÑAS»): las 15 pestañas de abajo se agrupan en 5 SECCIONES, sin quitar
+   ninguna (REGLA #4.2). static/ficha_grupos.js MUEVE los botones originales (con sus ids, contadores y eventos) a los chips de su sección y envuelve
+   switchTab(); «Vista clásica» devuelve la barra de 15 pestañas tal cual. El script de abajo solo marca la vista ANTES de pintar (sin parpadeo). #}
+<script>try{if(window.localStorage.getItem('ficha_vista')!=='clasica')document.documentElement.classList.add('fg-nueva');}catch(e){document.documentElement.classList.add('fg-nueva');}</script>
 <div class="ficha-tabs-wrap" style="border-radius:0 0 0 0">
+  <div class="fg-top">
+    <div class="fg" id="fgNav" role="tablist" aria-label="Secciones de la ficha del cliente">
+      <button type="button" class="fg-btn" id="fgBtn-resumen" data-grupo="resumen" role="tab" aria-selected="false"><i class="bi bi-grid-1x2" aria-hidden="true"></i><span>Resumen</span></button>
+      <button type="button" class="fg-btn" id="fgBtn-equipos" data-grupo="equipos" role="tab" aria-selected="false"><i class="bi bi-bicycle" aria-hidden="true"></i><span>Equipos y plan</span></button>
+      <button type="button" class="fg-btn" id="fgBtn-servicio" data-grupo="servicio" role="tab" aria-selected="false"><i class="bi bi-wrench-adjustable" aria-hidden="true"></i><span>Servicio</span></button>
+      <button type="button" class="fg-btn" id="fgBtn-comercial" data-grupo="comercial" role="tab" aria-selected="false"><i class="bi bi-receipt" aria-hidden="true"></i><span>Comercial</span></button>
+      <button type="button" class="fg-btn" id="fgBtn-comunicacion" data-grupo="comunicacion" role="tab" aria-selected="false"><i class="bi bi-chat-dots" aria-hidden="true"></i><span>Comunicación</span></button>
+    </div>
+    <button type="button" class="fg-vista" id="fgVista" data-vista="nueva" title="Volver a la barra de 15 pestañas de siempre"><i class="bi bi-layout-text-sidebar" aria-hidden="true"></i><span>Vista clásica</span></button>
+  </div>
+  <div class="fg-subs" id="fgSubs">
+    <div class="fg-sub" data-grupo="resumen" role="tablist" aria-label="Resumen"></div>
+    <div class="fg-sub" data-grupo="equipos" role="tablist" aria-label="Equipos y plan"></div>
+    <div class="fg-sub" data-grupo="servicio" role="tablist" aria-label="Servicio"></div>
+    <div class="fg-sub" data-grupo="comercial" role="tablist" aria-label="Comercial"></div>
+    <div class="fg-sub" data-grupo="comunicacion" role="tablist" aria-label="Comunicación"></div>
+  </div>
   <div class="ficha-tabs">
     {# ★ Vida del cliente (2026-09-26, Daniel: "es lo más importante") --
        pestaña NUEVA, primera de todas. Las 13 que ya existían (empezando
@@ -3958,9 +3981,20 @@ function tkFichaCambiarPagina(delta){
   </div>
 </div>
 
+{# 2026-11-05 (Daniel: «todo se centraliza en la ficha del cliente»): esta pestaña ahora muestra los CORREOS REALES que se le mandaron a este cliente
+   (OT creada con invitación, recordatorio de 24 h, firma remota, OT terminada, cotizaciones, tickets…) con su estado, y quién recibe sus avisos
+   automáticos. Lo llena cargarComunicaciones() con GET /mantenciones/api/clientes/<id>/comunicaciones. La campana interna de siempre sigue abajo. #}
+<div id="comAvisos" class="fc-avisos" aria-live="polite"></div>
+<div id="comFiltros" class="fc-filtros"></div>
 <div id="comListado">
   <div class="text-center py-3 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>
 </div>
+<div id="comPaginador" class="fc-pag"></div>
+
+<details class="fc-campana" id="comCampanaWrap">
+  <summary><i class="bi bi-bell me-2" aria-hidden="true"></i>Notificaciones internas y WhatsApp de este cliente (la campana de siempre)</summary>
+  <div id="comCampana" class="pt-2"></div>
+</details>
 
 </div>
 {# /tab-comunicaciones #}
@@ -6725,6 +6759,8 @@ const TIPO_LABEL = {};
    necesario (CID/_TKOT solo se leen dentro de funciones, en tiempo de
    click, nunca al cargar el script), pero mantiene el orden lógico. #}
 <script src="{{ url_for('static', filename='tickets_ficha.js') }}" defer></script>
+{# Secciones de la ficha (5-nov-2026): va DESPUÉS de mant_ficha.js, que define switchTab() (los scripts defer corren en orden). #}
+<script src="{{ url_for('static', filename='ficha_grupos.js') }}" defer></script>
 
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Generar Orden de Trabajo

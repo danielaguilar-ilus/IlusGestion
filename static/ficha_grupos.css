@@ -1,0 +1,136 @@
+/* ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+   FICHA DEL CLIENTE — SECCIONES (Daniel, 5-nov-2026: «ese módulo es viejo, quisiera enchularlo y AHORRAR PESTAÑAS»)
+   Las 15 pestañas de siempre se agrupan en 5 secciones. NADA se quita (REGLA #4.2): cada pestaña sigue existiendo como un «chip» dentro de su
+   sección, y `switchTab()` sigue siendo la única puerta. La capa la arma static/ficha_grupos.js moviendo los botones originales (con sus ids,
+   contadores y eventos) y se puede apagar con «Vista clásica» (localStorage `ficha_vista`).
+   Medidas (REGLA #61): botones de 44 px, letra ≥ 13 px, sin scroll de lado a 390 / 820 / 1280 / 1366 / 1440.
+   ══════════════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* La barra de 15 pestañas queda invisible SOLO mientras la capa nueva se arma (y vuelve sola a los 3 s si el JS no cargó). */
+@keyframes fgRevelar { to { visibility: visible; } }
+.fg-nueva:not(.fg-listo) .ficha-tabs { visibility: hidden; animation: fgRevelar 0s linear 3s forwards; }
+
+.fg-nueva.fg-listo .ficha-tabs { display: none; }        /* la barra de 15 queda vacía: sus botones viven dentro de las secciones */
+.fg-top { display: none; }
+.fg-listo .fg-top { display: flex; }
+.fg-top { align-items: flex-end; gap: 10px; padding: 8px 12px 0; flex-wrap: wrap; }
+
+/* ── Las 5 secciones ───────────────────────────────────────────────────────────────────────────────────── */
+.fg { display: none; flex: 1 1 auto; min-width: 0; gap: 8px; flex-wrap: wrap; }
+.fg-nueva.fg-listo .fg { display: flex; }
+.fg-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; padding: 8px 18px; flex: 0 1 auto;
+  border: 1px solid #e5e7eb; border-bottom: 0; border-radius: 12px 12px 0 0;
+  background: #fff; color: #374151; font-size: .875rem; font-weight: 700; line-height: 1.2; cursor: pointer;
+  transition: background-color .15s, color .15s, box-shadow .15s;
+}
+.fg-btn i { font-size: 1rem; color: #6b7280; }
+.fg-btn:hover { background: #f3f4f6; color: #0a0a0a; }
+.fg-btn:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; }
+.fg-btn.on { background: #0a0a0a; border-color: #0a0a0a; color: #fff; box-shadow: inset 0 -3px 0 #dc2626; }
+.fg-btn.on i { color: #fff; }
+
+/* Botón «Vista clásica / Vista nueva»: siempre visible, a la derecha. */
+.fg-vista {
+  margin-left: auto; min-height: 44px; padding: 8px 14px; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px dashed #cbd5e1; border-radius: 10px; background: #fff; color: #475569; font-size: .8125rem; font-weight: 600; cursor: pointer;
+}
+.fg-vista:hover { background: #f8fafc; color: #0a0a0a; border-color: #94a3b8; }
+.fg-vista:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; }
+
+/* ── Los chips de cada sección (los botones ORIGINALES de las pestañas, movidos acá) ─────────────────────── */
+.fg-subs { display: none; background: #f8fafc; border-top: 1px solid #e5e7eb; padding: 8px 12px; min-height: 60px; }
+.fg-nueva .fg-subs { display: block; }
+.fg-sub { display: none; gap: 8px; flex-wrap: wrap; align-items: center; }
+.fg-sub.on { display: flex; }
+.fg-sub .ftab-btn {
+  min-height: 44px; margin: 0; padding: 8px 16px; display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid #dbe1ea; border-radius: 999px; background: #fff; color: #374151;
+  font-size: .8125rem; font-weight: 600; white-space: normal; text-align: left;
+}
+.fg-sub .ftab-btn i { margin-right: 4px; }
+.fg-sub .ftab-btn:hover { background: #f3f4f6; color: #0a0a0a; }
+.fg-sub .ftab-btn.active { background: #fef2f2; border-color: #dc2626; color: #b91c1c; border-bottom-color: #dc2626; }
+.fg-sub .ftab-btn .badge { font-size: .75rem !important; }   /* los contadores de cada pestaña: nunca menores de 12 px */
+.fg-sub .ftab-btn:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; }
+
+/* En el celular la barra no se queda pegada (ocuparía media pantalla) y las secciones se reparten en 2 columnas. */
+@media (max-width: 767.98px) {
+  .fg-nueva .ficha-tabs-wrap { position: static; }
+  .fg { gap: 6px; }
+  .fg-btn { flex: 1 1 calc(50% - 6px); border-bottom: 1px solid #e5e7eb; border-radius: 10px; padding: 8px 10px; }
+  .fg-btn.on { border-color: #0a0a0a; }
+  .fg-vista { flex: 1 1 100%; margin-left: 0; justify-content: center; }
+  .fg-top { padding: 8px 8px 0; }
+  .fg-subs { padding: 8px; }
+  .fg-sub .ftab-btn { flex: 1 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fg-btn { transition: none; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+   COMUNICACIONES DEL CLIENTE EN SU FICHA (Daniel, 5-nov-2026: «todo se centraliza en la ficha del cliente»)
+   Línea de tiempo REAL de los correos del cliente con su estado en semáforo (verde enviado · ámbar frenado · rojo no salió), quién recibe los
+   avisos automáticos y la campana de siempre, plegada. Formato Retiros (REGLA #15): tarjetas completas, nada truncado.
+   ══════════════════════════════════════════════════════════════════════════════════════════════════════════ */
+.fc-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+.fc-card-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: .9375rem; font-weight: 800; color: #0a0a0a; margin-bottom: 10px; }
+.fc-card-h i { color: #dc2626; }
+.fc-btn { min-height: 44px; display: inline-flex; align-items: center; gap: 4px; font-size: .8125rem; font-weight: 600; }
+.fc-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.fc-chip { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; font-size: .8125rem; color: #334155; max-width: 100%; }
+.fc-chip i { color: #16a34a; }
+.fc-chip b { color: #0a0a0a; word-break: break-all; }
+.fc-chip small { font-size: .75rem; color: #475569; }
+.fc-chip-ot { background: #f0f9ff; border-color: #bae6fd; }
+.fc-chip-ot i { color: #0284c7; }
+.fc-nota { margin-top: 8px; font-size: .8125rem; color: #475569; }
+.fc-alerta { padding: 10px 12px; border-radius: 10px; background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; font-size: .8125rem; }
+.fc-avisos-lista { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; }
+.fc-avisos-lista li { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 10px; font-size: .8125rem; background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+.fc-avisos-lista li.warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.fc-avisos-lista li em { font-style: normal; }
+.fc-filtros { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 12px; }
+.fc-pill { min-height: 44px; padding: 8px 14px; border-radius: 999px; border: 1px solid #d1d5db; background: #fff; color: #374151; font-size: .8125rem; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.fc-pill b { font-size: .8125rem; background: #f3f4f6; border-radius: 999px; padding: 1px 8px; }
+.fc-pill:hover { background: #f9fafb; }
+.fc-pill.on { background: #0a0a0a; color: #fff; border-color: #0a0a0a; box-shadow: inset 0 -3px 0 #dc2626; }
+.fc-pill.on b { background: rgba(255,255,255,.18); color: #fff; }
+.fc-pill:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; }
+.fc-sel { display: inline-flex; flex-direction: column; gap: 2px; margin-left: auto; min-width: 200px; }
+.fc-sel span { font-size: .75rem; font-weight: 700; color: #475569; letter-spacing: .03em; text-transform: uppercase; }
+.fc-sel select { min-height: 44px; font-size: .8125rem; }
+.fc-item { display: flex; gap: 12px; padding: 12px 14px; margin-bottom: 10px; background: #fff; border: 1px solid #e5e7eb; border-left: 5px solid #94a3b8; border-radius: 12px; }
+.fc-item.fc-ok { border-left-color: #16a34a; }
+.fc-item.fc-warn { border-left-color: #f59e0b; background: #fffdf5; }
+.fc-item.fc-err { border-left-color: #dc2626; background: #fff8f8; }
+.fc-ico { width: 40px; height: 40px; flex: 0 0 40px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #f1f5f9; color: #475569; font-size: 1.1rem; }
+.fc-ok .fc-ico { background: #dcfce7; color: #166534; }
+.fc-warn .fc-ico { background: #fef3c7; color: #92400e; }
+.fc-err .fc-ico { background: #fee2e2; color: #991b1b; }
+.fc-body { flex: 1 1 auto; min-width: 0; }
+.fc-tit { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .9375rem; font-weight: 800; color: #0a0a0a; line-height: 1.3; }
+.fc-est { font-size: .75rem; font-weight: 700; padding: 2px 10px; border-radius: 999px; background: #e2e8f0; color: #334155; }
+.fc-est-ok { background: #dcfce7; color: #166534; }
+.fc-est-warn { background: #fef3c7; color: #92400e; }
+.fc-est-err { background: #fee2e2; color: #991b1b; }
+.fc-sub { margin-top: 2px; font-size: .8125rem; color: #475569; word-break: break-word; }
+.fc-meta { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: .8125rem; color: #475569; }
+.fc-meta i { margin-right: 4px; }
+.fc-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; background: #f1f5f9; color: #334155; font-size: .75rem; font-weight: 600; text-decoration: none; }
+a.fc-tag:hover { background: #e2e8f0; color: #0a0a0a; }
+.fc-tag-ot { background: #fee2e2; color: #991b1b; }
+.fc-motivo { margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: #fff7ed; color: #9a3412; font-size: .8125rem; }
+.fc-pag { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 14px; font-size: .8125rem; color: #475569; }
+.fc-pag-btns { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fc-campana { margin-top: 10px; border: 1px dashed #cbd5e1; border-radius: 12px; padding: 4px 14px 10px; background: #fff; }
+.fc-campana > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: .8125rem; font-weight: 700; color: #475569; }
+@media (max-width: 575.98px) {
+  .fc-item { padding: 10px; gap: 10px; }
+  .fc-ico { width: 34px; height: 34px; flex-basis: 34px; font-size: 1rem; }
+  .fc-sel { margin-left: 0; width: 100%; }
+  .fc-pag { justify-content: center; }
+}
