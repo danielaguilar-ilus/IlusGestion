@@ -23,6 +23,9 @@ import re
 
 _RX_TABLA = re.compile(r"<(/?)table\b([^>]*)>", re.IGNORECASE | re.DOTALL)
 _RX_ANCLA = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+# Un párrafo que SOLO contiene un enlace-botón: al meter una <table> dentro de un <p> el navegador cierra el párrafo antes de la tabla y deja un <p> vacío (con su
+# aire de 16 px) detrás; por eso ese párrafo pasa a <div> (conserva su estilo y sí acepta una tabla).
+_RX_P_ANCLA = re.compile(r"<p\b([^>]*)>(\s*)(<a\b[^>]*>.*?</a>)(\s*)</p>", re.IGNORECASE | re.DOTALL)
 _RX_STYLE = re.compile(r"""\sstyle\s*=\s*("([^"]*)"|'([^']*)')""", re.IGNORECASE)
 _RX_HEX = re.compile(r"^#[0-9a-fA-F]{3,8}$")
 
@@ -148,12 +151,22 @@ def _boton(m):
             f'<a{sin_estilo} style="{_unir(del_enlace)}">{interior}</a></td></tr></table>')
 
 
+def _p_boton(m):
+    a = _RX_ANCLA.fullmatch(m.group(3))
+    if not a:
+        return m.group(0)
+    boton = _boton(a)
+    if boton == a.group(0):                                 # no era un botón (sin fondo/relleno): el párrafo queda como estaba
+        return m.group(0)
+    return f"<div{m.group(1)}>{boton}</div>"
+
+
 def outlook_safe(html):
     """El HTML del correo con las tablas con relleno/margen y los botones con relleno en el <a> reescritos para Outlook de escritorio. Nunca lanza."""
     if not html or not isinstance(html, str):
         return html
     try:
-        return _RX_ANCLA.sub(_boton, _tablas(html))
+        return _RX_ANCLA.sub(_boton, _RX_P_ANCLA.sub(_p_boton, _tablas(html)))
     except Exception:
         return html
 

@@ -61,6 +61,18 @@ class TestElFiltro(unittest.TestCase):
         self.assertNotRegex(s, r'<a [^>]*padding')
         self.assertEqual(_texto(s), _texto(BOTON))
 
+    def test_el_parrafo_que_solo_trae_un_boton_pasa_a_div_sin_dejar_un_parrafo_vacio(self):
+        """Una <table> dentro de un <p> hace que el navegador cierre el párrafo y deje un <p> vacío con 16 px de aire (se vio en Chromium: +16 px debajo del botón)."""
+        s = E.outlook_safe(BOTON)
+        self.assertNotIn("<p", s)
+        self.assertNotIn("</p>", s)
+        self.assertTrue(s.startswith('<div style="margin:14px 0 0">'))
+        self.assertTrue(s.endswith("</div>"))
+        sin = '<p style="margin:0">Texto con <a href="https://x.cl" style="color:#111">un enlace común</a></p>'
+        self.assertEqual(E.outlook_safe(sin), sin)                                            # un párrafo con otro contenido no se toca
+        solo_enlace = '<p><a href="https://x.cl" style="padding:8px;color:#111">Enlace con padding pero sin fondo</a></p>'
+        self.assertEqual(E.outlook_safe(solo_enlace), solo_enlace)                            # un enlace que no es botón tampoco
+
     def test_solo_margen_la_tabla_queda_igual_dentro_de_su_envoltorio(self):
         h = '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:22px 0 4px"><tr><td>x</td></tr></table>'
         s = E.outlook_safe(h)
