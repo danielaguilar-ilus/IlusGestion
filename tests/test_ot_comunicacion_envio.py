@@ -734,6 +734,8 @@ class MundoOT:
             "_mant_get_cliente_emails": lambda cid: list(self.cliente_emails),
             "_ot_pdf_context": lambda vid, **kw: (None, self.doc, list(self.doc_razones)),
             "_ot_firma_token": lambda vid, ttl_horas=120: f"TOKEN{vid}x{ttl_horas}",
+            # REGLA #67: el enlace público de seguimiento de la OT (botón «Ver seguimiento en vivo» de los correos al cliente)
+            "_ot_seg_url": lambda vid: f"https://ilus.test/ot-seguimiento/SEG{vid}",
             "_public_base_url": lambda: "https://ilus.test",
             "_mant_log": lambda ent, eid, accion, detalle="": self.logs.append((ent, eid, accion, detalle)),
             "_render_comm_template": lambda slug, canal, variables, modulo=None: self._editor(slug, variables),

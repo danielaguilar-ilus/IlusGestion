@@ -22,7 +22,7 @@ import ot_recordatorio_24h as O
 from tests import _fuente_codigo as FC
 from tests.test_ot_recordatorio_24h import _t
 
-_BARRA = "line-height:5px;font-size:0;background:"
+_BARRA = "line-height:4px;font-size:0;background:"       # 6-nov (REGLA #67): barra de 4 px bajo los círculos numerados; el gris pendiente es #d1d5db
 _NOMBRES = [f"Trotadora ILUS Modelo {i}" for i in range(24)]
 
 
@@ -106,13 +106,14 @@ class TestElRecorridoDeLaVistaPrevia(unittest.TestCase):
 
     def _demo(self, clave):
         amb = {"mysql_fetchone": lambda *a, **k: {"asunto": "x", "cuerpo": "{{recorrido_html}}", "activo": 1},
-               "_comm_demo_replacements": lambda: {}, "_ccr": CCR, "_ocom": C, "re": re, "print": lambda *a, **k: None}
+               "_comm_demo_replacements": lambda: {}, "_ccr": CCR, "_ocom": C, "re": re, "print": lambda *a, **k: None,
+               "_public_base_url": lambda: "https://ilus.test"}
         FC.extraer(amb, "app.py", ("_comm_correo_demo",), ())
         _a, cuerpo, _i = amb["_comm_correo_demo"]({"clave": clave, "plantilla": ("mantenciones", "x"), "nombre": clave, "demo": {}})
         return cuerpo
 
     def _barras(self, h):
-        return (h.count(_BARRA + "#16a34a"), h.count(_BARRA + "#dc2626"), h.count(_BARRA + "#e5e7eb"))
+        return (h.count(_BARRA + "#16a34a"), h.count(_BARRA + "#dc2626"), h.count(_BARRA + "#d1d5db"))
 
     def test_la_ot_terminada_muestra_los_cuatro_pasos_hechos_y_nada_que_sigue(self):
         for clave in ("ot_terminada_cliente", "ot_envio_manual"):
@@ -128,11 +129,14 @@ class TestElRecorridoDeLaVistaPrevia(unittest.TestCase):
         self.assertEqual(self._barras(self._demo("ot_firma_remota")), (2, 1, 1))
 
     def test_lo_que_se_ve_es_lo_que_manda_el_correo_real(self):
-        self.assertEqual(self._demo("ot_terminada_cliente"), C.recorrido_html("documento", ""))
+        # la vista previa lleva el botón «Ver seguimiento en vivo» a un enlace de EJEMPLO (nunca a una OT real); el resto es idéntico al correo real
+        ejemplo = "https://ilus.test/ot-seguimiento/ejemplo"
+        self.assertEqual(self._demo("ot_terminada_cliente"), C.recorrido_html("documento", "", url_seguimiento=ejemplo))
         self.assertEqual(self._demo("ot_recordatorio_cliente"),
-                         C.recorrido_html("recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma."))
-        # y el correo real de «OT terminada» sigue pasando el paso «documento» (cerrado)
-        self.assertIn('recorrido=_ocom.recorrido_html("documento")', FC.texto("app.py"))
+                         C.recorrido_html("recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma.",
+                                          url_seguimiento=ejemplo))
+        # y el correo real de «OT terminada» sigue pasando el paso «documento» (cerrado), con el enlace de seguimiento de ESA OT
+        self.assertIn('recorrido=_ocom.recorrido_html("documento", url_seguimiento=_ot_seg_url(v_id))', FC.texto("app.py"))
 
     def test_la_demo_de_equipos_del_registro_ya_es_solo_la_cantidad(self):
         self.assertEqual(CCR.DEMO_EXTRA["maquina"], "2 equipos")
