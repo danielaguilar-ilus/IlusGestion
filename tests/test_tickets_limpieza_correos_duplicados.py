@@ -163,6 +163,60 @@ def _meta(mid):
     return json.dumps({"via": "email", "message_id": mid, "from": "c@x.cl"})
 
 
+class _Cursor:
+    """Cursor de la conexión de la transacción (lo que devuelve get_mysql().cursor()): SQLite SIN commit automático."""
+
+    def __init__(self, base):
+        self.base = base
+        self._filas = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=()):
+        b = self.base
+        s = " ".join(sql.split())
+        if s.upper().startswith("SELECT"):
+            if s.upper().startswith("SELECT * FROM TK_ADJUNTOS") and b.antes_de_leer_adjuntos:
+                gancho, b.antes_de_leer_adjuntos = b.antes_de_leer_adjuntos, None
+                gancho()
+            self._filas = [dict(r) for r in b.con.execute(b._a_sqlite(sql), tuple(params)).fetchall()]
+            return
+        b._maybe_fallar(s)
+        b.eventos.append(("sql", s.split(" (")[0][:60]))
+        b.con.execute(b._a_sqlite(sql), tuple(params))
+
+    def fetchone(self):
+        return self._filas[0] if self._filas else None
+
+    def fetchall(self):
+        return list(self._filas)
+
+
+class _Conexion:
+    def __init__(self, base):
+        self.base = base
+        self.estado = {"commit": 0, "rollback": 0, "cerrada": False}
+        base.conexiones.append(self.estado)
+
+    def cursor(self):
+        return _Cursor(self.base)
+
+    def commit(self):
+        self.estado["commit"] += 1
+        self.base.con.commit()
+
+    def rollback(self):
+        self.estado["rollback"] += 1
+        self.base.con.rollback()
+
+    def close(self):
+        self.estado["cerrada"] = True
+
+
 class _Base:
     """SQLite con las tablas y columnas que toca la limpieza, y las funciones de MySQL que usa (MD5, CHAR_LENGTH, LEFT, DATE_SUB)."""
 
@@ -185,7 +239,14 @@ class _Base:
         """)
         self.eventos = []          # orden de lo ocurrido: ("audit", ...), ("sql", "DELETE ...")
         self.antes_de_leer_adjuntos = None   # gancho: se llama una vez justo antes de «SELECT * FROM tk_adjuntos»
-        self.fallar_si = None      # texto que, si aparece en el SQL de mysql_execute, lanza un error
+        self.fallar_si = None      # texto que, si aparece en el SQL de escritura, lanza un error
+        self.fallar_en_n = 1       # ...a partir de la N-ésima vez que aparece (1 = a la primera)
+        self.fallar_solo_una = False   # ...y solo esa vez (las siguientes pasan)
+        self._coincidencias = 0
+        self.conexiones = []       # una por transacción: {"commit": n, "rollback": n, "cerrada": bool}
+
+    def get_mysql(self):
+        return _Conexion(self)
 
     @staticmethod
     def _a_sqlite(sql):
@@ -207,14 +268,19 @@ class _Base:
         if s.upper().startswith("CREATE TABLE"):
             self.eventos.append(("ddl", "tk_mensajes_quitados"))
             return
-        if self.fallar_si and self.fallar_si in s:
-            raise RuntimeError("falla simulada")
+        self._maybe_fallar(s)
         self.eventos.append(("sql", s.split(" (")[0][:60]))
         if s.upper().startswith("UPDATE TK_TICKETS T JOIN"):
             self.eventos.append(("recalculo", tuple(params)))     # UPDATE ... JOIN es de MySQL: se registra, no se ejecuta
             return
         self.con.execute(self._a_sqlite(sql), tuple(params))
         self.con.commit()
+
+    def _maybe_fallar(self, s):
+        if self.fallar_si and self.fallar_si in s:
+            self._coincidencias += 1
+            if self._coincidencias >= self.fallar_en_n and (not self.fallar_solo_una or self._coincidencias == self.fallar_en_n):
+                raise RuntimeError("falla simulada")
 
     # --- datos de prueba ---
     def mensaje(self, ticket, mid, contenido="Hola con fotos", minutos=0, tipo="client_message", usuario="Cliente"):
@@ -245,6 +311,7 @@ def _ruta(base, cuerpo, superadmin=True, bandeja=False):
 
     ns = {"json": json, "request": _Peticion(cuerpo), "jsonify": lambda c: c, "_tk_solo_superadmin": lambda: superadmin,
           "mysql_fetchall": base.fetchall, "mysql_fetchone": base.fetchone, "mysql_execute": base.execute, "_audit": audit,
+          "get_mysql": base.get_mysql,
           "current_username": lambda: "daniel", "_tk_bandeja_rapida_ok": lambda: bandeja}
     for c in ("_TK_DUP_MAX_MINUTOS", "_TK_DUP_DDL_RESPALDO"):
         exec(compile(_constante(c), "<c>", "exec"), ns)
@@ -439,19 +506,12 @@ class TestEjecucion(unittest.TestCase):
         for t in (1, 2):
             b.mensaje(t, "<m%d@x>" % t)
             b.mensaje(t, "<m%d@x>" % t, minutos=1)
-        llamado = {"n": 0}
-        original = b.execute
-
-        def execute(sql, params=()):
-            if "INSERT INTO tk_mensajes_quitados" in sql:
-                llamado["n"] += 1
-                if llamado["n"] == 1:
-                    raise RuntimeError("falla simulada solo la primera vez")
-            return original(sql, params)
-        b.execute = execute
+        b.fallar_si, b.fallar_solo_una = "INSERT INTO tk_mensajes_quitados", True     # falla solo la primera vez
         r, _, _ = _ruta(b, {"dry_run": False, "confirm": "QUITAR 2 COPIAS"})
         self.assertEqual(r["quitados"]["mensajes"], 1)
         self.assertEqual(len(r["fallos"]), 1)
+        self.assertEqual(r["fallos"][0]["ticket_id"], 1)
+        self.assertEqual(b.ids("tk_mensajes"), [1, 2, 3], "el ticket 1 quedó igual; en el 2 se quitó la copia (4)")
 
     def test_recalcula_la_bandeja_de_los_tickets_tocados_solo_si_existe(self):
         b, *_ = self._montar()
@@ -471,7 +531,202 @@ class TestEjecucion(unittest.TestCase):
         self.assertEqual(b.ids("tk_mensajes"), [ids[0]])
 
 
+class TestPedidoCortoSimularConfirmar(unittest.TestCase):
+    """06-nov-2026 (Daniel autorizó correrla): la forma corta {simular:false, confirmar:true} y la ruta alias /limpiar."""
+
+    def _caso(self):
+        b = _Base()
+        self.addCleanup(b.con.close)
+        _caso_ticket_2304(b)
+        return b
+
+    def _sin_cambios(self, b):
+        self.assertEqual(b.ids("tk_mensajes"), [1, 2])
+        self.assertEqual(b.ids("tk_adjuntos"), [1, 2, 3, 4])
+        self.assertEqual(b.ids("tk_mensajes_quitados"), [])
+        self.assertFalse([e for e in b.eventos if e[0] in ("sql", "audit")])
+
+    def test_simular_false_y_confirmar_true_borra_solo_la_copia_de_id_mayor_y_sus_adjuntos(self):
+        b = self._caso()
+        r, estado, _ = _ruta(b, {"simular": False, "confirmar": True})
+        self.assertEqual(estado, 200)
+        self.assertEqual(r["quitados"], {"mensajes": 1, "adjuntos": 2})
+        self.assertEqual(b.ids("tk_mensajes"), [1])
+        self.assertEqual(b.ids("tk_adjuntos"), [1, 2])
+
+    def test_sin_nada_o_con_simular_true_es_simulacion_aunque_venga_confirmar(self):
+        for cuerpo in ({}, {"confirmar": True}, {"simular": True, "confirmar": True}, {"simular": None, "confirmar": True},
+                       {"simular": "", "confirmar": True}, {"simular": "true", "confirmar": True}):
+            b = self._caso()
+            r, estado, _ = _ruta(b, cuerpo)
+            self.assertTrue(r["dry_run"] and r["simular"], repr(cuerpo))
+            self._sin_cambios(b)
+            b.con.close()
+
+    def test_si_llegan_las_dos_banderas_y_una_dice_simular_no_se_toca_nada(self):
+        for cuerpo in ({"dry_run": True, "simular": False, "confirmar": True}, {"dry_run": False, "simular": True, "confirmar": True},
+                       {"dry_run": False, "simular": "si", "confirm": "QUITAR 1 COPIAS"}):
+            b = self._caso()
+            r, _, _ = _ruta(b, cuerpo)
+            self.assertTrue(r["dry_run"], repr(cuerpo))
+            self._sin_cambios(b)
+            b.con.close()
+
+    def test_sin_confirmar_true_no_borra_aunque_simular_sea_false(self):
+        for confirmar in (None, False, "false", "", 0, "yes", "si", "1", [], 1):
+            b = self._caso()
+            r, estado, _ = _ruta(b, {"simular": False, "confirmar": confirmar})
+            self.assertEqual(estado, 400, repr(confirmar))
+            self._sin_cambios(b)
+            b.con.close()
+
+    def test_la_simulacion_informa_por_ticket_sin_escribir(self):
+        b = _Base()
+        self.addCleanup(b.con.close)
+        _caso_ticket_2304(b)
+        m = b.mensaje(900, "<q@x>")
+        b.mensaje(900, "<q@x>", minutos=1)
+        b.adjunto(900, m, "X.jpeg")
+        r, _, _ = _ruta(b, {})
+        self.assertEqual(r["resumen"]["tickets"], 2)
+        self.assertEqual({(t["ticket_id"], t["mensajes"], t["adjuntos"]) for t in r["por_ticket"]}, {(900, 1, 0), (2304, 1, 2)})
+        self.assertFalse([e for e in b.eventos if e[0] in ("sql", "audit", "ddl")])
+
+    def test_el_tope_de_la_tanda_cuenta_tickets_no_grupos(self):
+        b = _Base()
+        self.addCleanup(b.con.close)
+        for t, mids in ((1, ("<a1@x>", "<a2@x>")), (2, ("<b1@x>",)), (3, ("<c1@x>",))):
+            for mid in mids:                       # el ticket 1 tiene DOS grupos repetidos
+                b.mensaje(t, mid)
+                b.mensaje(t, mid, minutos=1)
+        r, _, _ = _ruta(b, {"simular": False, "confirmar": True, "limite": 2})
+        self.assertEqual(r["quitados"]["mensajes"], 3, "los dos grupos del ticket 1 + el del ticket 2")
+        self.assertEqual(r["tickets_tocados"], [1, 2])
+        self.assertEqual((r["quedan_tickets"], r["quedan_grupos"]), (1, 1))
+        r, _, _ = _ruta(b, {"simular": False, "confirmar": True, "limite": 2})
+        self.assertEqual((r["quitados"]["mensajes"], r["quedan_tickets"]), (1, 0))
+        r, _, _ = _ruta(b, {"simular": False, "confirmar": True})
+        self.assertEqual(r["quitados"], {"mensajes": 0, "adjuntos": 0}, "idempotente: ya no queda nada")
+
+    def test_solo_se_limpian_correos_del_cliente(self):
+        b = _Base()
+        self.addCleanup(b.con.close)
+        a = b.mensaje(5, "<r@x>", tipo="mensaje", usuario="Ana")
+        c = b.mensaje(5, "<r@x>", tipo="mensaje", usuario="Ana", minutos=1)
+        r, _, _ = _ruta(b, {})
+        self.assertEqual(r["resumen"]["mensajes_a_quitar"], 0)
+        self.assertIn("client_message", r["omitidos"][0]["motivo"])
+        r, _, _ = _ruta(b, {"simular": False, "confirmar": True})
+        self.assertEqual(r["quitados"]["mensajes"], 0)
+        self.assertEqual(b.ids("tk_mensajes"), [a, c])
+
+    def test_se_informan_las_rutas_de_la_nube_y_no_se_borra_ningun_archivo(self):
+        b = self._caso()
+        r, _, _ = _ruta(b, {"simular": False, "confirmar": True})
+        nube = r["archivos_en_la_nube"]
+        self.assertEqual(nube["total"], 2)
+        self.assertEqual(sorted(x["ruta"] for x in nube["rutas"]), ["gs://b/IMG_3681.jpeg", "gs://b/IMG_3682.jpeg"])
+
+    def test_el_log_lleva_los_ids_de_mensajes_y_adjuntos_antes_de_borrar_y_quien(self):
+        b = self._caso()
+        r, _, audit = _ruta(b, {"simular": False, "confirmar": True})
+        accion, kw = audit[0]
+        self.assertEqual(accion, "tk_correos_duplicados_quitar")
+        self.assertEqual((kw["details"]["mensajes"], kw["details"]["adjuntos"], kw["details"]["quien"]), ([2], [3, 4], "daniel"))
+        orden = [e[1] for e in b.eventos if e[0] in ("audit", "sql")]
+        self.assertLess(orden.index("tk_correos_duplicados_quitar"), min(i for i, t in enumerate(orden) if t.startswith("DELETE")))
+        self.assertEqual(b.con.execute("SELECT quitado_por FROM tk_mensajes_quitados").fetchone()[0], "daniel")
+
+
+class TestAtomicidadPorTicket(unittest.TestCase):
+    """Cada ticket va en UNA transacción: si algo falla a mitad, no cambia NADA de ese ticket (ni respaldo, ni adjuntos, ni mensajes)."""
+
+    def _dos_grupos_en_un_ticket(self):
+        b = _Base()
+        self.addCleanup(b.con.close)
+        for mid in ("<g1@x>", "<g2@x>"):
+            m = b.mensaje(77, mid)
+            m2 = b.mensaje(77, mid, minutos=1)
+            b.adjunto(77, m, "F_%s.jpeg" % mid[1:3])
+            b.adjunto(77, m2, "F_%s.jpeg" % mid[1:3])
+        return b
+
+    def test_si_falla_el_ultimo_borrado_se_revierte_todo_el_ticket(self):
+        b = self._dos_grupos_en_un_ticket()
+        antes = (b.ids("tk_mensajes"), b.ids("tk_adjuntos"))
+        b.fallar_si, b.fallar_en_n = "DELETE FROM tk_mensajes", 2        # el borrado del SEGUNDO grupo
+        r, estado, _ = _ruta(b, {"simular": False, "confirmar": True})
+        self.assertEqual(estado, 200)
+        self.assertEqual(r["quitados"], {"mensajes": 0, "adjuntos": 0})
+        self.assertEqual((b.ids("tk_mensajes"), b.ids("tk_adjuntos")), antes, "también el primer grupo quedó como estaba")
+        self.assertEqual(b.ids("tk_mensajes_quitados"), [], "y el respaldo de esa transacción se deshizo")
+        self.assertEqual(r["fallos"][0]["ticket_id"], 77)
+        self.assertEqual(b.conexiones[0], {"commit": 0, "rollback": 1, "cerrada": True})
+
+    def test_un_ticket_que_falla_no_arrastra_a_los_demas(self):
+        b = self._dos_grupos_en_un_ticket()
+        b.mensaje(88, "<h@x>")
+        b.mensaje(88, "<h@x>", minutos=1)
+        b.fallar_si, b.fallar_en_n, b.fallar_solo_una = "DELETE FROM tk_mensajes", 2, True
+        r, _, _ = _ruta(b, {"simular": False, "confirmar": True})
+        self.assertEqual(r["quitados"]["mensajes"], 1, "el ticket 88 se limpió")
+        self.assertEqual(r["tickets_tocados"], [88])
+        self.assertEqual([x["ticket_id"] for x in r["fallos"]], [77])
+
+    def test_cada_ticket_usa_su_propia_conexion_con_un_solo_commit_y_se_cierra(self):
+        b = self._dos_grupos_en_un_ticket()
+        b.mensaje(88, "<h@x>")
+        b.mensaje(88, "<h@x>", minutos=1)
+        _ruta(b, {"simular": False, "confirmar": True})
+        self.assertEqual(b.conexiones, [{"commit": 1, "rollback": 0, "cerrada": True}] * 2)
+
+    def test_la_simulacion_no_abre_ninguna_transaccion(self):
+        b = self._dos_grupos_en_un_ticket()
+        _ruta(b, {})
+        self.assertEqual(b.conexiones, [])
+
+
+class TestVerificacionDeNuevo(unittest.TestCase):
+    def test_si_la_copia_cambia_de_tipo_o_de_texto_despues_de_la_simulacion_no_se_borra(self):
+        for cambio in ("UPDATE tk_mensajes SET contenido='otro' WHERE id=2", "UPDATE tk_mensajes SET tipo='mensaje' WHERE id=2",
+                       "UPDATE tk_mensajes SET usuario='Otro' WHERE id=2",
+                       "UPDATE tk_mensajes SET metadata='{\"message_id\": \"<otro@x>\"}' WHERE id=2"):
+            b = _Base()
+            _caso_ticket_2304(b)
+            b.antes_de_leer_adjuntos = None
+            original = b.get_mysql
+
+            def get_mysql(original=original, b=b, cambio=cambio):
+                b.con.execute(cambio)            # alguien lo tocó entre la simulación y el borrado
+                b.con.commit()
+                return original()
+            b.get_mysql = get_mysql
+            r, _, _ = _ruta(b, {"simular": False, "confirmar": True})
+            self.assertEqual(r["quitados"], {"mensajes": 0, "adjuntos": 0}, cambio)
+            self.assertEqual(len(r["fallos"]), 1, cambio)
+            self.assertEqual(b.ids("tk_mensajes"), [1, 2], cambio)
+            self.assertEqual(b.ids("tk_mensajes_quitados"), [], cambio)
+            b.con.close()
+
+    def test_jamas_se_quita_la_primera_copia(self):
+        """Aunque el plan llegara con la conservada dentro de «quitar», la guarda de id lo frena."""
+        src = _funcion("tk_api_quitar_correos_duplicados")
+        self.assertIn('if c["id"] <= gr["conserva"]:', src)
+
+
 class TestCodigo(unittest.TestCase):
+    def test_ruta_alias_limpiar_y_arranque_barato(self):
+        fuente = _analizado()[0].replace("\r\n", "\n")
+        self.assertIn('@app.route("/tickets/api/auditoria/correos-duplicados/limpiar", methods=["POST"])\n'
+                      '    @app.route("/tickets/api/auditoria/correos-duplicados/quitar", methods=["POST"])', fuente)
+        ddl = _constante("_TK_DUP_DDL_RESPALDO")
+        self.assertEqual(ddl.upper().count("CREATE TABLE IF NOT EXISTS"), 1)
+        self.assertNotIn("ALTER", ddl.upper())
+        # se crea en el arranque, DENTRO de app_context (REGLA #18 + gotcha de los _ensure sin contexto)
+        i_ctx = fuente.index("    with app.app_context():\n        try:\n            _ensure_tickets_tables()")
+        self.assertIn("_ensure_tk_mensajes_quitados()", fuente[i_ctx:i_ctx + 3000])
+        self.assertLess(fuente.index("_TK_DUP_DDL_RESPALDO = ("), i_ctx, "la constante existe antes de que el arranque la use")
+
     def test_solo_por_post_con_login_y_superadmin_primero(self):
         fuente = _analizado()[0].replace("\r\n", "\n")
         self.assertIn('@app.route("/tickets/api/auditoria/correos-duplicados/quitar", methods=["POST"])\n'
@@ -486,7 +741,8 @@ class TestCodigo(unittest.TestCase):
 
     def test_la_simulacion_es_el_valor_por_defecto(self):
         src = _funcion("tk_api_quitar_correos_duplicados")
-        self.assertIn('dr = d.get("dry_run", True)', src)
+        self.assertIn('banderas = [d[k] for k in ("dry_run", "simular") if k in d]', src)
+        self.assertIn("ejecutar = bool(banderas) and all(", src)
         self.assertIn("dry_run = not ejecutar", src)
         self.assertIn('"QUITAR %d COPIAS" % plan["mensajes"]', src)
 
