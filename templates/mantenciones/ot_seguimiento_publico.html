@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+{# ILUS Fitness · Seguimiento en vivo de la orden de trabajo para el CLIENTE (REGLA #67, 2026-11-06).
+   Página pública con token propio, SOLO LECTURA, sin sesión y sin librerías externas: su CSS y su JS son propios
+   (static/ot_seguimiento.css / .js). Lenguaje visual de Retiros (REGLA #15): tarjetas, semáforo, círculos que pasan
+   de rojo a verde con pulso. Todo lo que se dibuja sale de `s` (ot_seguimiento.a_json: SOLO claves públicas, sin
+   plata ni datos de contacto de técnicos). `no_disponible`: token vencido o inventado (sin detalles). #}
+<html lang="es" data-tono="{{ (s.tono if s else 'gris') }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>{% if s %}Seguimiento {{ s.numero }} — ILUS Fitness{% else %}Enlace no disponible — ILUS Fitness{% endif %}</title>
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='Logo.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='ot_seguimiento.css') }}">
+</head>
+<body class="seg-body">
+  <a class="seg-skip" href="#seg-main">Saltar al contenido</a>
+
+  {# Un solo juego de íconos: el servidor y el JS solo eligen cuál se muestra (`s.icono`). #}
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-calendario" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 15h3"/></symbol>
+    <symbol id="ico-campana" viewBox="0 0 24 24"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z"/><path d="M10 21a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="ico-tecnico" viewBox="0 0 24 24"><path d="M14.5 6.5a4 4 0 0 0 5 5l-9 9a2.1 2.1 0 0 1-3-3l9-9z"/><path d="M14.5 6.5 17 4a4 4 0 0 1 2.5 2.5L17 9"/></symbol>
+    <symbol id="ico-firma" viewBox="0 0 24 24"><path d="M4 20c4-1 6-3 7-6l6-6a2.1 2.1 0 0 1 3 3l-6 6c-3 1-5 3-6 7"/><path d="M14 8l2 2"/><path d="M3 21h18"/></symbol>
+    <symbol id="ico-documento" viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/><path d="m9.5 15 2 2 3.5-4"/></symbol>
+    <symbol id="ico-pausa" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/></symbol>
+    <symbol id="ico-alerta" viewBox="0 0 24 24"><path d="M12 3 2.5 20h19z"/><path d="M12 10v4M12 17.5v.5"/></symbol>
+    <symbol id="ico-cancelada" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
+  </svg>
+
+  <header class="seg-top">
+    <div class="seg-top-inner">
+      <img class="seg-logo" src="{{ url_for('static', filename='logo_ilus_fitness_blanco.png') }}" alt="ILUS Fitness" width="104" height="34" decoding="async" fetchpriority="high">
+      {% if s %}
+      <span class="seg-live" id="segLive" title="Esta página se actualiza sola cada 30 segundos"><span class="seg-live-dot"></span>EN VIVO</span>
+      {% endif %}
+    </div>
+  </header>
+
+  <main id="seg-main" class="seg-main">
+  {% if not s %}
+    <section class="seg-card seg-nd" role="status">
+      <div class="seg-nd-ico" aria-hidden="true">🔒</div>
+      <h1>Este enlace ya no está disponible</h1>
+      <p>Puede haber vencido. Pídele a tu contacto en ILUS Fitness que te envíe uno nuevo.</p>
+    </section>
+  {% else %}
+    {# ── Cabecera negra: número de OT, tipo, fecha y horario ── #}
+    <section class="seg-hero">
+      <div class="seg-eyebrow">Orden de trabajo</div>
+      <h1 class="seg-num" id="segNum">{{ s.numero }}</h1>
+      <div class="seg-chips">
+        <span class="seg-chip" id="segTipo">{{ s.tipo }}</span>
+        <span class="seg-chip" id="segDia">{{ s.dia_txt or 'Fecha por confirmar' }}</span>
+        <span class="seg-chip" id="segHora">{{ s.horario_txt }}</span>
+      </div>
+      {% if s.cliente %}<div class="seg-cli" id="segCli">{{ s.cliente }}</div>{% endif %}
+    </section>
+
+    {# ── Estado actual (semáforo: rojo en curso · verde listo · ámbar atención · gris sin efecto) ── #}
+    <section class="seg-card seg-estado tono-{{ s.tono }}" id="segEstado" aria-live="polite">
+      <div class="seg-estado-ico" aria-hidden="true"><svg class="seg-svg"><use id="segIcoUse" href="#ico-{{ s.icono }}"></use></svg></div>
+      <div class="seg-estado-txt">
+        <h2 id="segTitulo">{{ s.titulo }}</h2>
+        <p id="segMensaje">{{ s.mensaje }}</p>
+        <p class="seg-sigue" id="segSigue" {% if not s.que_sigue %}hidden{% endif %}><strong>Qué sigue:</strong> <span id="segSigueTxt">{{ s.que_sigue }}</span></p>
+      </div>
+    </section>
+
+    {# ── Tu servicio, paso a paso ── #}
+    <section class="seg-card seg-pasos-card">
+      <h3 class="seg-h">Tu servicio, paso a paso</h3>
+      <div class="seg-steps{% if s.situacion == 'terminada' %} is-terminado{% endif %}" id="segSteps">
+        <div class="seg-track" aria-hidden="true"><div class="seg-track-fill" id="segFill" style="width:{{ s.linea }}%"></div></div>
+        <ol class="seg-pasos" id="segPasos">
+          {% for p in s.pasos %}
+          <li class="seg-paso is-{{ p.estado }}" data-clave="{{ p.clave }}">
+            <span class="seg-circ" aria-hidden="true"><span class="seg-circ-n">{{ loop.index }}</span><span class="seg-circ-ok">✓</span></span>
+            <span class="seg-paso-nombre">{{ p.nombre }}</span>
+            <span class="seg-paso-det">{{ p.detalle }}</span>
+            <span class="seg-sr">{% if p.estado == 'hecho' %}(listo){% elif p.estado == 'actual' %}(paso actual){% endif %}</span>
+          </li>
+          {% endfor %}
+        </ol>
+      </div>
+      <div class="seg-firmas" id="segFirmas" {% if not s.firmas %}hidden{% endif %}>
+        <span class="seg-firmas-t">Firmas del documento</span>
+        {% for f in s.firmas %}<span class="seg-firma{% if f.ok %} ok{% endif %}" data-clave="{{ f.clave }}"><span class="seg-firma-dot" aria-hidden="true"></span>{{ f.nombre }}</span>{% endfor %}
+      </div>
+    </section>
+
+    {# ── Datos (completos, nunca cortados: REGLA #15) ── #}
+    <section class="seg-card seg-datos">
+      <dl class="seg-dl">
+        <div class="seg-dato"><dt>Técnico</dt><dd id="segTec">{{ s.tecnicos|join(', ') or 'Por confirmar' }}</dd></div>
+        <div class="seg-dato"><dt>Equipos</dt><dd id="segEq">{{ s.equipos_txt }}</dd></div>
+        <div class="seg-dato"><dt>Fecha</dt><dd id="segFecha">{{ s.fecha_txt or 'Por confirmar' }}</dd></div>
+        <div class="seg-dato"><dt>Horario</dt><dd id="segHorario">{{ s.horario_txt }}</dd></div>
+      </dl>
+      <details class="seg-det" id="segDet" {% if not s.equipos %}hidden{% endif %}>
+        <summary>Ver detalle de los equipos</summary>
+        <ul id="segEqLista">{% for e in s.equipos %}<li>{{ e }}</li>{% endfor %}</ul>
+      </details>
+    </section>
+
+    <div class="seg-acciones">
+      <a class="seg-btn seg-btn-primary" id="segBtnDoc" href="{{ s.link_firmada or '#' }}" {% if not s.link_firmada %}hidden{% endif %}>Ver orden de trabajo firmada</a>
+      <a class="seg-btn seg-btn-outline" href="{{ s.link_soporte }}" target="_blank" rel="noopener">Crear ticket de soporte</a>
+    </div>
+    <p class="seg-act">Actualizado a las <span id="segAct">{{ s.actualizado }}</span> · esta página se actualiza sola</p>
+  {% endif %}
+  </main>
+
+  <footer class="seg-footer">
+    <p><strong>ILUS Fitness</strong> · Servicio Técnico</p>
+  </footer>
+  {% if s %}<script src="{{ url_for('static', filename='ot_seguimiento.js') }}" defer></script>{% endif %}
+</body>
+</html>

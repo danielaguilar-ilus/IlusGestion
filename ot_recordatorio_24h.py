@@ -266,14 +266,15 @@ def antes_de_salir_html():
     return _ocom.caja_valor("Antes de salir", _ocom.lista_valor(ANTES_DE_SALIR), "#f59e0b")
 
 
-def variables_recordatorio(ot, inicio, hoy, *, nombre_destinatario="", link_ot="", para="cliente", oculto=False):
+def variables_recordatorio(ot, inicio, hoy, *, nombre_destinatario="", link_ot="", para="cliente", oculto=False, url_seguimiento=""):
     """Variables de los dos correos (escapadas para HTML). `ot`: id, numero_ot, cliente, tipo_label, tipo, fecha, hora_inicio, hora_fin, direccion,
     equipos (lista de nombres), tecnicos (lista de personas), descripcion, contacto_nombre, contacto_tel. El horario, si no se definió, dice
     «por confirmar».
 
     `para`: 'cliente' llena «Qué va a pasar» y «Para dejar todo listo»; 'tecnico' llena «Cómo llegar», el contacto en terreno, «Qué hay que hacer»,
     la lista de equipos y «Antes de salir». `oculto` (técnico con el Anexo de Servicios sin firmar): sin dirección, contacto ni «qué hay que hacer»
-    (la misma regla de la ficha y de los demás correos a técnicos)."""
+    (la misma regla de la ficha y de los demás correos a técnicos). `url_seguimiento`: el enlace público de seguimiento de la OT (REGLA #67);
+    solo el correo al cliente lo dibuja (botón «Ver seguimiento en vivo» dentro del recorrido); sin URL no hay botón."""
     base = _ocom.variables_ot(ot, nombre_destinatario=nombre_destinatario, link_ot=link_ot,
                               tecnicos_nombres=ot.get("tecnicos") or [])
     base["fecha"] = _otc.esc(_otc.fecha_txt(inicio.date()) or "—")
@@ -284,7 +285,8 @@ def variables_recordatorio(ot, inicio, hoy, *, nombre_destinatario="", link_ot="
         base["preparacion_html"] = preparacion_html(ot.get("tipo"))
         # «Tu servicio, paso a paso»: el recordatorio es el paso 2; lo que sigue es la visita (siempre es verdad: es el proceso de Servicio Técnico).
         base["recorrido_html"] = _ocom.recorrido_html(
-            "recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma.")
+            "recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma.",
+            url_seguimiento=url_seguimiento)
     else:
         if not oculto:
             base["como_llegar_html"] = como_llegar_html(ot.get("direccion"))

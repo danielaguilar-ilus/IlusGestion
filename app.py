@@ -82,9 +82,11 @@ import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién pued
 import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
 import ot_equipos_filas as _oef       # 2026-11-05: Paso «Equipos y su checklist»: una fila con cantidad ↔ una fila por unidad + checklist por producto (módulo puro con pruebas)
 import ot_firma_vigencia as _ofv      # 2026-11-05: el enlace de firma remota del cliente vence en 48 HORAS HÁBILES (módulo puro con pruebas)
+import email_outlook_safe as _eos     # 2026-11-06: el HTML del correo se reescribe para Outlook de escritorio (relleno y margen de tablas, botones) justo antes de enviar
 import correos_sin_responder as _csr   # 2026-11-06: ningún correo al cliente dice «responde este correo»: todo va por TICKET (frases + arranque; módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import ot_encuesta as _oenc        # 2026-11-06 (REGLA #68): encuesta corta «¿Cómo fue tu servicio?» en el correo «OT terminada» (token, bloque Outlook-safe y rutas; módulo con pruebas)
+import ot_seguimiento as _oseg     # 2026-11-06 (REGLA #67): seguimiento en vivo de la OT para el cliente (paso del servicio, textos y token propio; módulo puro con pruebas)
 import ficha_cliente_cabecera as _fcc  # 2026-11-05: semáforo, motivos y KPIs de la cabecera de la ficha del cliente (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
@@ -10819,6 +10821,12 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     # la ruta principal de envío (cron/OT/recovery/retiros/transporte); la otra
     # ruta, `_send_email_dinamico` (técnico externo), también aplica el helper.
     to_addr, subject = _apply_test_redirect(to_addr, subject)
+    # 2026-11-06 (Daniel: «en Outlook no se ve bien… sin dañar celular ni Gmail»): Outlook de escritorio ignora el padding/margin de las tablas y el padding de un <a>; el
+    # filtro (puro, idempotente, nunca lanza) deja el relleno y el fondo en una celda. Gmail y el celular lo ven igual que antes.
+    try:
+        html_body = _eos.outlook_safe(html_body)
+    except Exception:
+        pass
     marca = _get_marca()
     att_norm = _email_normalize_attachments(attachments)
     provider = (os.environ.get("ILUS_EMAIL_PROVIDER") or "smtp").strip().lower()
@@ -10925,10 +10933,23 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
                     _tsub = (_fm.split("/", 1)[1] or "plain")
                     _part = MIMEText(_txt, _tsub, "utf-8")
                     if _tsub == "calendar":
+                        # 2026-11-06 (Daniel: «me pide calendarizar en el celular, pero en el computador no»): la invitación al CLIENTE es METHOD:REQUEST con RSVP; el
+                        # encabezado decía PUBLISH, así que Outlook de escritorio la trataba como un archivo cualquiera. Con RSVP=TRUE se declara REQUEST (igual que el
+                        # contenido) y, además del adjunto, va una copia INLINE (text/calendar dentro del multipart/alternative): así Outlook muestra «Aceptar / Rechazar»
+                        # y Gmail la tarjeta de invitación. El resto (técnicos, sin RSVP) queda como estaba.
+                        _ics_plano = _txt.replace("\r\n ", "").replace("\n ", "").upper()           # las líneas del .ics van PLEGADAS a 75 caracteres: «RSVP=TRUE» podría quedar partido
+                        _met = "REQUEST" if ("RSVP=TRUE" in _ics_plano and "METHOD:REQUEST" in _ics_plano) else "PUBLISH"
                         try:
-                            _part.set_param("method", "PUBLISH")
+                            _part.set_param("method", _met)
                         except Exception:
                             pass
+                        if _met == "REQUEST":
+                            try:
+                                _inline = MIMEText(_txt, "calendar", "utf-8")
+                                _inline.set_param("method", "REQUEST")
+                                _alt.attach(_inline)
+                            except Exception as _e_inl:
+                                print(f"[ILUS][EMAIL] invitación inline no agregada: {_e_inl}")
                 else:
                     _sub = "octet-stream"
                     if _fm and "/" in _fm:
@@ -55638,7 +55659,8 @@ def _comm_correo_demo(c):
              "ot_terminada_cliente": ("documento", ""), "ot_envio_manual": ("documento", "")}.get(c.get("clave"))
     if _paso:
         try:
-            mapa["recorrido_html"] = _ocom.recorrido_html(*_paso)
+            # El botón «Ver seguimiento en vivo» de la vista previa apunta a un enlace de EJEMPLO (abre la página «enlace no disponible»): nunca a una OT real.
+            mapa["recorrido_html"] = _ocom.recorrido_html(*_paso, url_seguimiento=f"{_public_base_url()}/ot-seguimiento/ejemplo")
         except Exception as exc:
             print(f"[comm-correos] demo {c['clave']}: recorrido {type(exc).__name__}", flush=True)
     # Encuesta corta «¿Cómo fue tu servicio?» (REGLA #68): la vista previa y «Enviarme una prueba» la muestran SIEMPRE, aunque el correo real todavía no la lleve
@@ -134643,7 +134665,8 @@ def mant_ot_enviar_firma_remota(vid):
                     # 2026-11-05 («correos ordenados, comunicativos»): «Tu servicio, paso a paso» (paso 3) y lo que sigue, solo lo que de verdad va a salir.
                     "detail_rows_html": "<tr><td>" + _ocom.recorrido_html(
                         "visita", ("apenas firmes, nuestro equipo cierra tu orden y te envía el documento firmado por correo."
-                                   if _ot_com_promesas()["documento"] else "apenas firmes, nuestro equipo de Servicio Técnico cierra tu orden.")) + "</td></tr>",
+                                   if _ot_com_promesas()["documento"] else "apenas firmes, nuestro equipo de Servicio Técnico cierra tu orden."),
+                        url_seguimiento=_ot_seg_url(vid)) + "</td></tr>",
                     "primary_cta_url": link,
                     "primary_cta_label": "Revisar y firmar la OT",
                 })
@@ -139850,6 +139873,127 @@ def ot_publica_firmada(token):
     return render_template(_tpl_pdf, **ctx)
 
 
+# ═════════════════════════════════════════════════════════════════════
+# SEGUIMIENTO EN VIVO DE LA OT PARA EL CLIENTE (REGLA #67, 2026-11-06)
+# Daniel, viendo en Outlook «Tu visita técnica está agendada»: «es necesario
+# mejorar el tracking y colocar algo dinámico, bien bonito… no me gusta tanta
+# letra». Una página pública (sin sesión) con token PROPIO (propósito «seg»:
+# un enlace de firma o del documento firmado no la abre), SOLO LECTURA, que
+# dice en qué paso va el servicio y se actualiza sola cada 30 s. Sin plata,
+# sin proveedores, sin teléfonos ni correos de técnicos (REGLAS #19 y #26).
+# La lógica (paso, textos, token) vive en ot_seguimiento.py (puro, con pruebas).
+# ═════════════════════════════════════════════════════════════════════
+_OT_SEG_TPL = "mantenciones/ot_seguimiento_publico.html"
+
+
+def _ot_seg_token(vid, ttl_dias=None):
+    """Token del enlace público de seguimiento: HMAC con la clave de la app y su propio propósito, sin estado en la base."""
+    return _oseg.token(int(vid), int(time.time()) + int(ttl_dias or _oseg.TTL_DIAS) * 86400, _ot_firma_key())
+
+
+def _ot_seg_url(vid):
+    """La URL pública de seguimiento de la OT, para los correos al cliente (botón «Ver seguimiento en vivo» del recorrido). Nunca lanza:
+    sin URL el correo sale igual, sin el botón."""
+    try:
+        return f"{_public_base_url()}/ot-seguimiento/{_ot_seg_token(vid)}"
+    except Exception as e:
+        print(f"[ot-seg] url vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return ""
+
+
+def _ot_seg_recordatorio_enviado(vid):
+    """¿Ya salió el recordatorio de 24 h al cliente de esta OT? (mant_ot_recordatorios; sin la tabla, no)."""
+    try:
+        return bool(mysql_fetchone("SELECT 1 AS x FROM mant_ot_recordatorios WHERE visita_id=%s AND tipo='cliente' LIMIT 1", (int(vid),)))
+    except Exception:
+        return False
+
+
+def _ot_seg_datos(vid):
+    """Los datos SIN PLATA que necesita `ot_seguimiento.evaluar` (salen de `_ot_com_datos`, la misma lectura de los correos de la OT) o None si la
+    OT no existe. Solo lee: esta página jamás escribe en la base."""
+    datos = _ot_com_datos(vid)
+    if not datos:
+        return None
+    f, ot = datos["fila"], datos["ot"]
+    return {
+        "estado": datos["estado"], "interna": datos["interna"], "numero_ot": datos["numero"], "tipo_label": ot.get("tipo_label"),
+        "cliente": datos["cliente_nombre"], "fecha": f.get("fecha_programada"), "hora_inicio": f.get("hora_inicio"),
+        "hora_fin": f.get("hora_fin"), "hora_real_inicio": f.get("hora_real_inicio"), "cerrada_at": f.get("cerrada_at"),
+        "firma_tecnico_at": f.get("firma_tecnico_at"), "firma_cliente_at": f.get("firma_cliente_at"),
+        "firma_supervisor_at": f.get("firma_supervisor_at"), "firma_tecnico_url": f.get("firma_tecnico_url"),
+        "firma_cliente_url": f.get("firma_cliente_url"), "firma_supervisor_url": f.get("firma_supervisor_url"),
+        "recordatorio_enviado": _ot_seg_recordatorio_enviado(vid),
+        "tecnicos": datos["personas"], "equipos": ot.get("equipos") or [],
+    }
+
+
+def _ot_seg_cabeceras(resp):
+    """Las cabeceras de toda página pública con token (mismo patrón que la encuesta de Retiros): sin caché, sin índice, sin referer."""
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    return resp
+
+
+def _ot_seg_resolver(token):
+    """(vid, datos) de un token de seguimiento válido cuya OT existe y sigue dentro de la ventana (una OT cerrada se ve hasta 30 días después
+    del cierre); (None, None) si no. Un token vencido, inventado o de otro propósito da lo mismo: no se confirma qué OT existe."""
+    vid = _oseg.validar(token, _ot_firma_key(), time.time())
+    if not vid:
+        return None, None
+    datos = _ot_seg_datos(vid)
+    if not datos:
+        return None, None
+    if datos["estado"] in _oseg.EST_CERRADA and not _oseg.vigente_tras_cierre(datos.get("cerrada_at"), datetime.utcnow()):
+        return None, None
+    return vid, datos
+
+
+def _ot_seg_estado(vid, datos):
+    """El estado del servicio para el cliente, ya filtrado a las claves públicas (ot_seguimiento.CLAVES_PUBLICAS). Lo que sigue solo se promete
+    si de verdad va a salir (`_ot_com_promesas`). El enlace al documento firmado va solo cuando el documento está completo."""
+    ahora = _now_chile()
+    ev = _oseg.evaluar(datos, ahora, _ot_com_promesas())
+    return _oseg.a_json(ev, link_firmada=(_ot_com_enlace_firmada(vid) if ev["documento_listo"] else ""),
+                        link_soporte=ILUS_SOPORTE_URL, actualizado=ahora.strftime("%H:%M"))
+
+
+def _ot_seg_no_disponible(status=404):
+    """Respuesta amable y sin detalles: un token vencido y uno inventado se ven igual."""
+    return _ot_seg_cabeceras(make_response(render_template(_OT_SEG_TPL, no_disponible=True, s=None, token=""), status))
+
+
+@app.route("/ot-seguimiento/<token>")
+def ot_publica_seguimiento(token):
+    """La página pública de seguimiento de la OT (sin sesión, solo lectura). Se dibuja completa en el servidor (sirve sin JavaScript) y el
+    navegador la refresca con `/estado` mientras la pestaña está visible."""
+    if not _rl_check("ot_seg_pagina", 30, 60):
+        return _ot_seg_no_disponible(429)
+    vid, datos = _ot_seg_resolver(token)
+    if not vid:
+        return _ot_seg_no_disponible()
+    estado = _ot_seg_estado(vid, datos)
+    return _ot_seg_cabeceras(make_response(render_template(_OT_SEG_TPL, s=estado, token=token, no_disponible=False)))
+
+
+@app.route("/ot-seguimiento/<token>/estado")
+def ot_publica_seguimiento_estado(token):
+    """JSON liviano con el MISMO estado de la página, para actualizarla sola (sin hilos ni conexiones largas: Cloud Run). Limitado por conexión."""
+    if not _rl_check("ot_seg_estado", 60, 60):
+        r = jsonify({"ok": False, "error": "Demasiadas consultas. Espera un momento."})
+        r.status_code = 429
+        return _ot_seg_cabeceras(r)
+    vid, datos = _ot_seg_resolver(token)
+    if not vid:
+        r = jsonify({"ok": False, "error": "Este enlace ya no está disponible."})
+        r.status_code = 404
+        return _ot_seg_cabeceras(r)
+    estado = _ot_seg_estado(vid, datos)
+    estado["ok"] = True
+    return _ot_seg_cabeceras(jsonify(estado))
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/diagnostico", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
@@ -143035,8 +143179,13 @@ def _ot_com_bloques_creacion(v, variables, con_invitacion=False):
         equipos = ["equipo"] * min(_otc.contar_equipos_txt(eq_txt), 500)       # `maquina` trae SOLO la cantidad («3 equipos»): se reconstruye el número
         sigue = ("te enviaremos un recordatorio 24 horas antes de la visita." if _ot_com_promesas()["recordatorio"]
                  else "nuestro técnico llegará en el horario indicado.")
+        try:
+            url_seg = _ot_seg_url(v.get("id"))      # el botón «Ver seguimiento en vivo» (REGLA #67); si falla, el correo sale igual sin el botón
+        except Exception as e:
+            print(f"[ot-com] enlace de seguimiento: {type(e).__name__}: {e}", flush=True)
+            url_seg = ""
         return {"invitacion_html": _ocom.invitacion_html() if con_invitacion else "",
-                "recorrido_html": _ocom.recorrido_html("agendada", sigue),
+                "recorrido_html": _ocom.recorrido_html("agendada", sigue, url_seguimiento=url_seg),
                 "que_esperar_html": _orec.que_esperar_html(equipos, personas),
                 "preparacion_html": _orec.preparacion_html(v.get("tipo")),
                 "firma_sstt_html": _ocom.firma_sstt_html()}
@@ -144049,7 +144198,7 @@ def _ot_recordatorio_barrido(dry=False, ahora=None, max_s=None, max_ot=40):
                     try:
                         vs = _orec.variables_recordatorio(
                             ot, ini, hoy, nombre_destinatario=(contacto if d.get("origen") == "contacto_ot" else ""), link_ot="",
-                            para="cliente")
+                            para="cliente", url_seguimiento=_ot_seg_url(vid))
                         asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_RECORDATORIO, vs)
                         asunto = _brand_subject(asunto)
                         ok = bool(_send_ilus_email(
@@ -144485,7 +144634,8 @@ def _ot_terminada_notificar(vid, origen="aprobar_cierre"):
         enlace_doc = _ot_com_enlace_firmada(v_id)
         # «Tu servicio, paso a paso»: con el documento firmado, los cuatro pasos quedan completos (solo lo usa el correo al cliente).
         comunes = dict(link_ot_firmada=enlace_doc, link_ot=f"{_public_base_url()}/ot/{v_id}", aprobado_por=datos["aprobado_por"],
-                       cerrada_en=datos["cerrada_en"], tecnicos_nombres=datos["personas"], recorrido=_ocom.recorrido_html("documento"))
+                       cerrada_en=datos["cerrada_en"], tecnicos_nombres=datos["personas"],
+                       recorrido=_ocom.recorrido_html("documento", url_seguimiento=_ot_seg_url(v_id)))
         contacto = (datos["fila"].get("contacto_nombre") or datos["fila"].get("cli_contacto_nombre") or "").strip()
         # «¿Cómo fue tu servicio?» (REGLA #68): SOLO el correo al cliente la lleva y solo con la encuesta activa; el equipo y el técnico no la reciben.
         encuesta_cli = _ot_encuesta_html(v_id, datos["cierre_clave"]) if _ocom.a_intentar(plan, "cliente") else ""

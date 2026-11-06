@@ -648,31 +648,70 @@ def resumen_trabajo_html(ot, tecnicos_nombres=None):
 PASOS_SERVICIO = (("agendada", "Visita agendada"), ("recordatorio", "Recordatorio"), ("visita", "Visita y firma"), ("documento", "Documento firmado"))
 
 
-def recorrido_html(actual, que_sigue=""):
-    """El recorrido del servicio con el paso `actual` resaltado (los anteriores van en verde con ✓; el último, cuando es el actual, queda completo).
-    `actual` fuera de PASOS_SERVICIO → '' (no se dibuja). `que_sigue`: una frase («te enviaremos un recordatorio 24 horas antes de la visita»)."""
+_REC_HECHO = ("#16a34a", "#166534")        # círculo y texto de un paso hecho (verde)
+_REC_ACTUAL = ("#dc2626", "#b91c1c")       # el paso actual (rojo ILUS)
+_REC_PENDIENTE = ("#d1d5db", "#6b7280")    # lo que falta (gris)
+_REC_FUENTE = "Arial,Helvetica,sans-serif"
+
+
+def _rec_circulo(color, texto, texto_color="#ffffff"):
+    """Un círculo de 30 px con el número o el ✓ dentro. A prueba de Outlook de escritorio (motor Word): el color va en `bgcolor` y el relleno
+    en la celda; `border-radius` es solo un adorno (donde no se respeta queda un cuadrado del mismo color, que se lee igual)."""
+    return ('<table role="presentation" cellspacing="0" cellpadding="0" align="center"><tr>'
+            f'<td width="30" height="30" align="center" valign="middle" bgcolor="{color}" '
+            f'style="width:30px;height:30px;border-radius:15px;background:{color};color:{texto_color};font-family:{_REC_FUENTE};'
+            f'font-size:14px;line-height:30px;font-weight:700;mso-line-height-rule:exactly">{texto}</td></tr></table>')
+
+
+def boton_html(texto, url, color="#dc2626"):
+    """Botón sólido para correo: el relleno y el color viven en la CELDA (`bgcolor` + padding en el `<td>`) y el `<a>` es de bloque; Outlook ignora
+    el padding de un `<a>` y un botón armado así se veía diminuto (REGLA #66). Sin `url` no dibuja nada."""
+    u = str(url or "").strip()
+    if not u:
+        return ""
+    return ('<table role="presentation" cellspacing="0" cellpadding="0" align="center"><tr>'
+            f'<td align="center" bgcolor="{color}" style="background:{color};border-radius:8px;padding:13px 26px">'
+            f'<a href="{esc(u)}" target="_blank" style="display:block;color:#ffffff;text-decoration:none;font-family:{_REC_FUENTE};'
+            f'font-size:14px;line-height:18px;font-weight:700">{esc(texto)}</a></td></tr></table>')
+
+
+def recorrido_html(actual, que_sigue="", url_seguimiento=""):
+    """«Tu servicio, paso a paso» de los correos al cliente: una fila de 4 pasos con un círculo numerado (hecho = verde con ✓, actual = rojo,
+    pendiente = gris), una barra de progreso que se va llenando, el nombre de cada paso (≥ 12 px, corto) y, si se pasa `url_seguimiento`, el botón
+    sólido «Ver seguimiento en vivo» hacia la página pública de la OT (REGLA #67). Sin URL no hay botón; `actual` fuera de PASOS_SERVICIO → ''.
+
+    6-nov-2026 (Daniel, viendo Outlook: «colocar algo dinámico, bien bonito… no me gusta tanta letra»; los bloques se veían con espacios enormes):
+    todo son tablas con `role="presentation"`, el color y el relleno van en cada `<td>` (`bgcolor`, `width`, `height`) y NUNCA `padding`/`margin`
+    en una `<table>` ni en un `<a>` (Outlook de escritorio los ignora o los agranda). `que_sigue`: una frase corta; se escapa."""
     claves = [c for c, _n in PASOS_SERVICIO]
     if actual not in claves:
         return ""
     ia = claves.index(actual)
-    celdas = []
+    circulos, barras, nombres = [], [], []
     for i, (clave, nombre) in enumerate(PASOS_SERVICIO):
         if i < ia or (i == ia and clave == claves[-1]):
-            barra, txt, peso, marca = "#16a34a", "#166534", "700", "✓ "
+            (fondo, txt), marca, peso = _REC_HECHO, "&#10003;", "700"
         elif i == ia:
-            barra, txt, peso, marca = "#dc2626", "#b91c1c", "800", f"{i + 1} · "
+            (fondo, txt), marca, peso = _REC_ACTUAL, str(i + 1), "800"
         else:
-            barra, txt, peso, marca = "#e5e7eb", "#6b7280", "600", f"{i + 1} · "
-        celdas.append(
-            '<td width="25%" valign="top" style="padding:0 3px">'
-            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td height="5" '
-            f'style="height:5px;line-height:5px;font-size:0;background:{barra};border-radius:3px">&nbsp;</td></tr></table>'
-            f'<div style="padding-top:6px;font-size:11px;line-height:15px;font-weight:{peso};color:{txt}">{marca}{esc(nombre)}</div></td>')
-    sigue = ('<p style="margin:10px 0 0;font-size:13px;color:#444;line-height:1.6"><strong style="color:#222">Qué sigue:</strong> '
-             f'{esc(que_sigue)}</p>') if (que_sigue or "").strip() else ""
-    return ('<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:22px 0 4px"><tr>'
-            '<td colspan="4" style="font-size:11px;font-weight:800;letter-spacing:.1em;color:#6b7280;padding:0 3px 8px">'
-            'TU SERVICIO, PASO A PASO</td></tr><tr>' + "".join(celdas) + '</tr></table>' + sigue)
+            (fondo, txt), marca, peso = _REC_PENDIENTE, str(i + 1), "600"
+        circulos.append(f'<td width="25%" align="center" valign="middle" style="padding:0 2px 6px">{_rec_circulo(fondo, marca)}</td>')
+        barras.append(f'<td width="25%" height="4" bgcolor="{fondo}" style="height:4px;line-height:4px;font-size:0;background:{fondo}">&nbsp;</td>')
+        nombres.append(f'<td width="25%" align="center" valign="top" style="padding:7px 2px 0;font-family:{_REC_FUENTE};font-size:12px;'
+                       f'line-height:16px;font-weight:{peso};color:{txt}">{esc(nombre)}</td>')
+    sigue = (f'<tr><td colspan="4" style="padding:12px 2px 0;font-family:{_REC_FUENTE};font-size:13px;line-height:19px;color:#444444">'
+             f'<strong style="color:#222222">Qué sigue:</strong> {esc(que_sigue)}</td></tr>') if (que_sigue or "").strip() else ""
+    boton = boton_html("Ver seguimiento en vivo", url_seguimiento)
+    boton_fila = f'<tr><td colspan="4" align="center" style="padding:16px 2px 0">{boton}</td></tr>' if boton else ""
+    # El aire de arriba es una FILA separadora (nada de margin en la tabla: Outlook lo convierte en espacios enormes entre bloques).
+    return ('<table role="presentation" width="100%" cellspacing="0" cellpadding="0">'
+            '<tr><td colspan="4" height="18" style="height:18px;line-height:18px;font-size:0">&nbsp;</td></tr>'
+            f'<tr><td colspan="4" style="padding:0 2px 10px;font-family:{_REC_FUENTE};font-size:12px;line-height:16px;font-weight:800;'
+            'letter-spacing:.08em;color:#6b7280">TU SERVICIO, PASO A PASO</td></tr>'
+            '<tr>' + "".join(circulos) + '</tr>'
+            '<tr>' + "".join(barras) + '</tr>'
+            '<tr>' + "".join(nombres) + '</tr>'
+            + sigue + boton_fila + '</table>')
 
 
 def firma_sstt_html():
