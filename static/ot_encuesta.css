@@ -12,7 +12,7 @@
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 .oe-body{
-  margin:0;color:#111827;font-family:Inter,"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  margin:0;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Inter,Roboto,"Helvetica Neue",Arial,sans-serif;font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;
   background:radial-gradient(1000px 480px at 90% -6%,rgba(220,38,38,.06) 0%,transparent 60%),linear-gradient(180deg,#f7f7f8 0%,#f3f4f6 100%);
   min-height:100vh;overflow-wrap:anywhere;
 }
