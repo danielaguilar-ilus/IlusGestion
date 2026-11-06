@@ -810,6 +810,12 @@ const TPL_VARS = {
     { v:'{{tipo_mantencion}}',  label:'Tipo de mantención' },
     { v:'{{maquina}}',          label:'Equipo / Máquina' },
     { v:'{{link_ot}}',          label:'Link a la OT' },
+    // 2026-11-05: bloques de valor del correo «OT creada» al cliente (solo los arma el envío automático al crear la OT; en «Enviar email» van vacíos)
+    { v:'{{invitacion_html}}',  label:'Aviso de la invitación de calendario adjunta' },
+    { v:'{{recorrido_html}}',   label:'«Tu servicio, paso a paso» (paso 1: visita agendada) y lo que sigue' },
+    { v:'{{que_esperar_html}}', label:'Caja «Qué va a pasar» (quién llega, a cuántos equipos y cómo cierra la visita)' },
+    { v:'{{preparacion_html}}', label:'Caja «Para dejar todo listo», según el tipo de trabajo' },
+    { v:'{{firma_sstt_html}}',  label:'Firma «Equipo de Servicio Técnico · ILUS Fitness»' },
   ],
   // 📧 2026-10-19: variables REALES de los avisos al técnico (ot_correos_tecnicos.py → construir_variables /
   // construir_variables_agenda). Ninguna lleva montos, costos ni proveedores (REGLAS #19 y #26). Los *_html ya vienen
@@ -853,6 +859,9 @@ const TPL_VARS = {
     { v:'{{dia}}',                 label:'«hoy», «mañana» o «el martes 10/11/2026» (solo en los recordatorios de 24 horas)' },
     { v:'{{horario}}',             label:'Horario de la visita (solo en los recordatorios de 24 horas)' },
     { v:'{{resumen_trabajo_html}}',label:'Caja «Resumen del trabajo»: equipos atendidos, quién lo hizo y las tres firmas (OT terminada)' },
+    { v:'{{recorrido_html}}',      label:'«Tu servicio, paso a paso»: agendada → recordatorio → visita y firma → documento firmado, con el paso actual resaltado (correos al cliente)' },
+    { v:'{{firma_sstt_html}}',     label:'Firma «Equipo de Servicio Técnico · ILUS Fitness» (correos al cliente)' },
+    { v:'{{invitacion_html}}',     label:'Aviso de la invitación de calendario adjunta (solo «OT creada» al cliente)' },
     { v:'{{que_esperar_html}}',    label:'Caja «Qué va a pasar» (recordatorio al cliente)' },
     { v:'{{preparacion_html}}',    label:'Caja «Para dejar todo listo», según el tipo de trabajo (recordatorio al cliente)' },
     { v:'{{contacto_fila}}',       label:'Fila «Contacto en terreno» (recordatorio al técnico; va dentro de la tabla)' },

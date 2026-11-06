@@ -640,8 +640,50 @@ def resumen_trabajo_html(ot, tecnicos_nombres=None):
     return caja_valor("Resumen del trabajo", lista_valor(lineas), "#16a34a")
 
 
+# ── «Tu servicio, paso a paso» y la firma del equipo (Daniel, 5-nov-2026: «dejemos listo los correos ordenados, disparando el Dpto de SSTT, con algo
+# de Marketing, gestionando un buen servicio y comunicativo») ─────────────────────────────────────────────────────────────────────────────────
+# Cada correo al CLIENTE dice en qué punto del servicio está y qué sigue, con el mismo orden en todos: agendada → recordatorio → visita y firma →
+# documento firmado. Es el mismo lenguaje de los demás bloques (riel de color), a prueba de clientes de correo (tablas, sin CSS moderno) y sin datos
+# que no existan: lo que sigue solo se promete cuando el sistema de verdad lo va a hacer (lo decide quien arma el correo, mirando los interruptores).
+PASOS_SERVICIO = (("agendada", "Visita agendada"), ("recordatorio", "Recordatorio"), ("visita", "Visita y firma"), ("documento", "Documento firmado"))
+
+
+def recorrido_html(actual, que_sigue=""):
+    """El recorrido del servicio con el paso `actual` resaltado (los anteriores van en verde con ✓; el último, cuando es el actual, queda completo).
+    `actual` fuera de PASOS_SERVICIO → '' (no se dibuja). `que_sigue`: una frase («te enviaremos un recordatorio 24 horas antes de la visita»)."""
+    claves = [c for c, _n in PASOS_SERVICIO]
+    if actual not in claves:
+        return ""
+    ia = claves.index(actual)
+    celdas = []
+    for i, (clave, nombre) in enumerate(PASOS_SERVICIO):
+        if i < ia or (i == ia and clave == claves[-1]):
+            barra, txt, peso, marca = "#16a34a", "#166534", "700", "✓ "
+        elif i == ia:
+            barra, txt, peso, marca = "#dc2626", "#b91c1c", "800", f"{i + 1} · "
+        else:
+            barra, txt, peso, marca = "#e5e7eb", "#6b7280", "600", f"{i + 1} · "
+        celdas.append(
+            '<td width="25%" valign="top" style="padding:0 3px">'
+            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td height="5" '
+            f'style="height:5px;line-height:5px;font-size:0;background:{barra};border-radius:3px">&nbsp;</td></tr></table>'
+            f'<div style="padding-top:6px;font-size:11px;line-height:15px;font-weight:{peso};color:{txt}">{marca}{esc(nombre)}</div></td>')
+    sigue = ('<p style="margin:10px 0 0;font-size:13px;color:#444;line-height:1.6"><strong style="color:#222">Qué sigue:</strong> '
+             f'{esc(que_sigue)}</p>') if (que_sigue or "").strip() else ""
+    return ('<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:22px 0 4px"><tr>'
+            '<td colspan="4" style="font-size:11px;font-weight:800;letter-spacing:.1em;color:#6b7280;padding:0 3px 8px">'
+            'TU SERVICIO, PASO A PASO</td></tr><tr>' + "".join(celdas) + '</tr></table>' + sigue)
+
+
+def firma_sstt_html():
+    """La firma de los correos al cliente: quién le escribe (el equipo de Servicio Técnico) y un cierre cálido. Estática y sin datos."""
+    return ('<p style="margin:22px 0 0;font-size:13px;line-height:1.6;color:#444"><strong style="color:#222">Equipo de Servicio Técnico</strong><br>'
+            'ILUS Fitness · Gracias por confiar en nosotros.</p>')
+
+
 def variables_ot(ot, *, saludo="", nombre_destinatario="", link_ot_firmada="", link_ot="", mensaje="", aprobado_por="",
-                 cerrada_en="", resumen_envio_html="", enviado_por="", dias=TOKEN_DIAS, tecnicos_nombres=None, dia="", horario=""):
+                 cerrada_en="", resumen_envio_html="", enviado_por="", dias=TOKEN_DIAS, tecnicos_nombres=None, dia="", horario="",
+                 recorrido=""):
     """Las variables de los correos de la OT, TODAS ESCAPADAS para HTML (las escribe una persona: razón social, dirección…); los `*_html`
     ya vienen armados. `ot`: id, numero_ot, cliente, tipo_label, fecha_realizada, fecha, direccion, equipos (lista de nombres)."""
     numero = ot.get("numero_ot") or f"V-{int(ot.get('id') or 0):05d}"
@@ -669,6 +711,8 @@ def variables_ot(ot, *, saludo="", nombre_destinatario="", link_ot_firmada="", l
         "resumen_trabajo_html": resumen_trabajo_html(ot, nombres),
         "que_esperar_html": "", "preparacion_html": "", "contacto_fila": "", "como_llegar_html": "", "notas_html": "",
         "equipos_lista_html": "", "antes_de_salir_html": "",
+        # «Tu servicio, paso a paso», la firma del equipo y la invitación de calendario (solo los correos al cliente las usan).
+        "recorrido_html": recorrido or "", "firma_sstt_html": firma_sstt_html(), "invitacion_html": "",
     }
 
 
@@ -765,9 +809,40 @@ _RECORDATORIO_TECNICO_V1 = (
     + _boton("Ver la OT", "{{link_ot}}")
     + _pie("Si no puedes asistir, avisa lo antes posible a tu coordinador de Servicio Técnico."))
 
+# v2 (5-nov-2026, «aporte de valor»): las dos plantillas del cliente tal como salieron en esa versión. Las mejora el recorrido «Tu servicio, paso a paso» y la
+# firma del equipo (v3): si en la base siguen EXACTAMENTE iguales a su v1 o a su v2, el arranque las pasa a la v3; si alguien las editó, no se tocan.
+_TERMINADA_V2 = (
+    "Tu orden de trabajo {{ot}} quedó terminada",
+    _p("{{saludo}}")
+    + _p("Terminamos el trabajo de la orden de trabajo <strong>{{ot}}</strong>. Aquí está el documento firmado, con lo que se hizo, "
+         "los equipos revisados y las fotos.")
+    + "{{resumen_trabajo_html}}"
+    + _tabla("#16a34a", _FILAS)
+    + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
+    + _pie("El enlace es personal y se mantiene disponible por {{dias_vigencia}} días. Si algo no calza, responde este correo o crea "
+           "un ticket de soporte."))
+_RECORDATORIO_V2 = (
+    "Recordatorio: tu visita técnica es {{dia}} ({{ot}})",
+    _p("{{saludo}}")
+    + _p("Te recordamos que <strong>{{dia}}</strong> nuestro equipo técnico irá a realizar el trabajo de la orden de trabajo "
+         "<strong>{{ot}}</strong>.")
+    + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Trabajo", "{{tipo_mantencion}}") + _f("Fecha", "{{fecha}}")
+             + _f("Horario", "{{horario}}") + _f("Técnico(s)", "{{tecnicos}}") + _f("Equipos", "{{maquina}}")
+             + _f("Dirección", "{{direccion}}"))
+    + "{{que_esperar_html}}"
+    + "{{preparacion_html}}"
+    + _pie("¿Necesitas cambiar la fecha o el acceso? Responde este correo o crea un ticket de soporte y lo coordinamos con tiempo."))
+
+
+def invitacion_html():
+    """El aviso de la invitación de calendario adjunta (solo cuando el correo de verdad la lleva)."""
+    return _p("<strong>Agrégala a tu calendario:</strong> te adjuntamos la invitación (archivo .ics). Ábrela y acéptala para que la visita quede en tu agenda.")
+
+
 # Nota: ninguna de estas plantillas lleva montos, costos, proveedores ni OC (REGLAS #19 y #26).
 SEMILLAS = {
-    # Al CLIENTE, al aprobar el cierre (se enciende y se apaga en Control de correos). v2 (5-nov-2026): con el «Resumen del trabajo».
+    # Al CLIENTE, al aprobar el cierre (se enciende y se apaga en Control de correos). v2 (5-nov-2026): con el «Resumen del trabajo»; v3: con el recorrido
+    # «Tu servicio, paso a paso» (todo hecho) y la firma del equipo de Servicio Técnico.
     PLANTILLA_TERMINADA: (
         "Tu orden de trabajo {{ot}} quedó terminada",
         _p("{{saludo}}")
@@ -776,8 +851,10 @@ SEMILLAS = {
         + "{{resumen_trabajo_html}}"
         + _tabla("#16a34a", _FILAS)
         + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
+        + "{{recorrido_html}}"
         + _pie("El enlace es personal y se mantiene disponible por {{dias_vigencia}} días. Si algo no calza, responde este correo o crea "
-               "un ticket de soporte.")),
+               "un ticket de soporte.")
+        + "{{firma_sstt_html}}"),
     # Al equipo (quien creó la OT, el ejecutivo o el responsable): qué pasó y qué se envió.
     PLANTILLA_TERMINADA_INTERNO: (
         "OT {{ot}} terminada · {{cliente}}",
@@ -814,9 +891,11 @@ SEMILLAS = {
         + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Trabajo", "{{tipo_mantencion}}") + _f("Fecha", "{{fecha}}")
                  + _f("Horario", "{{horario}}") + _f("Técnico(s)", "{{tecnicos}}") + _f("Equipos", "{{maquina}}")
                  + _f("Dirección", "{{direccion}}"))
+        + "{{recorrido_html}}"
         + "{{que_esperar_html}}"
         + "{{preparacion_html}}"
-        + _pie("¿Necesitas cambiar la fecha o el acceso? Responde este correo o crea un ticket de soporte y lo coordinamos con tiempo.")),
+        + _pie("¿Necesitas cambiar la fecha o el acceso? Responde este correo o crea un ticket de soporte y lo coordinamos con tiempo.")
+        + "{{firma_sstt_html}}"),
     # Al TÉCNICO (o a la empresa externa): su recordatorio, SIN montos ni proveedores. La dirección, el contacto y «qué hay que hacer» los reemplaza
     # el código mientras el Anexo no esté firmado. v2 (5-nov-2026): con «Cómo llegar», el contacto en terreno, lo que hay que hacer, la lista de
     # equipos y «Antes de salir».
@@ -837,9 +916,30 @@ SEMILLAS = {
 
 # slug → versiones anteriores sin editar que el arranque puede reemplazar por la vigente (ver `_ensure_comm_template_ot_comunicacion`).
 SEMILLAS_ANTERIORES = {
-    PLANTILLA_TERMINADA: (_TERMINADA_V1,),
-    PLANTILLA_RECORDATORIO: (_RECORDATORIO_V1,),
+    PLANTILLA_TERMINADA: (_TERMINADA_V1, _TERMINADA_V2),
+    PLANTILLA_RECORDATORIO: (_RECORDATORIO_V1, _RECORDATORIO_V2),
     PLANTILLA_RECORDATORIO_TECNICO: (_RECORDATORIO_TECNICO_V1,),
+}
+
+# La plantilla del PRIMER correo que ve el cliente («OT creada: visita agendada», registro `ot_creada_cliente`) es más antigua que este módulo: vive en
+# `app.py` (`_mantenciones_tpl_seed`) y también la usan el botón «Enviar email» de la ficha y la copia al técnico. Su versión nueva se guarda aparte (no es
+# una de las plantillas que este módulo siembra) y el arranque la pone SOLO si la fila sigue idéntica a la semilla original. Variables nuevas, todas vacías en
+# los caminos que no las arman (el reemplazo borra lo que no se provee): `invitacion_html`, `recorrido_html`, `que_esperar_html`, `preparacion_html`,
+# `firma_sstt_html`.
+PLANTILLA_VISITA_AGENDADA = "visita_agendada"
+SEMILLAS_EXTRA = {
+    PLANTILLA_VISITA_AGENDADA: (
+        "Tu visita técnica está agendada — {{ot}} ({{fecha}})",
+        '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
+        + _p("Te confirmamos que <strong>agendamos la visita técnica</strong> de la orden <strong>{{ot}}</strong>.")
+        + "{{invitacion_html}}"
+        + _tabla("#dc2626", _f("N° Orden", "{{ot}}", True) + _f("Tipo", "{{tipo_mantencion}}") + _f("Fecha", "<strong>{{fecha}}</strong> · {{horario}}")
+                 + _f("Técnico(s)", "{{tecnico}}") + _f("Equipos", "{{maquina}}") + _f("Dirección", "{{direccion}}"))
+        + "{{recorrido_html}}"
+        + "{{que_esperar_html}}"
+        + "{{preparacion_html}}"
+        + _pie("Si necesitas reagendar o cancelar, responde este correo o contacta a tu ejecutivo.")
+        + "{{firma_sstt_html}}"),
 }
 
 
