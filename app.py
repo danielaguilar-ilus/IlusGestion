@@ -80,6 +80,7 @@ import anexo_lugar as _axl        # 2026-11-03: «Lugar del Servicio» del anexo
 import ot_intenciones as _oint   # 2026-10-25 (REGLA #47): intenciones del costeo (por qué, quién lo asume) y su validación: módulo puro con pruebas
 import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
 import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
+import ot_firma_vigencia as _ofv      # 2026-11-05: el enlace de firma remota del cliente vence en 48 HORAS HÁBILES (módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
@@ -133694,12 +133695,27 @@ def _ot_firma_key():
     return k.encode() if isinstance(k, str) else (k or b"ilus-firma")
 
 
-def _ot_firma_token(vid, ttl_horas=120):
-    """Token firmado (HMAC) que codifica la OT + expiración. Sin estado en BD."""
+def _ot_firma_token(vid, ttl_horas=120, exp_epoch=None):
+    """Token firmado (HMAC) que codifica la OT + expiración. Sin estado en BD. `exp_epoch` (segundos desde 1970) fija el vencimiento exacto;
+    sin él se usa `ttl_horas` corridas desde ahora (el enlace al documento firmado, 30 días, y el resto de los usos de siempre)."""
     import hmac as _hmac, hashlib as _hl, base64 as _b64
-    exp = int(time.time()) + int(ttl_horas) * 3600
+    exp = int(exp_epoch) if exp_epoch else int(time.time()) + int(ttl_horas) * 3600
     sig = _hmac.new(_ot_firma_key(), f"{vid}:{exp}".encode(), _hl.sha256).hexdigest()[:24]
     return _b64.urlsafe_b64encode(f"{vid}:{exp}:{sig}".encode()).decode().rstrip("=")
+
+
+def _ot_firma_remota_vigencia(ahora=None):
+    """(epoch de vencimiento, texto) del enlace de FIRMA REMOTA del cliente: 48 horas HÁBILES desde ahora (Daniel, 5-nov-2026; manual MAN-SST-INS-01
+    §4). Cuenta solo lunes a viernes sin feriados de Chile, como la anticipación de Retiros (ver ot_firma_vigencia.py). El texto dice la fecha y
+    la hora de Chile en que vence («el lunes 09/11/2026 a las 15:00»). Nunca lanza: ante cualquier error cae a 48 horas corridas."""
+    try:
+        from cl_feriados import es_dia_habil as _hab
+        ahora = ahora or _now_chile()
+        venc = _ofv.vence_el(ahora.replace(tzinfo=None), _hab)
+        return int(venc.replace(tzinfo=ahora.tzinfo).timestamp()), _ofv.texto_vence(venc)
+    except Exception as e:
+        print(f"[firma-remota] vigencia: {type(e).__name__}: {e}", flush=True)
+        return int(time.time()) + _ofv.HORAS_VIGENCIA * 3600, "en 48 horas"
 
 
 def _ot_firma_token_validar(token):
@@ -134052,7 +134068,10 @@ def mant_ot_enviar_firma_remota(vid):
     if (v.get("estado") or "").lower() != "firmada_tecnico":
         return jsonify({"ok": False, "error": f"La OT no está lista para la firma del cliente (estado: {v.get('estado')})."}), 400
 
-    token = _ot_firma_token(vid)
+    # 2026-11-05 (Daniel: «cambia el enlace de firma a 48 horas hábiles»): antes 120 h corridas («vence en 5 días»). Ahora solo cuentan los días
+    # hábiles y el texto dice hasta qué día y hora de Chile sirve (ver ot_firma_vigencia.py).
+    _exp_firma, _vence_txt = _ot_firma_remota_vigencia()
+    token = _ot_firma_token(vid, exp_epoch=_exp_firma)
     link = _public_base_url() + "/firmar-ot/" + token
     numero = v.get("numero_ot") or f"OT #{vid}"
     razon = v.get("razon_social") or "estimado cliente"
@@ -134078,7 +134097,7 @@ def mant_ot_enviar_firma_remota(vid):
                 mensaje = (f"Hola {saludo}, el servicio técnico de tus equipos fue realizado "
                            f"(orden {numero}). Para dejarlo conforme, revisa el detalle y firma "
                            f"aquí (puedes hacerlo desde el celular):\n{link}\n\nEl enlace es "
-                           f"personal y vence en 5 días. — ILUS Fitness")
+                           f"personal y vence {_vence_txt} ({_ofv.TEXTO_PLAZO}). — ILUS Fitness")
                 from urllib.parse import quote as _url_quote
                 wa_numero = tel_norm.lstrip("+")
                 wa_resultado = {
@@ -134093,6 +134112,7 @@ def mant_ot_enviar_firma_remota(vid):
             return jsonify({
                 "ok": True, "canal": "whatsapp", "enviado": None,
                 "telefono": wa_resultado["telefono"], "link": link, "wa_link": wa_resultado["wa_link"],
+                "vence": _vence_txt,
                 "mensaje": "Se abrirá WhatsApp con el mensaje listo — revísalo y confírmalo tú mismo.",
             })
 
@@ -134116,13 +134136,13 @@ def mant_ot_enviar_firma_remota(vid):
                     "customer_name": razon,
                     "message": ("El servicio técnico de tus equipos fue realizado. Para dejarlo conforme, "
                                 "revisa el detalle y firma en línea (puedes hacerlo desde tu celular). "
-                                "El enlace es personal y vence en 5 días."),
+                                f"El enlace es personal y vence {_vence_txt} ({_ofv.TEXTO_PLAZO})."),
                     "primary_cta_url": link,
                     "primary_cta_label": "Revisar y firmar la OT",
                 })
             except Exception:
                 html = (f"<p>Hola {razon},</p><p>Firma tu orden de trabajo {numero} en este enlace "
-                        f"(vence en 5 días): <a href='{link}'>{link}</a></p>")
+                        f"(vence {_vence_txt}): <a href='{link}'>{link}</a></p>")
             try:
                 ok = _send_ilus_email(email_dest, _brand_subject(f"Firma tu orden de trabajo {numero}"), html,
                                       evento="ot_firma_remota", modulo="mantenciones",
@@ -134137,8 +134157,9 @@ def mant_ot_enviar_firma_remota(vid):
             if mail_resultado.get("error"):
                 return jsonify({"ok": False, "error": mail_resultado["error"]}), 400
             return jsonify({"ok": True, "canal": "email", "enviado": mail_resultado["enviado"],
-                            "email": mail_resultado["email"], "link": link,
-                            "mensaje": (f"Link de firma enviado a {mail_resultado['email']}." if mail_resultado["enviado"] else
+                            "email": mail_resultado["email"], "link": link, "vence": _vence_txt,
+                            "mensaje": (f"Link de firma enviado a {mail_resultado['email']}. El enlace vence {_vence_txt} ({_ofv.TEXTO_PLAZO})."
+                                        if mail_resultado["enviado"] else
                                         "El correo no salió (revisa el canal de email), pero el link quedó generado — puedes copiarlo.")})
 
     # ── canal == 'ambos': fusiona los dos resultados, degradación honesta ──
@@ -134161,8 +134182,9 @@ def mant_ot_enviar_firma_remota(vid):
     return jsonify({
         "ok": True, "canal": "ambos", "link": link,
         "wa_link": wa_resultado.get("wa_link"), "telefono": wa_resultado.get("telefono"),
-        "email": mail_resultado.get("email"), "enviado": mail_resultado.get("enviado"),
-        "mensaje": "Se mandó por: " + " y ".join(partes) + (". " + " · ".join(avisos) if avisos else "."),
+        "email": mail_resultado.get("email"), "enviado": mail_resultado.get("enviado"), "vence": _vence_txt,
+        "mensaje": ("Se mandó por: " + " y ".join(partes) + (". " + " · ".join(avisos) if avisos else ".")
+                    + f" El enlace vence {_vence_txt} ({_ofv.TEXTO_PLAZO})."),
     })
 
 
