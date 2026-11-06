@@ -163,13 +163,19 @@ class MundoRec(MundoOT):
         self._f_all, self._f_exec, self._f_rc = a["mysql_fetchall"], a["mysql_execute"], a["mysql_execute_returning_rowcount"]
         a.update({"_orec": O, "timezone": dt.timezone, "timedelta": dt.timedelta, "datetime": dt.datetime,
                   "mysql_fetchall": self._candidatos, "mysql_execute": self._exec, "mysql_execute_returning_rowcount": self._rc,
-                  "_brand_subject": lambda t: "ILUS · " + t})
+                  "_brand_subject": lambda t: "ILUS · " + t,
+                  # la ficha de la OT con un «qué hay que hacer» que MEZCLA instrucciones y plata (la plata no debe llegar al técnico)
+                  "_ot_tec_filas": lambda vids: {int(v): {"id": int(v), "numero_ot": self.fila.get("numero_ot"), "cliente": self.fila.get("cli_razon"),
+                                                          "tipo_label": "Instalación", "direccion": "Av. Demo 123, Las Condes",
+                                                          "descripcion": "Revisar la banda de la trotadora. Cobrar $50.000 de extra al cliente."}
+                                                 for v in vids}})
         self.visita()                                      # una visita por omisión: martes 10-nov 10:00, creada hace días
 
     def visita(self, **cambios):
         base = dict(self.fila)
         base.update(estado="programada", fecha_programada=dt.date(2026, 11, 10), hora_inicio=dt.timedelta(hours=10),
-                    hora_fin=dt.timedelta(hours=12), created_at=dt.datetime(2026, 11, 2, 15, 0), ot_madre_id=None, ot_relacion=None)
+                    hora_fin=dt.timedelta(hours=12), created_at=dt.datetime(2026, 11, 2, 15, 0), ot_madre_id=None, ot_relacion=None,
+                    tipo="instalacion", contacto_tel="+56 9 8765 4321")
         base.update(cambios)
         self.visitas = [base]
         return base
@@ -468,6 +474,203 @@ class TestCableado(unittest.TestCase):
         self.assertTrue(C.cliente_activo({}))
         deploy = FC.texto(".github/workflows/deploy.yml")
         self.assertNotIn("OT_TERMINADA_CLIENTE_ACTIVA", deploy)          # y tampoco hay que encenderla ahí: el frente manda
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════
+#  Correos que APORTAN VALOR (Daniel, 5-nov-2026: «que el mensaje provoque verse inteligente y aporte valor»)
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════
+def _t(html):
+    import html as _h
+    return re.sub(r"\s+", " ", _h.unescape(re.sub(r"<[^>]+>", " ", html or ""))).strip()
+
+
+class TestBloquesDeValor(unittest.TestCase):
+    def test_los_consejos_al_cliente_cambian_segun_el_tipo_de_trabajo(self):
+        inst, prev, corr, gar = (O.consejos_cliente(t) for t in ("instalacion", "preventiva", "correctiva", "garantia"))
+        self.assertTrue(any("camino de acceso" in c for c in inst))
+        self.assertTrue(any("ruidos" in c for c in prev))
+        self.assertTrue(any("desde cuándo falla" in c for c in corr))
+        self.assertTrue(any("factura o boleta" in c for c in gar))
+        self.assertEqual(O.consejos_cliente("mantención preventiva"), prev)
+        self.assertEqual(O.consejos_cliente("algo_raro"), O._CONSEJOS_GENERALES)
+        self.assertEqual(O.consejos_cliente(None), O._CONSEJOS_GENERALES)
+        for k, c in O.CONSEJOS_CLIENTE.items():
+            self.assertTrue(len(c) >= 2, k)
+            # «factura o boleta» (garantía) es el DOCUMENTO de la compra que el técnico necesita, no plata: se permite; montos y costos, no
+            self.assertNotRegex(" ".join(c), re.compile(PLATA.pattern.replace(r"|\bfactur", ""), re.I), k)
+
+    def test_que_va_a_pasar_dice_quien_llega_a_cuantos_equipos_y_como_cierra(self):
+        t = _t(O.que_esperar_html(["Trotadora ILUS Pro 9000", "Bicicleta ILUS"], ["Lenin Urbina"]))
+        self.assertIn("Llegará Lenin Urbina en el horario indicado.", t)
+        self.assertIn("Trabajará en 2 equipos: Trotadora ILUS Pro 9000, Bicicleta ILUS.", t)
+        self.assertIn("confirmar la recepción del trabajo con tu firma", t)
+        self.assertIn("1 equipo:", _t(O.que_esperar_html(["Trotadora"], [])))                  # singular
+        self.assertIn("Nuestro equipo técnico llegará", _t(O.que_esperar_html([], [])))        # sin nombres: no se inventa
+        self.assertNotIn("Trabajará en", _t(O.que_esperar_html([], [])))
+        self.assertIn("y 4 más", _t(O.que_esperar_html([f"Equipo {i}" for i in range(10)], [])))
+
+    def test_cómo_llegar_es_un_enlace_de_mapa_y_solo_con_una_direccion_real(self):
+        u = O.url_mapa("Av. Demo 123, Las Condes")
+        self.assertTrue(u.startswith("https://www.google.com/maps/search/?api=1&query="))
+        self.assertIn("Av.%20Demo%20123%2C%20Las%20Condes", u)
+        for sin in ("", "—", "-", None, OTC.OCULTO_ANEXO):
+            self.assertEqual(O.url_mapa(sin), "", repr(sin))
+            self.assertEqual(O.como_llegar_html(sin), "", repr(sin))
+        self.assertIn("Cómo llegar", O.como_llegar_html("Av. Demo 123"))
+
+    def test_el_contacto_en_terreno_solo_muestra_un_telefono_legible_y_escapa_el_nombre(self):
+        f = O.contacto_fila("María <b>Pérez</b>", "+56 9 8765 4321")
+        self.assertIn("Contacto en terreno", f)
+        self.assertIn("María &lt;b&gt;Pérez&lt;/b&gt;", f)
+        self.assertIn("+56 9 8765 4321", f)
+        self.assertNotIn("<b>", f)
+        self.assertNotIn("987", O.contacto_fila("María", "llamar a la casa 12"))             # no es un teléfono: no se muestra
+        self.assertIn("María", O.contacto_fila("María", "123"))
+        self.assertEqual(O.contacto_fila("", ""), "")
+        self.assertEqual(O.contacto_fila(None, None), "")
+
+    def test_que_hay_que_hacer_no_deja_pasar_plata(self):
+        t = _t(O.notas_html("Revisar la banda. Cobrar $50.000 de extra al cliente. Lubricar el eje."))
+        self.assertIn("Revisar la banda", t)
+        self.assertIn("Lubricar el eje", t)
+        self.assertNotIn("50.000", t)
+        self.assertEqual(O.notas_html(""), "")
+        self.assertEqual(O.notas_html("Cobrar $50.000 al cliente"), "")                      # si todo era plata, no se dibuja el bloque
+
+    def test_la_lista_de_equipos_cuenta_y_acota(self):
+        self.assertIn("EQUIPOS DEL TRABAJO (2)", _t(O.equipos_lista_html(["A", "B"])))
+        self.assertEqual(O.equipos_lista_html([]), "")
+        self.assertIn("… y 3 más", _t(O.equipos_lista_html([f"E{i}" for i in range(15)])))
+
+    def test_las_variables_del_cliente_y_del_tecnico_llenan_solo_lo_suyo(self):
+        ot = dict(TestTextosYRegistro.OT, tipo="instalacion", descripcion="Revisar la banda.", contacto_nombre="María Pérez",
+                  contacto_tel="+56 9 8765 4321")
+        cli = O.variables_recordatorio(ot, F(10, 10, 0), dt.date(2026, 11, 9), para="cliente")
+        tec = O.variables_recordatorio(ot, F(10, 10, 0), dt.date(2026, 11, 9), para="tecnico", link_ot="https://ilus.test/ot/77")
+        for k in ("que_esperar_html", "preparacion_html"):
+            self.assertTrue(cli[k], k)
+            self.assertEqual(tec[k], "", k)
+        for k in ("como_llegar_html", "contacto_fila", "notas_html", "equipos_lista_html", "antes_de_salir_html"):
+            self.assertEqual(cli[k], "", "el cliente no debe recibir " + k)
+            self.assertTrue(tec[k], "el técnico debe recibir " + k)
+
+    def test_con_el_anexo_sin_firmar_el_tecnico_no_recibe_direccion_contacto_ni_que_hacer(self):
+        ot = dict(TestTextosYRegistro.OT, tipo="instalacion", descripcion="Revisar la banda.", contacto_nombre="María Pérez",
+                  contacto_tel="+56 9 8765 4321", direccion=OTC.OCULTO_ANEXO)
+        v = O.variables_recordatorio(ot, F(10, 10, 0), dt.date(2026, 11, 9), para="tecnico", oculto=True)
+        for k in ("como_llegar_html", "contacto_fila", "notas_html"):
+            self.assertEqual(v[k], "", k)
+        self.assertTrue(v["equipos_lista_html"] and v["antes_de_salir_html"])                # lo demás sí sirve
+
+    def test_el_resumen_del_trabajo_de_la_ot_terminada(self):
+        t = _t(C.resumen_trabajo_html({"equipos": ["Trotadora ILUS Pro 9000"], "tecnicos": ["Lenin Urbina", "Pedro Pérez"]}))
+        self.assertIn("Se atendió 1 equipo: Trotadora ILUS Pro 9000.", t)
+        self.assertIn("Lo realizaron: Lenin Urbina, Pedro Pérez.", t)
+        self.assertIn("firmado por el técnico, por el cliente y por el responsable de Servicio Técnico", t)
+        t2 = _t(C.resumen_trabajo_html({"equipos": ["A", "B", "C"], "tecnicos": []}))
+        self.assertIn("Se atendieron 3 equipos", t2)
+        self.assertNotIn("Lo realiz", t2)                                                     # sin nombres, no se inventa
+        self.assertNotRegex(t + t2, PLATA)
+
+    def test_todo_va_escapado_y_sin_plata(self):
+        ot = dict(TestTextosYRegistro.OT, equipos=["<script>alert(1)</script>"], tecnicos=["Ana <i>"], cliente="A & B")
+        for blob in (O.que_esperar_html(ot["equipos"], ot["tecnicos"]), O.equipos_lista_html(ot["equipos"]),
+                     C.resumen_trabajo_html(ot), O.notas_html("<img src=x onerror=1> instrucción")):
+            self.assertNotIn("<script>", blob)
+            self.assertNotIn("<img", blob)
+            self.assertNotIn("<i>", blob)
+
+
+class TestCorreosConValorDeExtremoAExtremo(_Base):
+    def test_el_correo_al_cliente_trae_que_va_a_pasar_y_para_dejar_todo_listo_pero_nada_interno(self):
+        w = self.mundo()
+        w.barrer(LUN(10, 5))
+        cli = w.para("contacto@gimnasio.cl")[0]
+        t = _t(cli["html"])
+        for esperado in ("QUÉ VA A PASAR", "Llegará Lenin Urbina", "Trabajará en 1 equipo: Trotadora ILUS Pro 9000",
+                         "PARA DEJAR TODO LISTO", "camino de acceso", "firma"):
+            self.assertIn(esperado, t, esperado)
+        for prohibido in ("Cómo llegar", "QUÉ HAY QUE HACER", "Revisar la banda", "50.000", "8765", "ANTES DE SALIR"):
+            self.assertNotIn(prohibido, t, prohibido)
+        self.assertNotIn("google.com/maps", cli["html"])
+
+    def test_el_correo_al_tecnico_trae_como_llegar_contacto_que_hacer_y_antes_de_salir_sin_plata(self):
+        w = self.mundo()
+        w.barrer(LUN(10, 5))
+        tec = w.para("lenin@sphs.cl")[0]
+        t = _t(tec["html"])
+        for esperado in ("Cómo llegar", "Contacto en terreno: María Pérez · +56 9 8765 4321", "QUÉ HAY QUE HACER", "Revisar la banda de la trotadora",
+                         "EQUIPOS DEL TRABAJO (1)", "ANTES DE SALIR", "foto del antes y del después"):
+            self.assertIn(esperado, t, esperado)
+        self.assertIn("https://www.google.com/maps/search/?api=1&amp;query=", tec["html"])     # el & del enlace va escapado en el HTML
+        self.assertNotIn("50.000", t)                                                          # la plata de la descripción no llega al técnico
+        self.assertNotRegex(t, PLATA)
+
+    def test_con_el_anexo_sin_firmar_el_tecnico_no_ve_direccion_contacto_ni_que_hacer(self):
+        w = self.mundo()
+        w.amb["_ot_tec_oculta_detalle"] = lambda vid: True
+        w.barrer(LUN(10, 5))
+        tec = w.para("lenin@sphs.cl")[0]
+        t = _t(tec["html"])
+        for prohibido in ("Cómo llegar", "Contacto en terreno", "8765", "QUÉ HAY QUE HACER", "Revisar la banda", "Av. Demo 123"):
+            self.assertNotIn(prohibido, t, prohibido)
+        self.assertNotIn("google.com/maps", tec["html"])
+        self.assertIn("ANTES DE SALIR", t)
+
+    def test_el_consejo_cambia_con_el_tipo_de_trabajo(self):
+        w = self.mundo()
+        w.visita(tipo="correctiva")
+        w.barrer(LUN(10, 5))
+        t = _t(w.para("contacto@gimnasio.cl")[0]["html"])
+        self.assertIn("desde cuándo falla el equipo", t)
+        self.assertNotIn("camino de acceso", t)
+
+
+class TestPlantillasSeMejoranSinPisarLoEditado(unittest.TestCase):
+    def _mundo(self):
+        w = MundoOT()
+        self.addCleanup(w.cerrar)
+        orig = w.amb["mysql_fetchone"]
+
+        def con_id(sql, params=()):                                 # la plantilla de mentira no trae `id`: el UPDATE real lo usa
+            r = orig(sql, params)
+            if r is not None and "FROM comm_templates" in sql and "id" not in r:
+                r = dict(r, id=abs(hash(tuple(params))) % 10_000)
+            return r
+        w.amb["mysql_fetchone"] = con_id
+        return w
+
+    def _poner(self, w, slug, par):
+        w.bd.plantillas[(C.MODULO_PLANTILLAS, slug)] = {"asunto": par[0], "cuerpo": par[1], "activo": 1}
+
+    def test_la_version_nueva_es_distinta_de_la_anterior_y_trae_los_bloques_nuevos(self):
+        for slug, anteriores in C.SEMILLAS_ANTERIORES.items():
+            self.assertNotEqual(C.SEMILLAS[slug][1], anteriores[0][1], slug)
+        self.assertIn("{{resumen_trabajo_html}}", C.SEMILLAS[C.PLANTILLA_TERMINADA][1])
+        self.assertIn("{{que_esperar_html}}", C.SEMILLAS[C.PLANTILLA_RECORDATORIO][1])
+        self.assertIn("{{como_llegar_html}}", C.SEMILLAS[C.PLANTILLA_RECORDATORIO_TECNICO][1])
+        self.assertNotIn("{{que_esperar_html}}", C._RECORDATORIO_V1[1])
+
+    def test_una_plantilla_sin_editar_pasa_a_la_version_nueva_y_una_editada_queda_como_esta(self):
+        w = self._mundo()
+        self._poner(w, C.PLANTILLA_RECORDATORIO, C._RECORDATORIO_V1)                                   # sin editar → se actualiza
+        self._poner(w, C.PLANTILLA_RECORDATORIO_TECNICO, C._RECORDATORIO_TECNICO_V1)                   # sin editar → se actualiza
+        self._poner(w, C.PLANTILLA_TERMINADA, (C._TERMINADA_V1[0], C._TERMINADA_V1[1] + "<p>Texto de Daniel</p>"))   # editada → NO se toca
+        w.f("_ensure_comm_template_ot_comunicacion")()
+        ups = [(s, p) for s, p in w.sql if s.startswith("UPDATE comm_templates SET asunto")]
+        estados_actualizados = {p[1] for s, p in ups}                    # los cuerpos que quedaron
+        self.assertEqual(len(ups), 2, ups)
+        self.assertIn(C.SEMILLAS[C.PLANTILLA_RECORDATORIO][1], estados_actualizados)
+        self.assertIn(C.SEMILLAS[C.PLANTILLA_RECORDATORIO_TECNICO][1], estados_actualizados)
+        self.assertNotIn(C.SEMILLAS[C.PLANTILLA_TERMINADA][1], estados_actualizados)
+        for s, p in ups:
+            self.assertIn("AND cuerpo=%s", s)                      # si alguien la edita justo ahora, no se pisa
+            self.assertEqual(p[2], "sistema")
+
+    def test_sin_plantillas_previas_solo_se_siembran_las_nuevas(self):
+        w = self._mundo()
+        w.f("_ensure_comm_template_ot_comunicacion")()
+        self.assertEqual([s for s, p in w.sql if s.startswith("UPDATE comm_templates")], [])
 
 
 if __name__ == "__main__":

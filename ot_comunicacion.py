@@ -602,6 +602,44 @@ def esc(v):
     return _otc.esc(v)
 
 
+# ── Bloques de VALOR para los correos (Daniel, 5-nov-2026: «que el mensaje provoque verse inteligente y aporte valor») ──────────────
+# Cada bloque dice algo útil para quien lo lee (qué va a pasar, cómo dejar todo listo, cómo llegar, qué hacer) y sale de datos reales de la
+# OT. Todo va ESCAPADO; nunca lleva montos, costos, proveedores ni OC (REGLAS #19 y #26). Sin datos suficientes, el bloque no se dibuja.
+def caja_valor(titulo, cuerpo_html, color="#0ea5e9"):
+    """Una caja gris con riel de color y un título pequeño: el mismo lenguaje de los demás correos de la OT."""
+    return ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;'
+            f'border-left:4px solid {color};border-radius:4px;padding:14px 18px;margin:18px 0">'
+            '<tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;color:#6b7280;padding-bottom:6px">'
+            f'{esc(str(titulo).upper())}</td></tr>'
+            f'<tr><td style="font-size:13px;color:#444;line-height:1.6">{cuerpo_html}</td></tr></table>')
+
+
+def lista_valor(items):
+    """Lista con viñetas segura para correo; `items` son textos planos (se escapan)."""
+    return ('<ul style="margin:0;padding-left:18px">'
+            + "".join(f'<li style="margin:0 0 4px">{esc(i)}</li>' for i in items if str(i or "").strip()) + "</ul>")
+
+
+def _plural(n, uno, varios):
+    return uno if n == 1 else varios
+
+
+def resumen_trabajo_html(ot, tecnicos_nombres=None):
+    """«Resumen del trabajo» del correo de OT terminada: cuántos equipos se atendieron (con sus nombres), quién lo hizo y que el documento quedó
+    firmado por las tres partes. Solo se manda cuando el documento está completo (`documento_listo`), así que la última línea es verdad."""
+    equipos = [str(e).strip() for e in (ot.get("equipos") or []) if str(e or "").strip()]
+    personas = [str(n).strip() for n in (tecnicos_nombres if tecnicos_nombres is not None else ot.get("tecnicos") or []) if str(n or "").strip()]
+    lineas = []
+    if equipos:
+        tope = 8
+        nombres = ", ".join(equipos[:tope]) + (f" y {len(equipos) - tope} más" if len(equipos) > tope else "")
+        lineas.append(f"Se {_plural(len(equipos), 'atendió', 'atendieron')} {len(equipos)} {_plural(len(equipos), 'equipo', 'equipos')}: {nombres}.")
+    if personas:
+        lineas.append(f"{'Lo realizó' if len(personas) == 1 else 'Lo realizaron'}: {', '.join(personas)}.")
+    lineas.append("El documento quedó firmado por el técnico, por el cliente y por el responsable de Servicio Técnico.")
+    return caja_valor("Resumen del trabajo", lista_valor(lineas), "#16a34a")
+
+
 def variables_ot(ot, *, saludo="", nombre_destinatario="", link_ot_firmada="", link_ot="", mensaje="", aprobado_por="",
                  cerrada_en="", resumen_envio_html="", enviado_por="", dias=TOKEN_DIAS, tecnicos_nombres=None, dia="", horario=""):
     """Las variables de los correos de la OT, TODAS ESCAPADAS para HTML (las escribe una persona: razón social, dirección…); los `*_html`
@@ -627,6 +665,10 @@ def variables_ot(ot, *, saludo="", nombre_destinatario="", link_ot_firmada="", l
         "resumen_envio_html": resumen_envio_html or "",
         "dias_vigencia": esc(str(dias)), "enviado_por": esc(enviado_por or ""),
         "dia": esc(dia), "horario": esc(horario),      # solo los recordatorios de 24 horas los llenan (ot_recordatorio_24h.py)
+        # Bloques de valor. El de OT terminada se arma acá; los del recordatorio los llena ot_recordatorio_24h.variables_recordatorio.
+        "resumen_trabajo_html": resumen_trabajo_html(ot, nombres),
+        "que_esperar_html": "", "preparacion_html": "", "contacto_fila": "", "como_llegar_html": "", "notas_html": "",
+        "equipos_lista_html": "", "antes_de_salir_html": "",
     }
 
 
@@ -692,14 +734,46 @@ _FILAS = (_f("OT", "{{ot}}", True) + _f("Cliente", "{{cliente}}") + _f("Trabajo"
           + _f("Terminada el", "{{fecha_realizada}}") + _f("Técnico(s)", "{{tecnicos}}") + _f("Equipos", "{{maquina}}")
           + _f("Dirección", "{{direccion}}"))
 
+# ── Versiones ANTERIORES (v1) de las tres plantillas que se mejoraron el 5-nov-2026 («que aporte valor»). Si en la base una de estas sigue
+# EXACTAMENTE igual a su v1 —nadie la editó en Comunicaciones—, el arranque la pasa a la v2; si una persona la tocó, queda como la dejó.
+_TERMINADA_V1 = (
+    "Tu orden de trabajo {{ot}} quedó terminada",
+    _p("{{saludo}}")
+    + _p("Terminamos el trabajo de la orden de trabajo <strong>{{ot}}</strong>. Aquí está el documento firmado, con lo que se hizo, "
+         "los equipos revisados y las fotos.")
+    + _tabla("#16a34a", _FILAS)
+    + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
+    + _pie("El enlace es personal y se mantiene disponible por {{dias_vigencia}} días. Si algo no calza, responde este correo o crea "
+           "un ticket de soporte."))
+_RECORDATORIO_V1 = (
+    "Recordatorio: tu visita técnica es {{dia}} ({{ot}})",
+    _p("{{saludo}}")
+    + _p("Te recordamos que <strong>{{dia}}</strong> nuestro equipo técnico irá a realizar el trabajo de la orden de trabajo "
+         "<strong>{{ot}}</strong>.")
+    + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Trabajo", "{{tipo_mantencion}}") + _f("Fecha", "{{fecha}}")
+             + _f("Horario", "{{horario}}") + _f("Técnico(s)", "{{tecnicos}}") + _f("Equipos", "{{maquina}}")
+             + _f("Dirección", "{{direccion}}"))
+    + _p("Para que todo salga bien, procura que haya una persona que pueda recibir al equipo y darle acceso a los equipos del trabajo.")
+    + _pie("¿Necesitas cambiar la fecha o el acceso? Responde este correo o crea un ticket de soporte y lo coordinamos con tiempo."))
+_RECORDATORIO_TECNICO_V1 = (
+    "Recordatorio: {{dia}} tienes la {{ot}} · {{cliente}}",
+    _p("{{saludo}}")
+    + _p("Te recordamos que <strong>{{dia}}</strong> tienes la orden de trabajo <strong>{{ot}}</strong>.")
+    + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Cliente", "{{cliente}}") + _f("Trabajo", "{{tipo_mantencion}}")
+             + _f("Fecha", "{{fecha}}") + _f("Horario", "{{horario}}") + _f("Dirección", "{{direccion}}")
+             + _f("Equipos", "{{maquina}}"))
+    + _boton("Ver la OT", "{{link_ot}}")
+    + _pie("Si no puedes asistir, avisa lo antes posible a tu coordinador de Servicio Técnico."))
+
 # Nota: ninguna de estas plantillas lleva montos, costos, proveedores ni OC (REGLAS #19 y #26).
 SEMILLAS = {
-    # Al CLIENTE, al aprobar el cierre (nace apagado: OT_TERMINADA_CLIENTE_ACTIVA).
+    # Al CLIENTE, al aprobar el cierre (se enciende y se apaga en Control de correos). v2 (5-nov-2026): con el «Resumen del trabajo».
     PLANTILLA_TERMINADA: (
         "Tu orden de trabajo {{ot}} quedó terminada",
         _p("{{saludo}}")
         + _p("Terminamos el trabajo de la orden de trabajo <strong>{{ot}}</strong>. Aquí está el documento firmado, con lo que se hizo, "
              "los equipos revisados y las fotos.")
+        + "{{resumen_trabajo_html}}"
         + _tabla("#16a34a", _FILAS)
         + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
         + _pie("El enlace es personal y se mantiene disponible por {{dias_vigencia}} días. Si algo no calza, responde este correo o crea "
@@ -731,6 +805,7 @@ SEMILLAS = {
         + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
         + _pie("El enlace se mantiene disponible por {{dias_vigencia}} días. Lo envió {{enviado_por}} desde ILUS Fitness.")),
     # RECORDATORIO DE 24 HORAS (Daniel, 5-nov-2026). Al CLIENTE: sin enlace a la ficha interna (pide sesión); si algo cambia, responde el correo.
+    # v2 (5-nov-2026): con «Qué va a pasar» (quién llega, a qué equipos, cómo cierra la visita) y «Para dejar todo listo» según el tipo de trabajo.
     PLANTILLA_RECORDATORIO: (
         "Recordatorio: tu visita técnica es {{dia}} ({{ot}})",
         _p("{{saludo}}")
@@ -739,18 +814,32 @@ SEMILLAS = {
         + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Trabajo", "{{tipo_mantencion}}") + _f("Fecha", "{{fecha}}")
                  + _f("Horario", "{{horario}}") + _f("Técnico(s)", "{{tecnicos}}") + _f("Equipos", "{{maquina}}")
                  + _f("Dirección", "{{direccion}}"))
-        + _p("Para que todo salga bien, procura que haya una persona que pueda recibir al equipo y darle acceso a los equipos del trabajo.")
+        + "{{que_esperar_html}}"
+        + "{{preparacion_html}}"
         + _pie("¿Necesitas cambiar la fecha o el acceso? Responde este correo o crea un ticket de soporte y lo coordinamos con tiempo.")),
-    # Al TÉCNICO (o a la empresa externa): su recordatorio, SIN montos ni proveedores. La dirección la reemplaza el código mientras el Anexo no esté firmado.
+    # Al TÉCNICO (o a la empresa externa): su recordatorio, SIN montos ni proveedores. La dirección, el contacto y «qué hay que hacer» los reemplaza
+    # el código mientras el Anexo no esté firmado. v2 (5-nov-2026): con «Cómo llegar», el contacto en terreno, lo que hay que hacer, la lista de
+    # equipos y «Antes de salir».
     PLANTILLA_RECORDATORIO_TECNICO: (
         "Recordatorio: {{dia}} tienes la {{ot}} · {{cliente}}",
         _p("{{saludo}}")
         + _p("Te recordamos que <strong>{{dia}}</strong> tienes la orden de trabajo <strong>{{ot}}</strong>.")
         + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Cliente", "{{cliente}}") + _f("Trabajo", "{{tipo_mantencion}}")
                  + _f("Fecha", "{{fecha}}") + _f("Horario", "{{horario}}") + _f("Dirección", "{{direccion}}")
-                 + _f("Equipos", "{{maquina}}"))
+                 + "{{contacto_fila}}" + _f("Equipos", "{{maquina}}"))
+        + "{{como_llegar_html}}"
+        + "{{notas_html}}"
+        + "{{equipos_lista_html}}"
+        + "{{antes_de_salir_html}}"
         + _boton("Ver la OT", "{{link_ot}}")
         + _pie("Si no puedes asistir, avisa lo antes posible a tu coordinador de Servicio Técnico.")),
+}
+
+# slug → versiones anteriores sin editar que el arranque puede reemplazar por la vigente (ver `_ensure_comm_template_ot_comunicacion`).
+SEMILLAS_ANTERIORES = {
+    PLANTILLA_TERMINADA: (_TERMINADA_V1,),
+    PLANTILLA_RECORDATORIO: (_RECORDATORIO_V1,),
+    PLANTILLA_RECORDATORIO_TECNICO: (_RECORDATORIO_TECNICO_V1,),
 }
 
 

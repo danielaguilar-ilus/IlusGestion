@@ -121,12 +121,176 @@ def dia_visita_txt(inicio, hoy):
     return "el " + _otc.dia_txt(d)
 
 
-def variables_recordatorio(ot, inicio, hoy, *, nombre_destinatario="", link_ot=""):
-    """Variables de los dos correos (escapadas para HTML). `ot`: id, numero_ot, cliente, tipo_label, fecha, hora_inicio, hora_fin, direccion,
-    equipos (lista de nombres), tecnicos (lista de personas). El horario, si no se definió, dice «por confirmar»."""
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  Bloques de VALOR (Daniel, 5-nov-2026: «que el mensaje provoque verse inteligente y aporte valor»)
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+# Consejos para el CLIENTE según el tipo de trabajo. Son recomendaciones prácticas (no promesas ni condiciones): ayudan a que la visita salga a
+# la primera. Un tipo que no está aquí usa los generales. Todo texto plano; se escapa al dibujarlo.
+_CONSEJOS_GENERALES = (
+    "Deja libre el acceso a los equipos del trabajo y evita que se usen mientras dure la visita.",
+    "Procura que haya una persona que pueda recibir al equipo y confirmar la recepción al terminar.",
+)
+CONSEJOS_CLIENTE = {
+    "instalacion": (
+        "Deja despejado el lugar donde irá cada equipo y el camino de acceso (puertas, escaleras, ascensor).",
+        "Confirma con tu administración el horario de acceso y descarga, si el recinto lo exige.",
+        "Procura que haya una persona que pueda recibir al equipo y confirmar la recepción al terminar.",
+    ),
+    "preventiva": (
+        "Deja los equipos sin uso durante la visita y con espacio libre alrededor para trabajar.",
+        "Anota las fallas, ruidos o molestias que hayas notado para contárselas al técnico.",
+        "Procura que haya una persona que pueda recibir al equipo y confirmar la recepción al terminar.",
+    ),
+    "correctiva": (
+        "Cuéntale al técnico desde cuándo falla el equipo y qué pasaba en ese momento: acelera el diagnóstico.",
+        "Si tienes fotos o videos de la falla, déjalos a mano.",
+        "Deja el equipo sin uso hasta la visita y con espacio libre alrededor.",
+    ),
+    "garantia": (
+        "Ten a mano la factura o boleta de compra del equipo: el técnico la necesita para registrar la garantía.",
+        "Cuéntale al técnico desde cuándo falla el equipo y qué pasaba en ese momento.",
+        "Deja el equipo sin uso hasta la visita y con espacio libre alrededor.",
+    ),
+    "desinstalacion": (
+        "Deja el equipo desocupado y con espacio libre alrededor para poder desarmarlo.",
+        "Confirma con tu administración el horario de acceso y salida de equipos, si el recinto lo exige.",
+        "Procura que haya una persona que pueda confirmar la entrega al terminar.",
+    ),
+}
+CONSEJOS_CLIENTE["visita_tecnica"] = CONSEJOS_CLIENTE["inspeccion"] = CONSEJOS_CLIENTE["levantamiento"] = (
+    "Deja libre el acceso a los equipos que se van a revisar y evita usarlos durante la visita.",
+    "Ten a mano a la persona que conoce los equipos o el recinto: el técnico puede tener preguntas.",
+)
+CONSEJOS_CLIENTE["capacitacion"] = (
+    "Reúne con anticipación a las personas que van a participar y reserva el espacio y los equipos para la capacitación.",
+    "Confirma que el horario indicado les acomoda a todos.",
+)
+CONSEJOS_CLIENTE["cambio_equipo"] = CONSEJOS_CLIENTE["instalacion"]
+
+# Lo que el TÉCNICO debe cuidar al salir (manual MAN-SST-INS-01: checklist por equipo, fotos antes y después, firmas).
+ANTES_DE_SALIR = (
+    "Revisa el checklist de cada equipo en la OT y confirma que llevas las herramientas y repuestos necesarios.",
+    "En terreno: foto del antes y del después de cada equipo, y el checklist completo.",
+    "Al terminar, pide la firma del cliente en terreno y deja tu resumen de lo que encontraste y lo que hiciste.",
+)
+
+
+def clave_tipo(tipo):
+    """El tipo de OT de la base normalizado a las claves de CONSEJOS_CLIENTE ('', 'otro' si no se conoce)."""
+    t = str(tipo or "").strip().lower().replace(" ", "_")
+    for k in ("instalacion", "preventiva", "correctiva", "garantia", "desinstalacion", "visita_tecnica", "inspeccion",
+              "levantamiento", "capacitacion", "cambio_equipo"):
+        if t.startswith(k):
+            return k
+    return "mantencion" if t.startswith("mantenc") else "otro"
+
+
+def consejos_cliente(tipo):
+    k = clave_tipo(tipo)
+    if k == "mantencion":
+        k = "preventiva"
+    return CONSEJOS_CLIENTE.get(k, _CONSEJOS_GENERALES)
+
+
+def _plural(n, uno, varios):
+    return uno if n == 1 else varios
+
+
+def que_esperar_html(equipos, personas):
+    """«Qué va a pasar» para el CLIENTE: quién llega, a cuántos equipos y cómo cierra la visita (con su firma, como dice el manual)."""
+    eq = [str(e).strip() for e in (equipos or []) if str(e or "").strip()]
+    pe = [str(p).strip() for p in (personas or []) if str(p or "").strip()]
+    lineas = [("Llegará " + ", ".join(pe) + " en el horario indicado." if pe else "Nuestro equipo técnico llegará en el horario indicado.")]
+    if eq:
+        tope = 6
+        nombres = ", ".join(eq[:tope]) + (f" y {len(eq) - tope} más" if len(eq) > tope else "")
+        lineas.append(f"Trabajará en {len(eq)} {_plural(len(eq), 'equipo', 'equipos')}: {nombres}.")
+    lineas.append("Al terminar, el técnico te pedirá confirmar la recepción del trabajo con tu firma.")
+    return _ocom.caja_valor("Qué va a pasar", _ocom.lista_valor(lineas), "#0ea5e9")
+
+
+def preparacion_html(tipo):
+    """«Para dejar todo listo» para el CLIENTE, según el tipo de trabajo."""
+    return _ocom.caja_valor("Para dejar todo listo", _ocom.lista_valor(consejos_cliente(tipo)), "#16a34a")
+
+
+def url_mapa(direccion):
+    """Enlace de Google Maps a una dirección (búsqueda por texto). '' si no hay una dirección real."""
+    d = str(direccion or "").strip()
+    if not d or d in ("—", "-") or d == _otc.OCULTO_ANEXO:
+        return ""
+    from urllib.parse import quote
+    return "https://www.google.com/maps/search/?api=1&query=" + quote(d, safe="")
+
+
+def como_llegar_html(direccion):
+    """Botón «Cómo llegar» (Google Maps) para el TÉCNICO."""
+    u = url_mapa(direccion)
+    if not u:
+        return ""
+    return ('<p style="margin:0 0 6px;font-size:13px"><a href="' + _otc.esc(u) + '" style="background:#0a0a0a;color:#fff;padding:9px 20px;'
+            'border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block">Cómo llegar</a></p>')
+
+
+def _tel_legible(tel):
+    """Teléfono para mostrar: solo dígitos, +, espacios y guiones (nada de texto libre). '' si no queda nada útil."""
+    t = "".join(ch for ch in str(tel or "") if ch.isdigit() or ch in "+ -")
+    t = " ".join(t.split())
+    return t if sum(ch.isdigit() for ch in t) >= 7 else ""
+
+
+def contacto_fila(nombre, telefono):
+    """Una fila «Contacto en terreno: Nombre · teléfono» para la tabla del TÉCNICO ('' si no hay nada)."""
+    n = str(nombre or "").strip()
+    t = _tel_legible(telefono)
+    partes = [p for p in (_otc.esc(n) if n else "", _otc.esc(t) if t else "") if p]
+    if not partes:
+        return ""
+    return ('<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Contacto en terreno:</strong>&nbsp; '
+            + " &middot; ".join(partes) + "</td></tr>")
+
+
+def notas_html(descripcion):
+    """«Qué hay que hacer» para el TÉCNICO: el texto de la OT sin plata ni proveedores (`limpiar_texto_tecnico`). '' si no queda nada."""
+    t = _otc.limpiar_texto_tecnico(descripcion, 400)
+    return _ocom.caja_valor("Qué hay que hacer", _otc.esc(t), "#dc2626") if t else ""
+
+
+def equipos_lista_html(equipos):
+    """Los equipos del trabajo, uno por línea, para el TÉCNICO ('' si no hay)."""
+    eq = [str(e).strip() for e in (equipos or []) if str(e or "").strip()]
+    if not eq:
+        return ""
+    tope = 12
+    items = eq[:tope] + ([f"… y {len(eq) - tope} más"] if len(eq) > tope else [])
+    return _ocom.caja_valor(f"Equipos del trabajo ({len(eq)})", _ocom.lista_valor(items), "#6b7280")
+
+
+def antes_de_salir_html():
+    return _ocom.caja_valor("Antes de salir", _ocom.lista_valor(ANTES_DE_SALIR), "#f59e0b")
+
+
+def variables_recordatorio(ot, inicio, hoy, *, nombre_destinatario="", link_ot="", para="cliente", oculto=False):
+    """Variables de los dos correos (escapadas para HTML). `ot`: id, numero_ot, cliente, tipo_label, tipo, fecha, hora_inicio, hora_fin, direccion,
+    equipos (lista de nombres), tecnicos (lista de personas), descripcion, contacto_nombre, contacto_tel. El horario, si no se definió, dice
+    «por confirmar».
+
+    `para`: 'cliente' llena «Qué va a pasar» y «Para dejar todo listo»; 'tecnico' llena «Cómo llegar», el contacto en terreno, «Qué hay que hacer»,
+    la lista de equipos y «Antes de salir». `oculto` (técnico con el Anexo de Servicios sin firmar): sin dirección, contacto ni «qué hay que hacer»
+    (la misma regla de la ficha y de los demás correos a técnicos)."""
     base = _ocom.variables_ot(ot, nombre_destinatario=nombre_destinatario, link_ot=link_ot,
                               tecnicos_nombres=ot.get("tecnicos") or [])
     base["fecha"] = _otc.esc(_otc.fecha_txt(inicio.date()) or "—")
     base["dia"] = _otc.esc(dia_visita_txt(inicio, hoy))
     base["horario"] = _otc.esc(_otc.horario_txt(ot.get("hora_inicio"), ot.get("hora_fin")))
+    if para == "cliente":
+        base["que_esperar_html"] = que_esperar_html(ot.get("equipos"), ot.get("tecnicos"))
+        base["preparacion_html"] = preparacion_html(ot.get("tipo"))
+    else:
+        if not oculto:
+            base["como_llegar_html"] = como_llegar_html(ot.get("direccion"))
+            base["contacto_fila"] = contacto_fila(ot.get("contacto_nombre"), ot.get("contacto_tel"))
+            base["notas_html"] = notas_html(ot.get("descripcion"))
+        base["equipos_lista_html"] = equipos_lista_html(ot.get("equipos"))
+        base["antes_de_salir_html"] = antes_de_salir_html()
     return base
