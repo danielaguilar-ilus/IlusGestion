@@ -465,7 +465,7 @@ class TestVariablesYPlantillas(unittest.TestCase):
         self.assertEqual(v["cliente"], "Trabajo interno")
         self.assertEqual(v["saludo"], "Hola,")
         self.assertEqual(C.variables_ot(OT_DEMO, nombre_destinatario="María")["saludo"], "Hola María,")
-        self.assertEqual(v["maquina"], "Trotadora ILUS Pro 9000, Bicicleta ILUS")
+        self.assertEqual(v["maquina"], "2 equipos")                          # SOLO la cantidad: nada de nombres de productos en los correos (Daniel, 6-nov)
         self.assertEqual(v["dias_vigencia"], "30")
 
     def test_no_hay_ninguna_variable_con_plata(self):
@@ -1681,7 +1681,7 @@ class TestCableado(unittest.TestCase):
         self.assertIn("with app.app_context():", trozo)
         self.assertIn("_ensure_comm_template_ot_comunicacion()", trozo)
         self.assertGreater(i, self.app.rindex("_ensure_comm_template_ot_tecnicos()"))              # después de las plantillas de técnicos
-        self.assertIn("except Exception as _ensure_otcom_err:", self.app[i:i + 700])
+        self.assertIn("except Exception as _ensure_otcom_err:", self.app[i:i + 1400])
 
     def test_las_plantillas_se_siembran_solo_si_no_existen(self):
         m = MundoOT()

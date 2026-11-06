@@ -139,7 +139,7 @@
     {% set _hero_msg = {
       'solicitud_recibida': {'ico':'envelope-paper-heart','accent':'accent-blue','title':'Tu solicitud está en cola','msg':'Validamos disponibilidad y persona autorizada, y te responderemos a la brevedad.'},
       'en_revision':        {'ico':'search-heart',    'accent':'accent-amber','title':'ILUS está revisando tu retiro','msg':'Validamos documento, identidad y disponibilidad. Te avisamos por email.'},
-      'informacion_incompleta':{'ico':'exclamation-triangle','accent':'accent-amber','title':'Necesitamos completar datos','msg':'Te contactaremos para confirmar lo que falta. También puedes responder tu correo de confirmación.'},
+      'informacion_incompleta':{'ico':'exclamation-triangle','accent':'accent-amber','title':'Necesitamos completar datos','msg':'Te contactaremos para confirmar lo que falta. Si quieres agregar un dato, crea un ticket de soporte desde el botón del correo de confirmación.'},
       'propuesta_enviada':  {'ico':'calendar-plus',   'accent':'accent-amber','title':'Hay una fecha esperándote','msg':'Confírmala abajo, propón otra o rechaza. Mientras no respondas, el cupo no está reservado.'},
       'esperando_cliente':  {'ico':'hourglass-split', 'accent':'accent-amber','title':'Esperando tu respuesta','msg':'Necesitamos tu confirmación para avanzar con el retiro.'},
       'agenda_confirmada':  {'ico':'calendar-check-fill','accent':'accent-green','title':'Tu retiro está confirmado','msg':'Te esperamos puntual. Trae tu cédula y un vehículo apto para tus productos.'},
@@ -147,7 +147,7 @@
       'reagendada':         {'ico':'arrow-clockwise','accent':'accent-amber','title':'Tu retiro fue reagendado','msg':'Revisa abajo la nueva propuesta y respóndela para asegurar el nuevo cupo.'},
       'retirada':           {'ico':'check-circle-fill','accent':'accent-green','title':'Retiro completado, gracias','msg':'Esperamos que disfrutes tu equipo ILUS. Si necesitas servicio post-venta, escríbenos.'},
       'cerrada':            {'ico':'archive-fill',   'accent':'accent-green','title':'Solicitud cerrada','msg':'Este retiro ya fue completado. Si tienes dudas, escríbenos.'},
-      'rechazada':          {'ico':'x-octagon-fill', 'accent':'accent-red','title':'Solicitud cancelada','msg':'Si fue un error o quieres reagendar, escríbenos respondiendo el correo o haz una nueva solicitud.'},
+      'rechazada':          {'ico':'x-octagon-fill', 'accent':'accent-red','title':'Solicitud cancelada','msg':'Si fue un error o quieres reagendar, crea un ticket de soporte desde el botón del correo o haz una nueva solicitud.'},
       'fallida':            {'ico':'exclamation-octagon-fill','accent':'accent-red','title':'Retiro no completado','msg':'No pudimos completar tu retiro. Nos pondremos en contacto para reagendar.'},
     }.get(req.status, {'ico':'circle','accent':'accent-blue','title':b.label,'msg':'Estado actualizado por nuestro equipo.'}) %}
     {# Estado "con propuesta" pero sin ninguna vigente (venció, se liberó por falta
@@ -397,7 +397,7 @@
       {%- if _idx_actual == -1 -%}
       <div class="step-cancel-banner" style="display:flex;align-items:center;gap:10px;background:#fee2e2;border:1px solid #fca5a5;border-radius:12px;padding:12px 16px;margin-bottom:14px;color:#991b1b;font-weight:700">
         <i class="bi bi-x-octagon-fill" style="font-size:1.2rem"></i>
-        <span>{% if req.status == 'fallida' %}No pudimos completar este retiro. Te contactaremos para reagendar.{% else %}Esta solicitud fue cancelada. Si fue un error, escríbenos respondiendo el correo.{% endif %}</span>
+        <span>{% if req.status == 'fallida' %}No pudimos completar este retiro. Te contactaremos para reagendar.{% else %}Esta solicitud fue cancelada. Si fue un error, crea un ticket de soporte desde el botón del correo.{% endif %}</span>
       </div>
       {%- endif -%}
       <div class="stepper stepper-5" id="stepperRoot" data-idx="{{ _idx_actual }}">

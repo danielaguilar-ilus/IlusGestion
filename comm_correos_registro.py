@@ -125,7 +125,7 @@ DEMO_EXTRA = {
     "cerrada_en": "21/10/2026 11:30", "resumen_envio_html": "", "dias_vigencia": "30", "enviado_por": "Aarón Rojas",
     # Recordatorio de 24 horas (5-nov-2026).
     "dia": "mañana", "nombre_tecnico": "Pedro", "tecnicos": "Pedro Pérez", "tipo_mantencion": "Mantención preventiva",
-    "ot": "OT-2026-00123", "cliente": "Gimnasio Demo SpA", "direccion": "Av. Demo 1234, Las Condes", "maquina": "Trotadora ILUS Pro 9000",
+    "ot": "OT-2026-00123", "cliente": "Gimnasio Demo SpA", "direccion": "Av. Demo 1234, Las Condes", "maquina": "2 equipos",
     "fecha": "21/10/2026", "link_ot": "https://ilusfitness.com/ot/123",
     # «Tu servicio, paso a paso», firma del equipo e invitación de calendario (5-nov-2026): vista previa con datos de mentira.
     "recorrido_html": ('<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:22px 0 4px"><tr>'
@@ -152,7 +152,7 @@ DEMO_EXTRA = {
     "resumen_trabajo_html": ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #16a34a;'
                              'border-radius:4px;padding:14px 18px;margin:18px 0"><tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;'
                              'color:#6b7280;padding-bottom:6px">RESUMEN DEL TRABAJO</td></tr><tr><td style="font-size:13px;color:#444;line-height:1.6">'
-                             '<ul style="margin:0;padding-left:18px"><li>Se atendieron 2 equipos: Trotadora ILUS Pro 9000, Bicicleta estática ILUS.</li>'
+                             '<ul style="margin:0;padding-left:18px"><li>Se atendieron 2 equipos; el detalle está en el documento.</li>'
                              '<li>Lo realizó: Pedro Pérez.</li><li>El documento quedó firmado por el técnico, por el cliente y por el responsable de '
                              'Servicio Técnico.</li></ul></td></tr></table>'),
     "que_esperar_html": ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #0ea5e9;'

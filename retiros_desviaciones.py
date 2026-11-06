@@ -90,7 +90,7 @@ TERMINADOS = ("retirada", "cerrada", "rechazada", "fallida")
 # Correo al cliente (solo si el responsable lo marca): qué correo le llega con cada acción. Ninguno = no hay correo posible.
 CORREO_POR_ACCION = {
     "no_concretado": ("failed", "«No pudimos concretar tu retiro»: le pedimos que nos escriba para coordinar una nueva fecha."),
-    "cancelar": ("rejected", "«Tu retiro fue cancelado»: si fue un error, puede responder el correo."),
+    "cancelar": ("rejected", "«Tu retiro fue cancelado»: si fue un error, puede crear un ticket de soporte con el botón del correo."),
 }
 
 DETALLE_MAX = 800

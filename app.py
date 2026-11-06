@@ -82,6 +82,7 @@ import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién pued
 import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
 import ot_equipos_filas as _oef       # 2026-11-05: Paso «Equipos y su checklist»: una fila con cantidad ↔ una fila por unidad + checklist por producto (módulo puro con pruebas)
 import ot_firma_vigencia as _ofv      # 2026-11-05: el enlace de firma remota del cliente vence en 48 HORAS HÁBILES (módulo puro con pruebas)
+import correos_sin_responder as _csr   # 2026-11-06: ningún correo al cliente dice «responde este correo»: todo va por TICKET (frases + arranque; módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import ficha_cliente_cabecera as _fcc  # 2026-11-05: semáforo, motivos y KPIs de la cabecera de la ficha del cliente (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
@@ -8969,9 +8970,9 @@ def _ilus_email_master(ctx: dict) -> str:
                    f'</table></td></tr>') if detail_rows else ''
     cta_html = (f'<tr><td class="email-pad" style="padding:25px 44px 0">'
                 f'<table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>'
-                f'<td class="email-button" align="center" bgcolor="#e30613" style="border-radius:5px">'
-                f'<a href="{_esc(cta_url)}" target="_blank" style="display:inline-block;padding:14px 24px;'
-                f'color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;border-radius:5px">'
+                f'<td class="email-button" align="center" bgcolor="#e30613" style="background:#e30613;border-radius:5px;padding:14px 24px">'
+                f'<a href="{_esc(cta_url)}" target="_blank" style="display:block;'
+                f'color:#ffffff;text-decoration:none;font-size:14px;line-height:20px;font-weight:700;font-family:Arial,Helvetica,sans-serif">'
                 f'{cta_label}</a></td></tr></table></td></tr>') if cta_url else ''
     closing_html = (f'<tr><td class="email-pad" style="padding:22px 44px 36px">'
                     f'<p style="margin:0;font-size:13px;line-height:21px;color:#6b7280">{closing}</p>'
@@ -9016,8 +9017,8 @@ def _ilus_email_master(ctx: dict) -> str:
 <tr><td align="center" style="font-size:16px;line-height:22px;font-weight:800;color:#ffffff">¿Necesitas ayuda con tu solicitud?</td></tr>
 <tr><td align="center" style="padding-top:8px;font-size:13px;line-height:20px;color:#aeb4bd">Nuestro equipo de soporte técnico puede ayudarte y dar seguimiento a tu caso.</td></tr>
 <tr><td align="center" style="padding-top:17px"><table role="presentation" cellspacing="0" cellpadding="0" border="0">
-<tr><td align="center" style="border:1px solid #e30613;border-radius:5px">
-<a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:inline-block;padding:11px 18px;color:#ffffff;text-decoration:none;font-size:13px;font-weight:700">Crear ticket de soporte</a>
+<tr><td align="center" bgcolor="#e30613" style="background:#e30613;border-radius:6px;padding:14px 32px">
+<a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:block;color:#ffffff;text-decoration:none;font-size:15px;line-height:20px;font-weight:700;font-family:Arial,Helvetica,sans-serif">Crear ticket de soporte</a>
 </td></tr></table></td></tr>
 <tr><td align="center" style="padding-top:20px;font-size:11px;line-height:18px;color:#646b74">Este correo fue generado automáticamente. No compartas enlaces de seguimiento con terceros.<br>© {year} ILUS Fitness · Equipamiento profesional para alto rendimiento</td></tr>
 </table></td></tr>
@@ -52216,7 +52217,7 @@ def _build_retiro_email_templates():
          _ret_calendar_btns() +
          _ret_cta("link_seguimiento", "Ver detalle del retiro") +
          '<p style="font-size:12px;color:#6b7280;line-height:1.5;text-align:center;margin:18px 0 0">'
-         '¿Necesitas reagendar o tienes una duda? Responde este correo y te ayudamos.</p>'),
+         '¿Necesitas reagendar o tienes una duda? Crea un ticket de soporte con el botón de abajo y te ayudamos.</p>'),
         ('agenda_confirmada', 'whatsapp',
          '',
          '✅ *ILUS* — Retiro *{{code}}* CONFIRMADO: {{fecha_confirmada}} ({{horario}}). '
@@ -52273,7 +52274,7 @@ def _build_retiro_email_templates():
          'Calificar mi experiencia ★</a>'
          '</td></tr></table>' +
          '<p style="font-size:12px;color:#6b7280;line-height:1.55;text-align:center;margin:18px 0 0">'
-         '¿Necesitas asesoría o servicio post-venta? Responde este correo y te ayudamos.</p>'),
+         '¿Necesitas asesoría o servicio post-venta? Crea un ticket de soporte con el botón de abajo y te ayudamos.</p>'),
         ('retirada', 'whatsapp',
          '',
          '✅ *ILUS* — Retiro *{{code}}* completado. ¡Gracias por confiar en nosotros!'),
@@ -52296,8 +52297,8 @@ def _build_retiro_email_templates():
          'style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:6px;'
          'margin:18px 0;padding:14px 18px">'
          '<tr><td style="font-size:13px;color:#78350f;line-height:1.6">'
-         'Te contactaremos a la brevedad para confirmar qué falta. También puedes '
-         'responder este correo con cualquier dato que te haya faltado.</td></tr></table>' +
+         'Te contactaremos a la brevedad para confirmar qué falta. Si quieres agregar '
+         'algún dato, crea un ticket de soporte con el botón de abajo.</td></tr></table>' +
          _ret_cta("link_seguimiento", "Ver mi solicitud")),
         ('informacion_incompleta', 'whatsapp',
          '',
@@ -52310,12 +52311,12 @@ def _build_retiro_email_templates():
          _ret_hero_block(
              "Solicitud cancelada", "#fee2e2", "#7f1d1d",
              "Tu retiro {{code}} fue cancelado",
-             "Si fue un error, escríbenos respondiendo este correo"
+             "Si fue un error, crea un ticket de soporte con el botón de abajo"
          ) +
          '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
          'Hola <strong>{{persona_retira}}</strong>, tu solicitud de retiro '
          '<strong>{{code}}</strong> fue cancelada. Si fue un error o quieres reagendar, '
-         'escríbenos respondiendo este correo y te ayudamos a la brevedad.</p>' +
+         'crea un ticket de soporte con el botón de abajo y te ayudamos.</p>' +
          _ret_info_card(_DATOS_BASE) +
          _ret_cta("link_seguimiento", "Ver detalle")),
         ('rechazada', 'whatsapp',
@@ -52334,7 +52335,7 @@ def _build_retiro_email_templates():
          '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
          'Hola <strong>{{persona_retira}}</strong>, tu retiro <strong>{{code}}</strong> no se pudo concretar. '
          'Si todavía necesitas retirar tu pedido, te contactaremos para coordinar una nueva fecha; también '
-         'puedes responder este correo y te ayudamos a la brevedad.</p>' +
+         'puedes crear un ticket de soporte con el botón de abajo y te ayudamos.</p>' +
          _ret_info_card(_DATOS_BASE) +
          _ret_cta("link_seguimiento", "Ver mi retiro")),
         ('fallida', 'whatsapp',
@@ -52385,7 +52386,7 @@ def _build_retiro_email_templates():
          _ret_calendar_btns() +
          _ret_cta("link_seguimiento", "Ver detalle del retiro") +
          '<p style="font-size:12px;color:#6b7280;line-height:1.5;text-align:center;margin:18px 0 0">'
-         '¿Imprevistos? Responde este correo o llámanos. Es mejor avisar a no llegar.</p>'),
+         '¿Imprevistos? Avísanos con un ticket de soporte (botón de abajo). Es mejor avisar a no llegar.</p>'),
         ('recordatorio_24h', 'whatsapp',
          '',
          '⏰ *ILUS* — MAÑANA retiras *{{code}}* a las {{horario}}. '
@@ -53887,8 +53888,8 @@ def _email_footer_ilus(company="ILUS Fitness · Sport & Health Solutions"):
       <div style="font-size:16px;line-height:22px;font-weight:800;color:#ffffff">¿Necesitas ayuda con tu solicitud?</div>
       <div style="padding-top:8px;font-size:13px;line-height:20px;color:#aeb4bd">Nuestro equipo de soporte técnico puede ayudarte y dar seguimiento a tu caso.</div>
       <table cellpadding="0" cellspacing="0" align="center" style="margin:17px auto 0"><tr>
-        <td align="center" style="border:1px solid #e30613;border-radius:5px">
-          <a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:inline-block;padding:11px 18px;color:#ffffff;text-decoration:none;font-size:13px;font-weight:700">Crear ticket de soporte</a>
+        <td align="center" bgcolor="#e30613" style="background:#e30613;border-radius:6px;padding:14px 32px">
+          <a href="{ILUS_SOPORTE_URL}" target="_blank" style="display:block;color:#ffffff;text-decoration:none;font-size:15px;line-height:20px;font-weight:700;font-family:Arial,Helvetica,sans-serif">Crear ticket de soporte</a>
         </td>
       </tr></table>
       <div style="padding-top:20px;font-size:11px;line-height:18px;color:#646b74">
@@ -55624,6 +55625,17 @@ def _comm_correo_demo(c):
     mapa = dict(_comm_demo_replacements())
     mapa.update(_ccr.DEMO_EXTRA)
     mapa.update(c.get("demo") or {})
+    # «Tu servicio, paso a paso»: cada correo muestra SU paso, calculado con la misma función que el correo real (Daniel, 6-nov: la OT terminada decía «2 · Recordatorio»
+    # y «Qué sigue: el técnico llega…» en la vista previa, porque usaba un recorrido de ejemplo fijo).
+    _paso = {"ot_creada_cliente": ("agendada", "te enviaremos un recordatorio 24 horas antes de la visita."),
+             "ot_recordatorio_cliente": ("recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma."),
+             "ot_firma_remota": ("visita", "apenas firmes, nuestro equipo cierra tu orden y te envía el documento firmado por correo."),
+             "ot_terminada_cliente": ("documento", ""), "ot_envio_manual": ("documento", "")}.get(c.get("clave"))
+    if _paso:
+        try:
+            mapa["recorrido_html"] = _ocom.recorrido_html(*_paso)
+        except Exception as exc:
+            print(f"[comm-correos] demo {c['clave']}: recorrido {type(exc).__name__}", flush=True)
 
     def _sub(texto):
         return re.sub(r"\{\{\s*([\w\.]+)\s*\}\}",
@@ -75363,7 +75375,7 @@ def _prospecto_oferta_seed(toque):
                  "y gastos grandes. Nuestro <b>Plan de Mantención</b> incluye:</p>")
     cuerpo = (intro
               + f'<ul style="margin:10px 0 14px;padding-left:20px">{lis}</ul>'
-              + "<p>Responde este correo o escríbenos y te contactamos para armar un plan "
+              + "<p>Crea un ticket de soporte con el botón de abajo y te contactamos para armar un plan "
                 "a la medida de tu centro.</p>")
     return asunto, cuerpo
 
@@ -75673,7 +75685,7 @@ def _plan_oferta_seed():
               "<p><b>{{visitas_anio}} visitas al año</b> · vigencia de {{vigencia_meses}} meses.</p>"
               "{{precio_html}}"
               "<p>El plan incluye:</p>{{incluye_html}}"
-              "<p>Responde este correo y armamos el contrato con tus condiciones.</p>")
+              "<p>Crea un ticket de soporte con el botón de abajo y armamos el contrato con tus condiciones.</p>")
     return asunto, cuerpo
 
 
@@ -75866,13 +75878,13 @@ _PROSP_PLANTILLAS = {
                   "<p>El plan incluye:</p>{{incluye_html}}"
                   "<p style=\"margin:18px 0 8px\"><b>¿Quieres que avancemos con tu cotización?</b> Responde con un clic:</p>"
                   "{{botones_html}}"
-                  "<p style=\"font-size:12px;color:#6b7280\">También puedes responder este correo; tu respuesta llega directo a tu ejecutivo.</p>"),
+                  "<p style=\"font-size:12px;color:#6b7280\">¿Prefieres hablar con tu ejecutivo? Crea un ticket de soporte con el botón de abajo.</p>"),
     "p2_cotizacion": ("Paso 2 · Tu cotización del plan de mantención ({{numero_cotizacion}})",
                       "<p>Hola {{contacto_nombre}},</p>"
                       "<p>Tu cotización <b>{{numero_cotizacion}}</b> para el plan de mantención de <b>{{cliente_nombre}}</b> está lista "
                       "(total {{total_cotizacion}}).</p>{{escalera_html}}"
                       "<p>Revísala y acéptala en línea, en menos de un minuto:</p>{{boton_propuesta_html}}"
-                      "<p style=\"font-size:12px;color:#6b7280\">¿Dudas? Responde este correo y te contactamos.</p>"),
+                      "<p style=\"font-size:12px;color:#6b7280\">¿Dudas? Crea un ticket de soporte con el botón de abajo y te contactamos.</p>"),
     "p4_bienvenida": ("Paso 4 · ¡Bienvenido al plan de mantención ILUS Fitness!",
                       "<p>Hola {{contacto_nombre}},</p>"
                       "<p>Gracias por confiar en nosotros: <b>{{cliente_nombre}}</b> ya es parte del plan de mantención. "
@@ -142577,8 +142589,8 @@ def _mant_plan_email_cuerpo(cliente_tok, fechas_tok, mensaje_tok, anio_tok):
         str(fechas_tok) +
         str(mensaje_tok) +
         '<p style="font-size:13px;color:#6b7280;line-height:1.6;margin:18px 0 0">'
-        'Para confirmar o ajustar fechas, responda este correo y coordinamos '
-        'la agenda con su ejecutivo.</p>'
+        'Para confirmar o ajustar fechas, cree un ticket de soporte con el botón de abajo '
+        'y coordinamos la agenda con su ejecutivo.</p>'
     )
 
 
@@ -142754,13 +142766,11 @@ def mant_visita_enviar_email(vid):
         _eq_rows = mysql_fetchall(
             "SELECT m.nombre FROM mant_visita_equipos ve "
             "  JOIN mant_maquinas m ON m.id = ve.maquina_id "
-            " WHERE ve.visita_id=%s LIMIT 5",
+            " WHERE ve.visita_id=%s LIMIT 500",
             (vid,)
         ) or []
-        maquina_str = ", ".join(
-            (r.get("nombre") or "").strip()
-            for r in _eq_rows if (r.get("nombre") or "").strip()
-        ) or "—"
+        # 6-nov-2026 (Daniel: «excluye los productos de los correos»): SOLO la cantidad («3 equipos»); el detalle va en la OT.
+        maquina_str = _otc.equipos_txt([(r.get("nombre") or "") for r in _eq_rows])
     except Exception:
         maquina_str = "—"
     variables = {
@@ -142812,7 +142822,7 @@ def mant_visita_enviar_email(vid):
         """
         asunto = f"Visita técnica programada — {ot} ({fecha_str})"
 
-    html = _comm_render_email_document(asunto, body, subtitle=f"OT {ot}")
+    html = _comm_render_email_document(asunto, body, subtitle=_otc.etiqueta_ot(ot))
     # Envío UNO POR UNO a cada destinatario (multi-email real, llave de paso
     # y email_log por destinatario).
     res = _mant_send_email_multi(v["cliente_id"], asunto, html, correo="ot_visita_agendada_manual",
@@ -142825,7 +142835,7 @@ def mant_visita_enviar_email(vid):
         body_tec = body if tpl else _otc.cuerpo_sin_montos(body, quitar=(costo_html, reps_html), saludo=saludo)
         for _te in destinos_tec:
             try:
-                if _ot_tec_enviar(_te, asunto, body_tec, evento="visita_agendada", subtitulo=f"OT {ot}",
+                if _ot_tec_enviar(_te, asunto, body_tec, evento="visita_agendada", subtitulo=_otc.etiqueta_ot(ot),
                                   ref={"tipo": "OT", "id": int(vid), "codigo": ot}, correo=_otc.CORREO_VISITA_COPIA):
                     tec_enviados.append(_te)
             except Exception as _e_te:
@@ -142937,12 +142947,10 @@ def _mant_ot_creacion_variables(vid):
         _eq_rows = mysql_fetchall(
             "SELECT m.nombre FROM mant_visita_equipos ve "
             "  JOIN mant_maquinas m ON m.id = ve.maquina_id "
-            " WHERE ve.visita_id=%s LIMIT 5",
+            " WHERE ve.visita_id=%s LIMIT 500",
             (vid,)
         ) or []
-        maquina_str = ", ".join(
-            (r.get("nombre") or "").strip() for r in _eq_rows if (r.get("nombre") or "").strip()
-        ) or "—"
+        maquina_str = _otc.equipos_txt([(r.get("nombre") or "") for r in _eq_rows])     # SOLO la cantidad (Daniel, 6-nov)
     except Exception:
         maquina_str = "—"
     variables = {
@@ -142969,10 +142977,12 @@ def _ot_cliente_ics_fn(v, variables):
     interno, montos, proveedores ni el enlace a la ficha (pide sesión). Si algo falla, el correo sale igual, sin el archivo. Nunca lanza."""
     try:
         eq = (variables.get("maquina") or "").strip()
+        # `maquina` ya trae SOLO la cantidad («3 equipos»; Daniel, 6-nov): se reconstruye el número para que la invitación diga «3 equipos», no «1 equipo».
+        _n_eq = _otc.contar_equipos_txt(eq)
         vista = {"id": v.get("id"), "numero_ot": v.get("numero_ot"), "cliente": v.get("razon_social") or "",
                  "tipo_label": variables.get("tipo_mantencion") or "", "fecha": v.get("fecha_programada"),
                  "fecha_fin": v.get("fecha_fin"), "hora_inicio": v.get("hora_inicio"), "hora_fin": v.get("hora_fin"),
-                 "direccion": variables.get("direccion") or "", "descripcion": "", "equipos": ([eq] if eq and eq != "—" else [])}
+                 "direccion": variables.get("direccion") or "", "descripcion": "", "equipos": ["equipo"] * min(_n_eq, 500)}
         if not _otc.a_fecha(vista["fecha"]):
             return None
         organizador = (_get_brand_cfg().get("reply_to") or "").strip() or "soportetec@sphs.cl"
@@ -143011,7 +143021,7 @@ def _ot_com_bloques_creacion(v, variables, con_invitacion=False):
         tec_txt = (variables.get("tecnico") or "").strip()
         personas = [] if tec_txt in ("", "Por confirmar") else [p.strip() for p in tec_txt.split(",") if p.strip()]
         eq_txt = (variables.get("maquina") or "").strip()
-        equipos = [] if eq_txt in ("", "—") else [p.strip() for p in eq_txt.split(",") if p.strip()]
+        equipos = ["equipo"] * min(_otc.contar_equipos_txt(eq_txt), 500)       # `maquina` trae SOLO la cantidad («3 equipos»): se reconstruye el número
         sigue = ("te enviaremos un recordatorio 24 horas antes de la visita." if _ot_com_promesas()["recordatorio"]
                  else "nuestro técnico llegará en el horario indicado.")
         return {"invitacion_html": _ocom.invitacion_html() if con_invitacion else "",
@@ -143593,7 +143603,7 @@ def _ot_tec_despachar(vid, avisos, antes, despues, fila, motivo, res, fichas=(),
         # 📅 2026-10-20: el correo lleva el .ics de la OT (asignada/reagendada = REQUEST, cancelada/desasignada = CANCEL, mismo UID
         # estable) para que el evento entre, se actualice o se borre solo en el calendario del técnico. Sin fecha → sin archivo.
         ics = _ot_tec_ics(vista, ev, av, base, oculto, motivo=motivo, link_lista=link_lista)
-        ok = _ot_tec_enviar(email, asunto, cuerpo, evento=_otc.EVENTO_LOG[ev], subtitulo=f"OT {numero}",
+        ok = _ot_tec_enviar(email, asunto, cuerpo, evento=_otc.EVENTO_LOG[ev], subtitulo=_otc.etiqueta_ot(numero),
                             ref={"tipo": "OT", "id": int(vid), "codigo": numero}, adjuntos=ics,
                             correo=_otc.CORREO_DE[ev])
         if ok:
@@ -144032,7 +144042,7 @@ def _ot_recordatorio_barrido(dry=False, ahora=None, max_s=None, max_ot=40):
                         asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_RECORDATORIO, vs)
                         asunto = _brand_subject(asunto)
                         ok = bool(_send_ilus_email(
-                            d["correo"], asunto, _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {numero}"),
+                            d["correo"], asunto, _comm_render_email_document(asunto, cuerpo, subtitle=_otc.etiqueta_ot(numero)),
                             evento=_ocom.EVENTO_RECORDATORIO_CLIENTE, modulo=_ocom.MODULO_GENERAL, asincrono=True, ref=ref,
                             correo="ot_recordatorio_cliente"))
                     except Exception as e:
@@ -144058,7 +144068,7 @@ def _ot_recordatorio_barrido(dry=False, ahora=None, max_s=None, max_ot=40):
                                                           para="tecnico", oculto=oculto)
                         asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_RECORDATORIO_TECNICO, vs)
                         ok = bool(_ot_tec_enviar(email, _brand_subject(asunto), cuerpo, evento=_ocom.EVENTO_RECORDATORIO_TECNICO,
-                                                 subtitulo=f"OT {numero}", ref=ref, correo="ot_tec_recordatorio"))
+                                                 subtitulo=_otc.etiqueta_ot(numero), ref=ref, correo="ot_tec_recordatorio"))
                     except Exception as e:
                         print(f"[ot-recordatorio] técnico vid={vid}: {type(e).__name__}: {e}", flush=True)
                     if ok:
@@ -144184,6 +144194,46 @@ def _ensure_comm_template_ot_comunicacion():
         return sembradas
     except Exception as e:
         print(f"[ensure_comm_tpl] no se pudo sembrar la comunicación de la OT: {e}", flush=True)
+        return 0
+
+
+def _ensure_correos_sin_responder():
+    """NINGÚN correo al cliente dice «responde este correo»: todo va por TICKET (Daniel, 6-nov-2026: «nunca se responde al correo, nunca; nadie va a responder»).
+
+    Cambia SOLO esas frases dentro de las plantillas ya guardadas en Comunicaciones (Retiros, plan de mantención, prospectos, aviso al técnico…), por
+    «crea un ticket de soporte con el botón de abajo» (el botón es el pie de todo correo de ILUS). Se compara por FRASE exacta (`correos_sin_responder`),
+    nunca por el cuerpo entero: una plantilla que alguien editó conserva sus cambios y una frase que no está tal cual no se toca. Idempotente y barata
+    (REGLA #18): una lectura y un UPDATE por fila que lo necesite, con `AND cuerpo=%s` (si alguien la edita justo ahora, no se pisa). NO toca `tickets`
+    (ahí el lector IMAP sí procesa las respuestas), `comunicacion_interna` ni WhatsApp. Imprime qué filas siguen diciendo «responde» para poder verlas."""
+    try:
+        # 6-nov: el asunto de varias plantillas guardadas dice «OT {{ot}}» y el número ya trae «OT-» → «OT OT-2026-00123». Se quita el «OT » sobrante.
+        for f in (mysql_fetchall("SELECT id, modulo, estado, asunto FROM comm_templates WHERE canal='email' AND asunto LIKE %s", ("%OT {{%",)) or []):
+            nuevo_as, cambio = _csr.asunto_sin_ot_doble(f.get("asunto") or "")
+            if cambio:
+                mysql_execute("UPDATE comm_templates SET asunto=%s, updated_by=%s WHERE id=%s AND asunto=%s", (nuevo_as, "sistema", f["id"], f["asunto"]))
+                print(f"[ensure_correos_sin_responder] asunto sin «OT» doble: {f.get('modulo')}/{f.get('estado')}", flush=True)
+        filas = mysql_fetchall(
+            "SELECT id, modulo, estado, cuerpo FROM comm_templates WHERE canal='email' AND cuerpo LIKE %s", ("%espond%",)) or []
+        cambiadas, restantes = [], []
+        for f in filas:
+            if (f.get("modulo") or "") in _csr.MODULOS_EXCLUIDOS:
+                continue
+            cuerpo = f.get("cuerpo") or ""
+            nuevo, n = _csr.aplicar(cuerpo)
+            if n and nuevo != cuerpo:
+                mysql_execute("UPDATE comm_templates SET cuerpo=%s, updated_by=%s WHERE id=%s AND cuerpo=%s",
+                              (nuevo, "sistema", f["id"], cuerpo))
+                cambiadas.append(f"{f.get('modulo')}/{f.get('estado')}")
+                cuerpo = nuevo
+            if _csr.dice_responder(cuerpo):
+                restantes.append(f"{f.get('modulo')}/{f.get('estado')}")
+        if cambiadas:
+            print(f"[ensure_correos_sin_responder] {len(cambiadas)} plantilla(s) ahora mandan al ticket: {', '.join(cambiadas)}", flush=True)
+        if restantes:
+            print(f"[ensure_correos_sin_responder] OJO: siguen diciendo «responde este correo» (editadas a mano): {', '.join(restantes)}", flush=True)
+        return len(cambiadas)
+    except Exception as e:
+        print(f"[ensure_correos_sin_responder] no se pudo: {e}", flush=True)
         return 0
 
 
@@ -144388,7 +144438,7 @@ def _ot_terminada_notificar(vid, origen="aprobar_cierre"):
                 vs = _ocom.variables_ot(ot, nombre_destinatario=(contacto if it.get("origen") == "contacto_ot" else ""), **comunes)
                 asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_TERMINADA, vs)
                 asunto = _brand_subject(asunto)
-                ok = _send_ilus_email(it["correo"], asunto, _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {numero}"),
+                ok = _send_ilus_email(it["correo"], asunto, _comm_render_email_document(asunto, cuerpo, subtitle=_otc.etiqueta_ot(numero)),
                                       evento=_ocom.EVENTO_TERMINADA_CLIENTE, modulo="mantenciones", asincrono=True, ref=ref,
                                       correo="ot_terminada_cliente")
                 _ot_com_anotar(it, ok)
@@ -144404,7 +144454,7 @@ def _ot_terminada_notificar(vid, origen="aprobar_cierre"):
                 vs = _ocom.variables_ot(ot_t, nombre_destinatario=it["nombre"], **comunes)
                 asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_TERMINADA_TECNICO, vs)
                 ok = _ot_tec_enviar(it["correo"], _brand_subject(asunto), cuerpo, evento=_ocom.EVENTO_TERMINADA_TECNICO,
-                                    subtitulo=f"OT {numero}", ref=ref, correo="ot_tec_terminada")
+                                    subtitulo=_otc.etiqueta_ot(numero), ref=ref, correo="ot_tec_terminada")
                 _ot_com_anotar(it, ok)
             except Exception as e:
                 print(f"[ot-terminada] técnico vid={v_id}: {type(e).__name__}: {e}", flush=True)
@@ -144417,7 +144467,7 @@ def _ot_terminada_notificar(vid, origen="aprobar_cierre"):
                 vs = _ocom.variables_ot(ot, nombre_destinatario=it["nombre"], resumen_envio_html=resumen, **comunes)
                 asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_TERMINADA_INTERNO, vs)
                 asunto = _brand_subject(asunto)
-                ok = _send_ilus_email(it["correo"], asunto, _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {numero}"),
+                ok = _send_ilus_email(it["correo"], asunto, _comm_render_email_document(asunto, cuerpo, subtitle=_otc.etiqueta_ot(numero)),
                                       evento=_ocom.EVENTO_TERMINADA_RESPONSABLE, modulo="mantenciones", asincrono=True, ref=ref,
                                       correo="ot_terminada_responsable")
                 _ot_com_anotar(it, ok)
@@ -144616,7 +144666,7 @@ def ot2_api_com_enviar(vid):
                                     tecnicos_nombres=datos["personas"])
             asunto_def, cuerpo = _ot_com_armar(_ocom.PLANTILLA_MANUAL, vs)
             asunto = _brand_subject(_ocom.asunto_para(d.get("asunto"), asunto_def, p["tecnico"]))
-            html = _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {numero}")
+            html = _comm_render_email_document(asunto, cuerpo, subtitle=_otc.etiqueta_ot(numero))
             if p["tecnico"]:
                 ok = _send_ilus_email(p["correo"], asunto, html, evento=_ocom.EVENTO_MANUAL_TECNICO, modulo="ot_tecnicos", ref=ref,
                                       correo="ot_tec_envio_manual")
@@ -156010,10 +156060,9 @@ def mant_reporte_enviar(rid):
         ) or "—"
         try:
             _maqs_rep = rep.get("maquinas_json") or []
-            _maq_rep_str = ", ".join(
-                (m.get("descripcion") or m.get("sku") or "").strip()
-                for m in _maqs_rep if isinstance(m, dict) and (m.get("descripcion") or m.get("sku"))
-            ) or "—"
+            _maq_rep_str = _otc.equipos_txt(                       # SOLO la cantidad (Daniel, 6-nov: «excluye los productos de los correos»)
+                [(m.get("descripcion") or m.get("sku") or "").strip()
+                 for m in _maqs_rep if isinstance(m, dict) and (m.get("descripcion") or m.get("sku"))])
         except Exception:
             _maq_rep_str = "—"
         _it = _render_comm_template("ot_completada", "email", {
@@ -186315,6 +186364,7 @@ try:
     with app.app_context():
         _ensure_ot_comunicacion_tablas()
         _ensure_comm_template_ot_comunicacion()
+        _ensure_correos_sin_responder()       # 2026-11-06: «nunca se responde al correo»: las frases viejas de las plantillas guardadas pasan al ticket
         _ensure_ot_recordatorios_tabla()      # 2026-11-05: constancia del recordatorio de 24 horas (CREATE TABLE IF NOT EXISTS, barata)
         _ensure_cat_producto_checklist()      # 2026-11-05: checklist que se recuerda por producto (Paso «Equipos y su checklist»; un solo CREATE TABLE IF NOT EXISTS)
         _ensure_mant_maquinas_agrupacion()    # 2026-11-05: filas de la ficha juntadas/separadas desde el asistente (un solo CREATE TABLE IF NOT EXISTS)

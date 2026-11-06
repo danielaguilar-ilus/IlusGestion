@@ -2835,7 +2835,7 @@ def register_pickup_routes(app, ctx):
                 elif kind == "done":
                     paragraphs = [
                         "<strong>Tu retiro fue completado.</strong> ¡Gracias por preferir ILUS!",
-                        "Si necesitas un comprobante o tienes alguna consulta sobre este retiro, responde a este correo o escríbenos por soporte.",
+                        "Si necesitas un comprobante o tienes alguna consulta sobre este retiro, crea un ticket de soporte con el botón de abajo.",
                     ]
                     if _nota_cierre:
                         paragraphs.append('<span style="font-size:12.5px;color:#6b7280">' + _html_nt.escape(_nota_cierre, quote=True) + '</span>')
@@ -3710,8 +3710,8 @@ def register_pickup_routes(app, ctx):
         del seguimiento en julio, pero el endpoint seguía abierto y cada POST
         avisaba a todo el equipo (vía de spam). El canal del cliente es el correo."""
         return jsonify({"ok": False, "error": "chat_desactivado",
-                        "mensaje": "Para comunicarte con ILUS responde el correo que te enviamos "
-                                   "o escribe a soportetec@sphs.cl."}), 410
+                        "mensaje": "Para comunicarte con ILUS crea un ticket de soporte con el botón "
+                                   "«Crear ticket de soporte» del correo que te enviamos."}), 410
         if not token or len(token) < 16 or len(token) > 200 \
                 or not re.match(r"^[A-Za-z0-9_\-]+$", token):
             return jsonify({"ok": False, "error": "invalid_token"}), 400
@@ -7070,7 +7070,7 @@ def register_pickup_routes(app, ctx):
                 'dejamos registrada la recepción de tu pedido. Aquí está tu comprobante digital: no hace falta imprimir ninguna guía de despacho.</p>'
                 + _rfi.bloque_email(v, _comprobante_url(rid, base_url)) +
                 f'<p style="margin:0;font-size:12px;color:#6b7280">{_rfi.MARCA} · {_rfi.RAZON_SOCIAL} · RUT {_rfi.RUT_EMPRESA}. '
-                'Si algo de este comprobante no es correcto, responde a este correo o escribe a soportetec@sphs.cl.</p></div>')
+                'Si algo de este comprobante no es correcto, crea un ticket de soporte con el botón de abajo.</p></div>')
             _render = ctx.get("_comm_render_email_document")
             doc = None
             if callable(_render):

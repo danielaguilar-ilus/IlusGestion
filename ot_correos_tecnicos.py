@@ -333,13 +333,33 @@ def bloque_antes_ahora(antes_txt, ahora_txt):
         '</tr></table>')
 
 
-def equipos_txt(nombres, tope=8):
+def etiqueta_ot(numero):
+    """«OT-2026-00123» tal cual; un número sin el prefijo («V-00123») pasa a «OT V-00123». Para subtítulos y textos que antes escribían «OT {numero}» a ciegas y
+    salían «OT OT-2026-00123» (Daniel, 6-nov: «sigue diciendo OT OT, ¿por qué?»)."""
+    n = str(numero or "").strip()
+    return n if n.upper().startswith("OT") else (f"OT {n}" if n else "OT")
+
+
+def contar_equipos_txt(txt):
+    """Cuántos equipos dice un texto de correo: «3 equipos» → 3, «1 equipo» → 1, «—» o vacío → 0 (y, por compatibilidad, una lista separada por comas»)."""
+    t = str(txt or "").strip()
+    if t in ("", "—"):
+        return 0
+    import re as _re
+    m = _re.match(r"^(\d+)\s+equipos?$", t)
+    if m:
+        return int(m.group(1))
+    return len([p for p in t.split(",") if p.strip()])
+
+
+def equipos_txt(nombres, tope=None):
+    """Los equipos de la OT para un CORREO: SOLO la cantidad («3 equipos»), nunca los nombres.
+    6-nov-2026 (Daniel: «excluye los productos de los correos, porque si son muchos se agrandarían y se pondrían feos; por último le adjuntamos el detalle»):
+    el detalle está en la OT (el enlace del correo) y en el documento adjunto. `tope` se acepta por compatibilidad y ya no se usa."""
     nombres = [str(n).strip() for n in (nombres or []) if str(n or "").strip()]
     if not nombres:
         return "—"
-    if len(nombres) > tope:
-        return ", ".join(nombres[:tope]) + f" y {len(nombres) - tope} más"
-    return ", ".join(nombres)
+    return f"{len(nombres)} {'equipo' if len(nombres) == 1 else 'equipos'}"
 
 
 def construir_variables(ot, *, nombre_tecnico="", tecnicos_nombres=None, base_url="", antes=None, motivo="",
@@ -780,7 +800,7 @@ SEMILLAS = {
                  + _f("Equipos", "{{maquina}}") + "{{notas_html}}")
         + _boton()),
     "ot_reagendada_tecnico": (
-        "OT {{ot}} reagendada — ahora {{fecha_ahora}}",
+        "{{ot}} reagendada — ahora {{fecha_ahora}}",
         _saludo("#0ea5e9")
         + _p("Cambió la <strong>fecha u horario</strong> de una orden de trabajo que tienes asignada. "
              "<strong>Abre el archivo adjunto</strong> y tu calendario se actualiza solo.")
@@ -788,7 +808,7 @@ SEMILLAS = {
         + _tabla("#0ea5e9", _FILAS_OT + "{{motivo_html}}{{notas_html}}")
         + _boton()),
     "ot_cancelada_tecnico": (
-        "OT {{ot}} cancelada — no necesitas ir",
+        "{{ot}} cancelada — no necesitas ir",
         _saludo("#dc2626")
         + _p("La siguiente orden de trabajo <strong>fue cancelada</strong>. Ya no tienes que realizarla. "
              "Abre el archivo adjunto y el evento se borra de tu calendario.")
@@ -797,7 +817,7 @@ SEMILLAS = {
     # 2026-10-20 (Daniel: «no digas "te quité la OT"… di algo más sutil, porque se sentiría como un castigo»): el aviso
     # de una OT que pasa a otra persona habla de un AJUSTE de la agenda y agradece; nunca de quitar ni de «ya no figuras».
     "ot_desasignada_tecnico": (
-        "Ajuste en tu agenda · OT {{ot}}",
+        "Ajuste en tu agenda · {{ot}}",
         _saludo("#6b7280")
         + _p("Hubo un <strong>ajuste en tu agenda</strong>: la orden de trabajo de abajo la atenderá otra persona del "
              "equipo. Gracias por tu disposición; no tienes que hacer nada más.")
@@ -811,7 +831,7 @@ SEMILLAS = {
         + "{{agenda_html}}"
         + _boton("Ver mis órdenes de trabajo", "{{link_agenda}}")
         + '<p style="margin:18px 0 0;font-size:12px;color:#888;line-height:1.5">Si algo no calza (dirección, horario o '
-          'equipo), responde este correo antes de salir.</p>'),
+          'equipo), avisa a tu coordinador de Servicio Técnico antes de salir.</p>'),
 }
 
 # Se siembran SOLO si no existen. 'ot_asignada' se maneja aparte (ya existía; ver arriba).
@@ -822,7 +842,7 @@ SEMILLAS_NUEVAS = tuple(k for k in SEMILLAS if k != "ot_asignada")
 # 'ot_asignada'). Se usa para mejorar el tono de un texto que todavía no editó nadie (ver _ensure_comm_template_ot_tecnicos).
 SEMILLAS_ANTERIORES = {
     "ot_desasignada_tecnico": [(
-        "OT {{ot}} ya no está a tu cargo",
+        "{{ot}} ya no está a tu cargo",
         _saludo("#6b7280")
         + _p("Ya <strong>no figuras como técnico</strong> de la orden de trabajo de abajo (se reasignó o se reorganizó el "
              "equipo). Ya no la tienes a tu cargo y puedes liberar ese horario: "

@@ -111,8 +111,8 @@ class TestPlantillas(unittest.TestCase):
             self.assertLessEqual(usadas, armadas | extra, slug)
 
     def test_las_versiones_anteriores_se_conservan_para_poder_actualizar_solo_lo_que_nadie_edito(self):
-        self.assertEqual(len(C.SEMILLAS_ANTERIORES[C.PLANTILLA_TERMINADA]), 3)         # v1, v2 y v3 (la v3 decía «responde este correo»)
-        self.assertEqual(len(C.SEMILLAS_ANTERIORES[C.PLANTILLA_RECORDATORIO]), 3)
+        self.assertEqual(len(C.SEMILLAS_ANTERIORES[C.PLANTILLA_TERMINADA]), 4)         # v1, v2, v3 (decía «responde este correo») y v4 (ticket, frase larga)
+        self.assertEqual(len(C.SEMILLAS_ANTERIORES[C.PLANTILLA_RECORDATORIO]), 4)
         for slug in (C.PLANTILLA_TERMINADA, C.PLANTILLA_RECORDATORIO):
             for ant in C.SEMILLAS_ANTERIORES[slug]:
                 self.assertNotEqual(ant[1], C.SEMILLAS[slug][1], slug)

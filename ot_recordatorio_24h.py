@@ -202,9 +202,8 @@ def que_esperar_html(equipos, personas):
     pe = [str(p).strip() for p in (personas or []) if str(p or "").strip()]
     lineas = [("Llegará " + ", ".join(pe) + " en el horario indicado." if pe else "Nuestro equipo técnico llegará en el horario indicado.")]
     if eq:
-        tope = 6
-        nombres = ", ".join(eq[:tope]) + (f" y {len(eq) - tope} más" if len(eq) > tope else "")
-        lineas.append(f"Trabajará en {len(eq)} {_plural(len(eq), 'equipo', 'equipos')}: {nombres}.")
+        # SOLO la cantidad (Daniel, 6-nov: «excluye los productos de los correos… se agrandarían»): los nombres están en la OT.
+        lineas.append(f"Trabajará en {len(eq)} {_plural(len(eq), 'equipo', 'equipos')}.")
     lineas.append("Al terminar, el técnico te pedirá confirmar la recepción del trabajo con tu firma.")
     return _ocom.caja_valor("Qué va a pasar", _ocom.lista_valor(lineas), "#0ea5e9")
 
@@ -257,13 +256,10 @@ def notas_html(descripcion):
 
 
 def equipos_lista_html(equipos):
-    """Los equipos del trabajo, uno por línea, para el TÉCNICO ('' si no hay)."""
-    eq = [str(e).strip() for e in (equipos or []) if str(e or "").strip()]
-    if not eq:
-        return ""
-    tope = 12
-    items = eq[:tope] + ([f"… y {len(eq) - tope} más"] if len(eq) > tope else [])
-    return _ocom.caja_valor(f"Equipos del trabajo ({len(eq)})", _ocom.lista_valor(items), "#6b7280")
+    """Antes listaba los equipos uno por línea para el TÉCNICO. 6-nov-2026 (Daniel: «excluye los productos de los correos… se agrandarían y se pondrían feos»):
+    ya NO se listan; la fila «Equipos» de la tabla dice la cantidad y el detalle está en la OT (el botón «Ver la OT»). Devuelve '' siempre (la variable
+    `{{equipos_lista_html}}` de la plantilla queda vacía)."""
+    return ""
 
 
 def antes_de_salir_html():
