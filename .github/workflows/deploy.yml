@@ -188,7 +188,7 @@ jobs:
           # --- Inyectar credenciales FedEx desde secrets separados ---
           # Quitar primero cualquier linea FedEx que viniera en GCP_ENV_VARS,
           # para no generar claves YAML duplicadas (gcloud rechaza duplicados).
-          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN|SIMPLIROUTE_WEBHOOK_SECRET|CHECKWMS_UID_INS|CHECKWMS_UID_ERP|SHIPIT_API_TOKEN|SHIPIT_API_EMAIL|CLICKEX_API_USERNAME|CLICKEX_API_PASSWORD|CLICKEX_API_KEY|RETIROS_RETIRO_AUTO|RETIROS_ENCUESTA_ACTIVA):' \
+          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN|SIMPLIROUTE_WEBHOOK_SECRET|CHECKWMS_UID_INS|CHECKWMS_UID_ERP|SHIPIT_API_TOKEN|SHIPIT_API_EMAIL|CLICKEX_API_USERNAME|CLICKEX_API_PASSWORD|CLICKEX_API_KEY|RETIROS_RETIRO_AUTO|RETIROS_ENCUESTA_ACTIVA|OT_ENCUESTA_ACTIVA):' \
             /tmp/env.yaml > /tmp/env.clean || true
           mv /tmp/env.clean /tmp/env.yaml
           # Garantizar salto de linea final antes de anexar
@@ -233,6 +233,11 @@ jobs:
           # solo quien tenga superadmin o Roles → Retiros → «Encuesta y firma de recepción». Apagarla («0»), solo con su permiso.
           # El comprobante de firma por correo sigue APAGADO (no se agrega aquí).
           append_env RETIROS_ENCUESTA_ACTIVA       "1"
+          # Encuesta corta de la OT («¿Cómo fue tu servicio?», 1 a 5; REGLA #68): Daniel 2026-11-06, autorizado explícitamente («enciende tú la
+          # encuesta… enviemos a partir de hoy»). Va DENTRO del correo «OT terminada» al CLIENTE y en «Enviar OT por correo» (ningún correo extra, nada
+          # retroactivo: solo las OT que se aprueben desde ahora). Los resultados los ve solo el superadmin o quien tenga el permiso «Satisfacción de
+          # las OT». Apagarla (quitar esta línea), solo con su permiso.
+          append_env OT_ENCUESTA_ACTIVA            "1"
 
           # Verificar que se escribio algo razonable (sin mostrar el contenido)
           BYTES=$(wc -c < /tmp/env.yaml)
