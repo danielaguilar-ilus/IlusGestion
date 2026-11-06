@@ -160,6 +160,77 @@ class TestPlantilla(unittest.TestCase):
         self.assertIn("min-height: 44px", PLANTILLA)
 
 
+class TestMarcoComoLaOT(unittest.TestCase):
+    """6-nov-2026 (Daniel: «no se apega para nada al diseño de la orden de trabajo»): el Detalle de cálculo lleva el MISMO marco que el PDF de la OT."""
+
+    def _render(self, native):
+        env = Environment(loader=FileSystemLoader(os.path.join(RAIZ, "templates")))
+        env.filters["fkg"] = lambda v, n=2: ("%." + str(n) + "f") % float(v or 0)
+        env.filters["chile_fmt"] = lambda v, f=None: "05/11/2026 12:01"
+        it = {"sku": "RE8026", "descripcion": "ILUS IS5", "clase_nombre": "Selectorizado", "cantidad": 1, "horas": 2.5, "tecnicos": 1, "hh": 2.5,
+              "valor_hh": 20000, "costo_mo": 50000, "precio_unitario": 65000, "subtotal": 65000, "total": 65000, "sin_tarifa": False}
+        it["analisis"] = cd.analizar_item(cantidad=1, precio_unitario=65000, total=65000, horas=2.5, tecnicos=1, valor_hh=20000, margen_pct=30)
+        res = cd.resumen([it])
+        cot = {"id": 1, "numero": "COT-000211", "empresa": "Kinesic Lab Spa", "rut": "7.736.988-3", "comuna": "Las Condes", "region": "RM",
+               "tipo_servicio_label": "Mantención", "created_at": "x", "created_by": "Daniel", "subtotal_items": 65000, "costo_ruta": 0,
+               "ruta_excluida": False, "subtotal": 65000, "descuento_pct": 0, "descuento_monto": 0, "iva_pct": 19, "iva_monto": 12350, "total": 77350}
+        return env.get_template("tickets/cotizacion_detalle_calculo.html").render(
+            cot=cot, items=[it], resumen=res, dudas=cd.dudas(res, tipo_servicio_label="Mantención"), ruta=None, cfg={"margen_pct": 30},
+            valor_hh_vigente=20000, uf_info=None, uf_total=None, uf_emision=None, logo_b64="AAAA", logo_shs_b64="BBBB", base_url=None,
+            native_header_footer=native)
+
+    def test_titulos_de_seccion_en_banda_negra_y_cajas_en_panel_gris(self):
+        for t in ("--ilus-panel: #f0f0f0;", ".sec-title {", "background: var(--ilus-black); color: #fff;", ".info-card { background: var(--ilus-panel);",
+                  "table.items thead th:first-child { border-top-left-radius: 6px; }"):
+            self.assertIn(t, PLANTILLA)
+        self.assertNotIn("h2.sec", PLANTILLA)                       # ya no son títulos sueltos con círculo numerado
+
+    def test_en_pantalla_el_encabezado_va_en_el_documento_con_los_dos_logos(self):
+        h = self._render(False)
+        self.assertIn('class="head"', h)
+        self.assertIn('class="logo-shs-box"', h)
+        self.assertIn("DETALLE DE CÁLCULO", h)
+        self.assertIn("N° COT-000211", h)
+        self.assertIn('class="foot"', h)
+
+    def test_en_el_pdf_el_encabezado_y_el_pie_son_los_nativos_y_el_del_documento_no_se_imprime(self):
+        h = self._render(True)
+        self.assertIn(".head, .head-sep, .foot { display: none !important; }", h)
+        self.assertIn("margin: 30mm 0 14mm;", h)
+        self.assertNotIn(".head, .head-sep, .foot { display: none !important; }", self._render(False))
+
+    def test_el_margen_de_la_plantilla_calza_con_el_del_marco(self):
+        import cot_detalle_pdf_marco as m
+        self.assertIn(f"margin: {m.MARGEN_SUPERIOR_MM}mm 0 {m.MARGEN_INFERIOR_MM}mm;", self._render(True))
+
+    def test_marco_nativo_trae_banda_negra_franja_roja_y_pie_con_paginas(self):
+        import cot_detalle_pdf_marco as m
+        e = m.encabezado_html("COT-000211", "Kinesic Lab Spa", logo_ilus_b64="AAAA", logo_shs_html="<b>SHS</b>")
+        self.assertIn("background:#0a0a0a", e)
+        self.assertIn("linear-gradient(90deg,#dc2626 0 25%,#0a0a0a 25% 100%)", e)
+        self.assertIn("DETALLE DE CÁLCULO", e)
+        self.assertIn("N&#176; COT-000211", e)
+        self.assertIn("<b>SHS</b>", e)
+        p = m.pie_html("COT-000211", "Kinesic Lab Spa")
+        self.assertIn("border-top:1.5px solid #dc2626", p)
+        self.assertIn("soportetec@sphs.cl", p)
+        self.assertIn('class="pageNumber"', p)
+        self.assertIn('class="totalPages"', p)
+
+    def test_marco_escapa_el_texto_y_acorta_un_cliente_kilometrico(self):
+        import cot_detalle_pdf_marco as m
+        self.assertNotIn("<script>", m.encabezado_html("<script>x</script>", "y"))
+        self.assertIn("…", m.pie_html("COT-1", "X" * 80))
+
+    def test_la_ruta_del_pdf_usa_el_marco_y_el_logo_sphs_llega_a_la_plantilla(self):
+        i = PY.index("def tk_cotizacion_detalle_calculo_pdf(cid):")
+        f = PY[i:i + 3500]
+        self.assertIn("native_header_footer=True", f)
+        self.assertIn("header_template=_hdr, footer_template=_ftr", f)
+        self.assertIn("_marco.MARGEN_SUPERIOR_MM", f)
+        self.assertIn('"logo_shs_b64": _tk_cotiz_logo_shs_b64()', PY)
+
+
 class TestServidor(unittest.TestCase):
     def test_el_servidor_manda_el_analisis_el_resumen_y_las_dudas(self):
         self.assertIn("import cot_detalle_calculo as _cotdet", PY)
