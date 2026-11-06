@@ -462,7 +462,7 @@
       editar un repuesto puntual, ábrelo desde la ficha del cliente (pestaña "Repuestos").
       Incluye la planilla real de seguimiento de Daniel (ubicación, motivo, N° OT, garantía).</div>
   </div>
-  <div class="d-flex gap-2" id="repAccionesBodega">
+  <div class="d-flex gap-2 flex-wrap" id="repAccionesBodega">
     {# 📊 2026-09-24 (Daniel: "cuantos repuestos se estan registrando en
        este minuto... necesito ver el avance y quien lo esta avanzando") #}
     <button class="btn btn-sm btn-outline-secondary" type="button" onclick="rbaAbrirActividad()"
@@ -473,6 +473,11 @@
     {% if not oculta_proveedores %}
     <a href="/mantenciones/proveedores" class="btn btn-sm btn-outline-secondary"><i class="bi bi-truck me-1"></i>Proveedores</a>
     {% endif %}
+    {# 🔒 2026-11-06: bandeja de ajustes de cantidad (rebaja o aumento): el superadmin autoriza aquí; los demás ven sus pedidos.
+       Antes solo estaba en la página directa /repuestos/bodega, así que desde esta pestaña no se podía autorizar. #}
+    <button class="btn btn-sm btn-outline-dark" type="button" id="rbAjustesBtn" onclick="rbAjustesAbrir()" style="min-height:44px"
+            title="Ajustes de cantidad pedidos a la bodega: los autoriza el superadmin">
+      <i class="bi bi-arrow-down-up me-1"></i>Ajustes <span id="rbAjustesN" class="badge bg-danger ms-1" style="display:none">0</span></button>
     <button class="btn btn-sm btn-danger" type="button" onclick="rbAbrirNuevo()">
       <i class="bi bi-plus-lg me-1"></i>Nuevo repuesto</button>
   </div>
