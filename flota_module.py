@@ -920,6 +920,9 @@ def register_flota_routes(app, ctx):
         "c.usuario_id AS chofer_usuario_id "
         "FROM flota_solicitudes s JOIN flota_vehiculos v ON v.id = s.vehiculo_id "
         "LEFT JOIN flota_choferes c ON c.id = s.chofer_id LEFT JOIN `" + _AUTH + "` u ON u.id = c.usuario_id")
+    # «A su nombre»: la pidió la persona, o va de chofer (el chofer es un usuario de ILUS: flota_choferes.usuario_id).
+    _SQL_MIAS_S = "(s.solicitante_id=%s OR c.usuario_id=%s)"
+    _SQL_MIAS_T = "(solicitante_id=%s OR chofer_id IN (SELECT id FROM flota_choferes WHERE usuario_id=%s))"
     _SQL_OCUPA = (
         "SELECT s.id, s.numero, s.estado, s.inicio, s.fin, s.area, s.solicitante_nombre, s.sello_at, s.vehiculo_id, s.chofer_id, "
         "v.patente AS v_patente FROM flota_solicitudes s JOIN flota_vehiculos v ON v.id = s.vehiculo_id")
@@ -1625,6 +1628,9 @@ def register_flota_routes(app, ctx):
             "cancelada_por": r.get("cancelada_por"), "cancelada_fmt": _hora_chile(r.get("cancelada_at")),
             "cancelada_motivo": r.get("cancelada_motivo"),
             "modificada_por": r.get("modificada_por"), "modificada_fmt": _hora_chile(r.get("modificada_at")),
+            # «A su nombre» (Daniel, 06-nov-2026: «un filtro para que el usuario vea las solicitudes a su nombre»): las que pidió o en las que
+            # va de chofer. La misma regla que el filtro `mias` del listado.
+            "a_mi_nombre": bool(mia or soy_chofer),
             "puede": {
                 "confirmar": gest and est == "solicitada",
                 "llave": gest and est == "confirmada" and dia["ok"],
@@ -2199,25 +2205,34 @@ def register_flota_routes(app, ctx):
         ahora = _ahora_chile()
         inicio_hoy = datetime.combine(ahora.date(), time.min)
         vista = "pasadas" if request.args.get("vista") == "pasadas" else "proximas"
+        # `mias=1` (Daniel, 06-nov-2026): solo las solicitudes A SU NOMBRE (las que pidió o en las que va de chofer). Sin el parámetro el listado
+        # es el de siempre, con TODAS: la pantalla de «Nueva solicitud» lo usa para saber qué vehículos están ocupados.
+        mias = request.args.get("mias") == "1"
+        quien = (_uid() or 0,) * 2 if mias else ()                  # id 0 no existe: si por algo no hay usuario, no sale nada (nunca todo)
+        y_mias = (" AND " + _SQL_MIAS_S) if mias else ""
+        y_mias_t = (" AND " + _SQL_MIAS_T) if mias else ""
         try:
             if vista == "pasadas":
-                filas = mysql_fetchall(_SQL_SOL + " WHERE s.fin < %s ORDER BY s.inicio DESC, s.id DESC LIMIT 500", (inicio_hoy,)) or []
+                filas = mysql_fetchall(_SQL_SOL + " WHERE s.fin < %s" + y_mias + " ORDER BY s.inicio DESC, s.id DESC LIMIT 500",
+                                       (inicio_hoy,) + quien) or []
             else:
                 # Las devueltas que la gestión aún no confirma se ven aunque su horario ya haya pasado: son lo que falta por cerrar.
-                filas = mysql_fetchall(_SQL_SOL + " WHERE s.fin >= %s OR (s.estado='devuelta' AND s.dev_confirmada_at IS NULL) "
-                                       "ORDER BY s.inicio, s.id LIMIT 500", (inicio_hoy,)) or []
+                donde = ("WHERE (s.fin >= %s OR (s.estado='devuelta' AND s.dev_confirmada_at IS NULL))" if mias
+                         else "WHERE s.fin >= %s OR (s.estado='devuelta' AND s.dev_confirmada_at IS NULL)")
+                filas = mysql_fetchall(_SQL_SOL + " " + donde + y_mias + " ORDER BY s.inicio, s.id LIMIT 500", (inicio_hoy,) + quien) or []
+            # Los contadores de arriba siguen al filtro: lo que se cuenta es lo que se ve.
             cuentas = {r["estado"]: int(r["n"]) for r in (mysql_fetchall(
-                "SELECT estado, COUNT(*) AS n FROM flota_solicitudes WHERE fin >= %s GROUP BY estado", (inicio_hoy,)) or [])}
-            por_cerrar = int((mysql_fetchone("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado='devuelta' AND dev_confirmada_at IS NULL")
-                              or {}).get("n") or 0)
+                "SELECT estado, COUNT(*) AS n FROM flota_solicitudes WHERE fin >= %s" + y_mias_t + " GROUP BY estado", (inicio_hoy,) + quien) or [])}
+            por_cerrar = int((mysql_fetchone("SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado='devuelta' AND dev_confirmada_at IS NULL"
+                                             + y_mias_t, quien) or {}).get("n") or 0)
             hoy_n = int((mysql_fetchone(
                 "SELECT COUNT(*) AS n FROM flota_solicitudes WHERE estado IN ('solicitada','confirmada','llave_entregada') "
-                "AND inicio < %s AND fin > %s", (inicio_hoy + timedelta(days=1), inicio_hoy)) or {}).get("n") or 0)
+                "AND inicio < %s AND fin > %s" + y_mias_t, (inicio_hoy + timedelta(days=1), inicio_hoy) + quien) or {}).get("n") or 0)
         except Exception as e:
             print(f"[flota] listar solicitudes: {type(e).__name__}: {e}", flush=True)
             return _error("No se pudo leer las solicitudes. Intenta de nuevo en un momento.", 500)
         return jsonify({
-            "ok": True, "vista": vista, "solicitudes": [_sol_json(dict(f)) for f in filas],
+            "ok": True, "vista": vista, "mias": mias, "solicitudes": [_sol_json(dict(f)) for f in filas],
             "resumen": {"por_confirmar": cuentas.get("solicitada", 0), "confirmadas": cuentas.get("confirmada", 0),
                         "llave_entregada": cuentas.get("llave_entregada", 0), "hoy": hoy_n, "por_cerrar": por_cerrar},
             "horario": dict(fr.horario_para_pantalla(), tolerancia_min=fr.SLA_TOLERANCIA_MIN, critico_min=fr.SLA_CRITICO_MIN),

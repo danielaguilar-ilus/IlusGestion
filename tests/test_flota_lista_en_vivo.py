@@ -131,12 +131,15 @@ class TestCableado(unittest.TestCase):
         # recargarSol (después de confirmar, entregar la llave, cancelar…) NO es silenciosa: si falla, se avisa
         self.assertIn("var p = [cargarSol()];", JS)
 
-    def test_el_servidor_no_filtra_la_lista_por_persona(self):
+    def test_el_servidor_solo_filtra_la_lista_por_persona_si_se_pide_mias(self):
+        # Sin `mias=1` la lista es la de TODOS (Alex la necesita completa para entregar las llaves; 06-nov-2026 el filtro «Mis solicitudes» es
+        # opcional y lo pide la pantalla). La persona entra a la consulta por UN solo lugar, `quien`, que sin `mias=1` queda vacío.
         mod = _leer("flota_module.py")
         i = mod.index("def flota_api_solicitudes():")
-        t = mod[i:i + 1400]
+        t = mod[i:mod.index("@app.route", i)]
         self.assertNotIn("solicitante_id", t)
-        self.assertNotIn("_uid()", t)
+        self.assertEqual(t.count("_uid()"), 1)
+        self.assertIn("quien = (_uid() or 0,) * 2 if mias else ()", t)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@
   color:#0a0a0a;background:#fff;border:2px solid #0a0a0a;border-radius:7px;padding:2px 9px}
 .fl-tit{display:block;font-weight:700;color:#0a0a0a;margin-top:6px;overflow-wrap:anywhere}
 .fl-sub{display:block;color:#6b7280;font-size:.78rem;margin-top:2px;overflow-wrap:anywhere}
+.fl-mia{display:inline-flex;align-items:center;gap:4px;margin-top:4px;padding:2px 8px;border-radius:999px;background:#dcfce7;color:#166534;font-size:.72rem;font-weight:700}
 .fl-km{font-variant-numeric:tabular-nums;font-weight:700}
 .fl-docs{display:flex;flex-direction:column;gap:5px}
 .fl-doc{border-radius:8px;padding:5px 10px;font-size:.76rem;line-height:1.3;border:1px solid}
