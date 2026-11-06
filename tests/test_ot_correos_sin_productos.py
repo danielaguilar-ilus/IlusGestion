@@ -106,9 +106,9 @@ class TestSoloLaCantidad(unittest.TestCase):
 class TestElRecorridoDeLaVistaPrevia(unittest.TestCase):
     """Daniel (6-nov): la prueba de «OT terminada» mostraba «2 · Recordatorio» y «Qué sigue: el técnico llega…». Ahora cada correo muestra SU paso."""
 
-    def _demo(self, clave):
-        amb = {"mysql_fetchone": lambda *a, **k: {"asunto": "x", "cuerpo": "{{recorrido_html}}", "activo": 1},
-               "_comm_demo_replacements": lambda: {}, "_ccr": CCR, "_ocom": C, "re": re, "print": lambda *a, **k: None,
+    def _demo(self, clave, cuerpo="{{recorrido_html}}"):
+        amb = {"mysql_fetchone": lambda *a, **k: {"asunto": "x", "cuerpo": cuerpo, "activo": 1},
+               "_comm_demo_replacements": lambda: {}, "_ccr": CCR, "_ocom": C, "_orec": O, "re": re, "print": lambda *a, **k: None,
                "_public_base_url": lambda: "https://ilus.test"}
         FC.extraer(amb, "app.py", ("_comm_correo_demo",), ())
         _a, cuerpo, _i = amb["_comm_correo_demo"]({"clave": clave, "plantilla": ("mantenciones", "x"), "nombre": clave, "demo": {}})
@@ -134,11 +134,20 @@ class TestElRecorridoDeLaVistaPrevia(unittest.TestCase):
         # la vista previa lleva el botón «Ver seguimiento en vivo» a un enlace de EJEMPLO (nunca a una OT real); el resto es idéntico al correo real
         ejemplo = "https://ilus.test/ot-seguimiento/ejemplo"
         self.assertEqual(self._demo("ot_terminada_cliente"), C.recorrido_html("documento", "", url_seguimiento=ejemplo))
-        self.assertEqual(self._demo("ot_recordatorio_cliente"),
-                         C.recorrido_html("recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma.",
-                                          url_seguimiento=ejemplo))
+        self.assertEqual(self._demo("ot_recordatorio_cliente"), C.recorrido_html("recordatorio", "", url_seguimiento=ejemplo))        # sin «Qué sigue» (6-nov, auditoría)
         # y el correo real de «OT terminada» sigue pasando el paso «documento» (cerrado), con el enlace de seguimiento de ESA OT
         self.assertIn('recorrido=_ocom.recorrido_html("documento", url_seguimiento=_ot_seg_url(v_id))', FC.texto("app.py"))
+
+    def test_los_bloques_de_valor_de_la_vista_previa_salen_de_las_funciones_reales(self):
+        """Antes eran textos de ejemplo fijos: el 6-nov la vista previa seguía mostrando «Llegará…» y «Qué sigue» cuando el correo real ya los había quitado."""
+        h = self._demo("ot_recordatorio_cliente", "{{que_esperar_html}}|{{preparacion_html}}|{{resumen_trabajo_html}}")
+        qe, prep, res = h.split("|")
+        self.assertEqual(qe, O.que_esperar_html([], []))
+        self.assertEqual(prep, O.preparacion_html("mantencion"))
+        self.assertEqual(res, C.resumen_trabajo_html({}))
+        for viejo in ("Llegará", "Trabajará en", "Se atendieron", "Lo realizó"):
+            self.assertNotIn(viejo, _t(h), viejo)
+        self.assertNotIn("Qué sigue", _t(self._demo("ot_recordatorio_cliente")))
 
     def test_la_demo_de_equipos_del_registro_ya_es_solo_la_cantidad(self):
         self.assertEqual(CCR.DEMO_EXTRA["maquina"], "2 equipos")

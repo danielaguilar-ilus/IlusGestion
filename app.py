@@ -55660,7 +55660,7 @@ def _comm_correo_demo(c):
     # «Tu servicio, paso a paso»: cada correo muestra SU paso, calculado con la misma función que el correo real (Daniel, 6-nov: la OT terminada decía «2 · Recordatorio»
     # y «Qué sigue: el técnico llega…» en la vista previa, porque usaba un recorrido de ejemplo fijo).
     _paso = {"ot_creada_cliente": ("agendada", "te enviaremos un recordatorio 24 horas antes de la visita."),
-             "ot_recordatorio_cliente": ("recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma."),
+             "ot_recordatorio_cliente": ("recordatorio", ""),
              "ot_firma_remota": ("visita", "apenas firmes, nuestro equipo cierra tu orden y te envía el documento firmado por correo."),
              "ot_terminada_cliente": ("documento", ""), "ot_envio_manual": ("documento", "")}.get(c.get("clave"))
     if _paso:
@@ -55669,6 +55669,14 @@ def _comm_correo_demo(c):
             mapa["recorrido_html"] = _ocom.recorrido_html(*_paso, url_seguimiento=f"{_public_base_url()}/ot-seguimiento/ejemplo")
         except Exception as exc:
             print(f"[comm-correos] demo {c['clave']}: recorrido {type(exc).__name__}", flush=True)
+    # Los bloques de valor de la vista previa salen de las MISMAS funciones que arman el correo real (antes eran textos de ejemplo fijos y se quedaban atrás: el 6-nov la
+    # vista previa seguía mostrando «Llegará…» y «Qué sigue» después de que el correo real los quitó).
+    try:
+        mapa["que_esperar_html"] = _orec.que_esperar_html([], [])
+        mapa["preparacion_html"] = _orec.preparacion_html("mantencion")
+        mapa["resumen_trabajo_html"] = _ocom.resumen_trabajo_html({})
+    except Exception as exc:
+        print(f"[comm-correos] demo {c['clave']}: bloques {type(exc).__name__}", flush=True)
     # Encuesta corta «¿Cómo fue tu servicio?» (REGLA #68): la vista previa y «Enviarme una prueba» la muestran SIEMPRE, aunque el correo real todavía no la lleve
     # (OT_ENCUESTA_ACTIVA apagada). Sus enlaces van a la página de ejemplo (`vista-previa`), que no guarda nada. Si algo falla queda el bloque fijo de DEMO_EXTRA.
     try:
