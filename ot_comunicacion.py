@@ -1003,8 +1003,17 @@ SEMILLAS_EXTRA = {
         _cuerpo_ot_completada("Si tienes alguna observación, " + COMO_CREAR_TICKET + " y te contactaremos a la brevedad.")),
 }
 # Versiones de SEMILLAS_EXTRA que ya estuvieron sembradas y que NO son la original de `app.py` (esa la agrega el arranque al principio de la cadena).
+# «OT completada» tal como quedó sembrada en producción ANTES del rebrand (commit 5df79308 cambió «ILUS Sport & Health» por «ILUS Fitness» solo en la semilla del
+# código; la fila de la base seguía con el nombre viejo, por eso la comparación con la semilla actual no la reconocía como «sin editar»). Es la semilla original
+# con ese único cambio de marca; pasarla a la versión nueva además corrige la marca (REGLA #0).
+_OT_COMPLETADA_MARCA_ANTIGUA = (
+    "OT {{ot}} completada — Reporte adjunto",
+    _cuerpo_ot_completada("Si tienes alguna observación, responde este correo y te contactaremos a la brevedad.").replace(
+        "ILUS Fitness", "ILUS Sport & Health"))
+
 SEMILLAS_EXTRA_ANTERIORES = {
     PLANTILLA_VISITA_AGENDADA: (_VISITA_AGENDADA_V2,),
+    PLANTILLA_OT_COMPLETADA: (_OT_COMPLETADA_MARCA_ANTIGUA,),
 }
 
 

@@ -168,6 +168,25 @@ class TestLaActualizacionAlArrancar(unittest.TestCase):
         self.assertEqual(len(ups), 1, ups)
         self.assertEqual(ups[0][1][1], C.SEMILLAS_EXTRA[C.PLANTILLA_OT_COMPLETADA][1])
 
+    def test_la_ot_completada_con_la_marca_antigua_de_produccion_tambien_pasa_a_la_nueva(self):
+        """En producción la fila quedó con «ILUS Sport & Health» (la semilla anterior al rebrand): la primera versión de este cambio no la reconocía."""
+        w = self._mundo()
+        self._poner(w, C.PLANTILLA_OT_COMPLETADA, *C._OT_COMPLETADA_MARCA_ANTIGUA)
+        self.assertIn("ILUS Sport & Health", C._OT_COMPLETADA_MARCA_ANTIGUA[1])
+        w.f("_ensure_comm_template_ot_comunicacion")()
+        ups = self._ups(w)
+        self.assertEqual(len(ups), 1, ups)
+        nuevo = ups[0][1][1]
+        self.assertEqual(nuevo, C.SEMILLAS_EXTRA[C.PLANTILLA_OT_COMPLETADA][1])
+        self.assertIn("ILUS Fitness", nuevo)
+        self.assertNotIn("Sport & Health", nuevo)
+
+    def test_la_marca_antigua_es_la_semilla_original_salvo_el_nombre(self):
+        w = self._mundo()
+        orig = w.amb["_mantenciones_tpl_seed"]()["ot_completada"]
+        n = lambda s: s.replace("\r\n", "\n").strip()
+        self.assertEqual(n(C._OT_COMPLETADA_MARCA_ANTIGUA[1]).replace("ILUS Sport & Health", "ILUS Fitness"), n(orig[1]))
+
     def test_lo_que_una_persona_edito_no_se_toca(self):
         w = self._mundo()
         for slug, v in ((C.PLANTILLA_TERMINADA, C._TERMINADA_V3), (C.PLANTILLA_RECORDATORIO, C._RECORDATORIO_V3),
