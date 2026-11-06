@@ -438,7 +438,7 @@ REGISTRO = (
             "muestra en su ficha «todavía no se le envió al cliente» con el botón «Enviar OT por correo». Además de este interruptor, tiene que "
             "estar abierta la llave de Servicio Técnico. Freno de emergencia: la variable OT_TERMINADA_CLIENTE_ACTIVA=0 lo apaga aunque esté encendido. "
             "Lleva la encuesta corta «¿Cómo fue tu servicio?» (del 1 al 5) solo cuando está activa (OT_ENCUESTA_ACTIVA, REGLA #68); la vista previa y "
-            "«Enviarme una prueba» la muestran siempre. Mientras OT_ENCUESTA_ACTIVA no esté encendida (solo con el «sí» de Daniel), el correo real sale sin ese bloque."),
+            "«Enviarme una prueba» la muestran siempre. Está ENCENDIDA desde el 6-nov-2026 (autorizada por Daniel, en deploy.yml); apagarla solo con su permiso. Sin envío retroactivo: solo las OT cuyo cierre se apruebe desde ese día."),
     _c("ot_terminada_responsable", "OT terminada: aviso a quien la creó, al ejecutivo o al responsable", "ot", "mantenciones",
        "responsable_ot",
        "Al APROBAR el cierre de una OT: quien la creó, el ejecutivo del cliente o el responsable de la OT (los decide "
