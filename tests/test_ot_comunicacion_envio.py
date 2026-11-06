@@ -84,30 +84,27 @@ def _por(items, correo):
 
 
 class TestVariableDelCliente(unittest.TestCase):
-    """El aviso al cliente NACE APAGADO (REGLA #22): solo Daniel lo enciende, con una variable de entorno."""
+    """5-nov-2026 (Daniel: «le avisemos al cliente a partir de ahora… déjalo todo por el front»): el aviso al cliente de la OT terminada ya NO
+    nace apagado por una variable de entorno; se enciende y se apaga desde Comunicaciones → Control de correos. La variable quedó SOLO como
+    freno de emergencia (un 0/false/no/off explícito lo apaga aunque el interruptor del frente esté encendido)."""
 
-    def test_apagado_por_defecto_y_con_cualquier_valor_que_no_sea_un_si(self):
-        self.assertFalse(C.cliente_activo({}))
-        for v in ("", "0", "false", "no", "off", "  ", "talvez", "2"):
+    def test_sin_variable_el_aviso_esta_permitido(self):
+        self.assertTrue(C.cliente_activo({}))
+        self.assertTrue(C.cliente_activo({C.ENV_CLIENTE_ACTIVA: ""}))
+
+    def test_solo_un_cero_explicito_es_un_freno_de_emergencia(self):
+        for v in ("0", "false", "FALSE", "no", "off", " OFF "):
             self.assertFalse(C.cliente_activo({C.ENV_CLIENTE_ACTIVA: v}), repr(v))
-
-    def test_se_enciende_con_los_si_de_siempre(self):
-        for v in ("1", "true", "TRUE", "yes", "on", "si", "sí", " 1 "):
+        for v in ("1", "true", "yes", "on", "si", "sí", "  ", "talvez", "2"):
             self.assertTrue(C.cliente_activo({C.ENV_CLIENTE_ACTIVA: v}), repr(v))
 
-    def test_el_codigo_y_la_pantalla_leen_la_variable_con_la_misma_regla(self):
-        """Control de correos muestra «Apagado por configuración» con la MISMA condición que usa el código: nunca se contradicen."""
+    def test_la_pantalla_deja_apagarlo_y_encenderlo(self):
         c = R.por_clave(C.CORREO_TERMINADA_CLIENTE)
-        for v in ("", "0", "1", "true", "si", "off", "yes"):
-            esperado = R.estado_efectivo(c, environ={C.ENV_CLIENTE_ACTIVA: v})["efectivo"] == "sale"
-            self.assertEqual(C.cliente_activo({C.ENV_CLIENTE_ACTIVA: v}), esperado, repr(v))
-
-    def test_la_pantalla_no_deja_encenderlo_y_lo_dice_con_el_candado(self):
-        e = R.estado_efectivo(R.por_clave(C.CORREO_TERMINADA_CLIENTE), environ={})
-        self.assertEqual(e["efectivo"], "config")
-        self.assertFalse(e["puede_encender"])
-        self.assertTrue(e["bloquea_config"])
-        self.assertTrue(any(x["variable"] == C.ENV_CLIENTE_ACTIVA and not x["activa"] for x in e["condiciones"]))
+        self.assertEqual(c["condiciones"], ())                 # ninguna variable lo gobierna: el interruptor es del frente
+        self.assertFalse(c["nace_apagado"])                    # sin fila en comm_correo_control sale (Daniel lo pidió «a partir de ahora»)
+        e = R.estado_efectivo(c, environ={})
+        self.assertEqual(e["efectivo"], "sale")
+        self.assertFalse(e["bloquea_config"])
 
     def test_los_otros_cuatro_correos_no_dependen_de_ninguna_variable(self):
         for k in (C.CORREO_TERMINADA_RESPONSABLE, C.CORREO_TERMINADA_TECNICO, C.CORREO_MANUAL, C.CORREO_MANUAL_TECNICO):
@@ -563,9 +560,9 @@ class TestRegistro(unittest.TestCase):
         self.assertEqual(R.por_clave(C.CORREO_TERMINADA_TECNICO)["plantilla_apagada"], "no_sale")
 
     def test_las_plantillas_del_registro_son_las_que_siembra_el_codigo(self):
-        usadas = {R.por_clave(k)["plantilla"][1] for k in C.CORREOS}
+        usadas = {R.por_clave(k)["plantilla"][1] for k in C.CORREOS + C.CORREOS_RECORDATORIO}
         self.assertEqual(usadas, set(C.PLANTILLAS))
-        for k in C.CORREOS:
+        for k in C.CORREOS + C.CORREOS_RECORDATORIO:
             self.assertEqual(R.por_clave(k)["plantilla"][0], C.MODULO_PLANTILLAS)
 
     def test_el_editor_de_comunicaciones_las_ofrece_con_sus_variables(self):
@@ -799,7 +796,7 @@ def _asunto_para(m, destino):
 
 class TestOtTerminadaAutomatica(_Base):
     def test_con_la_variable_apagada_nada_sale_al_cliente_pero_si_al_equipo_y_al_tecnico(self):
-        m = self.mundo()
+        m = self.mundo(env_cliente="0")
         r = m.f("_ot_terminada_notificar")(77)
         self.assertTrue(r["ok"], r)
         self.assertEqual(sorted(m.destinos()), ["aaron@sphs.cl", "lenin@sphs.cl", "victor@sphs.cl"])
@@ -908,7 +905,7 @@ class TestOtTerminadaAutomatica(_Base):
         self.assertIn("Falta firma del responsable/supervisor", cli[0]["motivo"])
 
     def test_si_el_aviso_al_cliente_esta_apagado_no_se_revisa_el_documento(self):
-        m = self.mundo()                                                       # variable apagada
+        m = self.mundo(env_cliente="0")                                          # freno de emergencia (variable en 0)
         llamadas = []
         m.amb["_ot_pdf_context"] = lambda vid, **kw: llamadas.append(vid) or (None, "ok", [])
         m.f("_ot_terminada_notificar")(77)
@@ -994,7 +991,7 @@ class TestOtTerminadaAutomatica(_Base):
         self.assertIn("plantilla", det["lenin@sphs.cl"]["motivo"])
 
     def test_el_aviso_al_equipo_cuenta_lo_que_paso_con_el_cliente_y_el_tecnico(self):
-        m = self.mundo()                                                       # cliente apagado
+        m = self.mundo(env_cliente="0")                                          # cliente apagado (freno de emergencia)
         m.f("_ot_terminada_notificar")(77)
         t = _txt(_html_para(m, "aaron@sphs.cl"))
         self.assertIn("QUÉ SE ENVIÓ", t)
@@ -1023,7 +1020,7 @@ class TestOtTerminadaAutomatica(_Base):
 
 class TestAvisoPrevioAlCierre(_Base):
     def test_la_gestion_ve_a_cada_destinatario_con_su_rol_su_correo_y_lo_apagado(self):
-        m = self.mundo(estado="pendiente_aprobacion")
+        m = self.mundo(estado="pendiente_aprobacion", env_cliente="0")
         st, d = m.llamar("ot2_api_com_destinatarios", 77)
         self.assertEqual(st, 200)
         self.assertTrue(d["ok"] and d["aplica"])
@@ -1691,7 +1688,7 @@ class TestCableado(unittest.TestCase):
         try:
             m.f("_ensure_comm_template_ot_comunicacion")()
             ins = [s for s, _p in m.sql if s.startswith("INSERT IGNORE INTO comm_templates")]
-            self.assertEqual(len(ins), 4)
+            self.assertEqual(len(ins), len(C.PLANTILLAS))
             m.sql.clear()
             for slug in C.PLANTILLAS:
                 m.m.poner_plantilla("mantenciones", slug, "Asunto editado por Daniel", "<p>Cuerpo editado por Daniel</p>")
