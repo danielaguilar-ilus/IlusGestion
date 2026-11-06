@@ -890,6 +890,7 @@ def validar_motivo_archivo(texto):
 # minutos dentro del horario (como el «Sin responder» de Retiros, REGLA #22).
 HORARIO_LLAVES = ((8 * 60, 13 * 60), (14 * 60, 17 * 60))      # minutos del día; 13:00–14:00 es colación
 HORARIO_TEXTO = "lunes a viernes hábiles de 08:00 a 13:00 y de 14:00 a 17:00 (colación 13:00–14:00)"
+PASO_BLOQUE_MIN = 30         # la hora se elige en BLOQUES de 30 minutos (Daniel, 05-nov-2026: «déjalo en bloques y déjalo como regla del sistema»)
 SLA_TOLERANCIA_MIN = 15      # hasta 15 min hábiles después de la hora de retiro: «debe entregarse ahora»
 SLA_CRITICO_MIN = 60         # desde 60 min hábiles: atraso crítico
 
@@ -933,6 +934,73 @@ def avisos_horario(inicio, fin, feriados=()):
         out.append(f"La devolución ({fecha_dia_texto(fin.date())} {fin.strftime('%H:%M')}) queda fuera del horario de llaves: "
                    f"podría no haber quién reciba la llave.")
     return out
+
+
+# ── Horario en BLOQUES (Daniel, 05-nov-2026) ────────────────────────────────────────────────────────────────────────────────────
+# «¿Qué pasó con el horario? Déjalo en bloques y déjalo como regla del sistema… obvio debe prellenar la hora». La hora de un vehículo se
+# elige en BLOQUES de PASO_BLOQUE_MIN minutos (Mañana 08:00–13:00 y Tarde 14:00–17:00, colación al medio): la SALIDA es el comienzo de un
+# bloque y la VUELTA es el final de uno (los mismos extremos de `en_horario`: la llave se entrega en [a, b) y se recibe en (a, b]).
+# Estas funciones son la ESPECIFICACIÓN EJECUTABLE de cómo la hora de una OT se lleva a los bloques; el asistente de «Nueva OT» la repite en
+# JS (`_o2mVehPrellenado` en templates/ot2/_modal_crear.html) y tests/test_ot_vehiculo_horario_bloques.py vigila que ambas den lo MISMO.
+def horario_para_pantalla():
+    """Lo que el servidor le manda a las pantallas que eligen una hora de llaves: los tramos (minutos del día), el texto y el paso del bloque.
+    Es la ÚNICA fuente: el JS no debe tener su propio horario (solo un valor por omisión mientras llega esto, que una prueba compara)."""
+    return {"tramos": [list(t) for t in HORARIO_LLAVES], "texto": HORARIO_TEXTO, "paso_min": PASO_BLOQUE_MIN}
+
+
+def _inicios_y_finales(tramos=HORARIO_LLAVES, paso=PASO_BLOQUE_MIN):
+    """Los comienzos y los finales de TODOS los bloques del día, en orden (el último bloque de un tramo puede ser más corto)."""
+    inicios, finales = [], []
+    for a, b in tramos:
+        for s in range(a, b, paso):
+            inicios.append(s)
+            finales.append(min(s + paso, b))
+    return inicios, finales
+
+
+def ajustar_salida(m, tramos=HORARIO_LLAVES, paso=PASO_BLOQUE_MIN):
+    """(minuto, motivo) de la SALIDA llevada al comienzo del bloque que contiene `m` (None si no hay hora). Motivos: '' = ya era un bloque,
+    'bloque' = cayó dentro de uno (se llevó a su comienzo), 'antes' = antes de abrir, 'colacion' = entre dos tramos (al comienzo del
+    siguiente) y 'despues' = ya cerrado (al último bloque). Nada se cambia en silencio: el motivo sirve para avisarlo."""
+    if m is None:
+        return None, ""
+    inicios, _ = _inicios_y_finales(tramos, paso)
+    if m < tramos[0][0]:
+        return inicios[0], "antes"
+    for i, (a, b) in enumerate(tramos):
+        if a <= m < b:
+            s = a + ((m - a) // paso) * paso
+            return s, ("" if s == m else "bloque")
+        if i + 1 < len(tramos) and b <= m < tramos[i + 1][0]:
+            return tramos[i + 1][0], "colacion"
+    return inicios[-1], "despues"
+
+
+def ajustar_regreso(m, tramos=HORARIO_LLAVES, paso=PASO_BLOQUE_MIN):
+    """(minuto, motivo) de la VUELTA llevada al final del bloque que contiene `m` (los mismos motivos que `ajustar_salida`). La vuelta puede caer
+    justo al cierre de un tramo (13:00, 17:00) pero no en su apertura: 14:00 ya es del tramo siguiente y la primera vuelta posible es 14:30."""
+    if m is None:
+        return None, ""
+    _, finales = _inicios_y_finales(tramos, paso)
+    if m <= tramos[0][0]:
+        return finales[0], "antes"
+    for i, (a, b) in enumerate(tramos):
+        if a < m <= b:
+            e = min(a + (-(-(m - a) // paso)) * paso, b)          # techo a la grilla de bloques, sin pasarse del cierre del tramo
+            return e, ("" if e == m else "bloque")
+        if i + 1 < len(tramos) and b < m <= tramos[i + 1][0]:
+            a2, b2 = tramos[i + 1]
+            return min(a2 + paso, b2), "colacion"
+    return finales[-1], "despues"
+
+
+def ajustar_a_bloques(desde_min, hasta_min, tramos=HORARIO_LLAVES, paso=PASO_BLOQUE_MIN):
+    """La hora de una OT (minutos del día; None si falta) llevada a los bloques del horario de llaves:
+    {desde, hasta, motivo_desde, motivo_hasta}. Si la OT empieza antes de abrir, cae en la colación o termina después del cierre, se prellena lo
+    más cercano DENTRO del horario y el motivo lo dice (para mostrar la nota); una hora que ya cae en un bloque no se toca."""
+    d, kd = ajustar_salida(desde_min, tramos, paso)
+    h, kh = ajustar_regreso(hasta_min, tramos, paso)
+    return {"desde": d, "hasta": h, "motivo_desde": kd, "motivo_hasta": kh}
 
 
 def _duracion(m):

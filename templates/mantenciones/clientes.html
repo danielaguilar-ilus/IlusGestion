@@ -413,11 +413,41 @@
 
 {% include "mantenciones/_reporte_excel_modal.html" %}
 
+{#- 🧭 2026-11-05 (Daniel: «ese módulo es viejo, quisiera enchularlo»): los dos avisos de arriba (Salud del proceso y clientes de instalación por
+    ofrecer) vivían uno sobre otro y empujaban la lista casi una pantalla hacia abajo. Ahora comparten fila en escritorio (static/clientes_lista.css).
+    Mismo contenido, mismos botones y mismos permisos; solo cambia dónde están. -#}
+<div class="cl-avisos">
 {% if permissions.admin or permissions.superadmin %}
 {# ══ SALUD DEL PROCESO (antes «Revisar y reparar»): que ningún cliente que entra por instalación se pierda.
    Daniel 2026-10-19: «debe estar muy robusto para establecer las mantenciones como área de negocio». ══ #}
 {% include "mantenciones/_salud_proceso.html" %}
 {% endif %}
+{% if global_stats.inst_pendientes %}
+{# Paso 1 del proceso comercial (Daniel 2026-10-04): avisar que hay clientes de instalación
+   a los que contactar para ofrecerles plan de mantención + contrato. #}
+<div class="inst-alerta">
+  <i class="bi bi-megaphone-fill"></i>
+  <div>
+    <b>{{ global_stats.inst_pendientes }} cliente{{ '' if global_stats.inst_pendientes == 1 else 's' }} de instalación esperan que les ofrezcamos mantención</b>
+    <span>{{ global_stats.inst_sin_contactar }} sin contactar aún · <b style="display:inline">{{ global_stats.inst_listos or 0 }} listos para cotizar</b> (con contacto, equipos y tarifa){% if global_stats.inst_vencida_1a %} · <b style="display:inline">{{ global_stats.inst_vencida_1a }} con la 1ª mantención ya vencida según su factura</b>{% endif %}{% if global_stats.inst_vencidos %} · {{ global_stats.inst_vencidos }} con seguimiento vencido{% endif %}.
+      Contáctalos, ofrece el plan de mantención con descuento y gestiona su contrato.</span>
+  </div>
+  <button type="button" class="btn btn-sm" onclick="aplicarKpiFiltro('instalacion')">
+    <i class="bi bi-funnel-fill me-1"></i>Ver clientes</button>
+</div>
+<style>
+.inst-alerta{display:flex;gap:11px;align-items:center;margin-bottom:14px;padding:12px 14px;
+  background:#f0fdfa;border:1px solid #99f6e4;border-radius:12px}
+.inst-alerta > i{color:#0d9488;font-size:1.2rem;flex:0 0 auto}
+.inst-alerta > div{flex:1;min-width:0;line-height:1.4}
+.inst-alerta b{display:block;font-size:.88rem;color:#115e59;font-weight:800}
+.inst-alerta span{display:block;font-size:.78rem;color:#0f766e}
+.inst-alerta .btn{flex:0 0 auto;background:#0d9488;border-color:#0d9488;color:#fff;font-weight:800;min-height:38px}
+.inst-alerta .btn:hover{background:#0f766e;border-color:#0f766e;color:#fff}
+@media (max-width:640px){ .inst-alerta{flex-wrap:wrap} .inst-alerta .btn{width:100%} }
+</style>
+{% endif %}
+</div>
 
 
 <div class="modal fade" id="modalHuerfanos" tabindex="-1">
@@ -1058,31 +1088,7 @@ async function limpiarHuerfanos(){
    para evitar confusiones (ej: "Con equipos" = clientes que tienen 1+,
    NO la cantidad total de equipos en el sistema).
    #}
-{% if global_stats.inst_pendientes %}
-{# Paso 1 del proceso comercial (Daniel 2026-10-04): avisar que hay clientes de instalación
-   a los que contactar para ofrecerles plan de mantención + contrato. #}
-<div class="inst-alerta">
-  <i class="bi bi-megaphone-fill"></i>
-  <div>
-    <b>{{ global_stats.inst_pendientes }} cliente{{ '' if global_stats.inst_pendientes == 1 else 's' }} de instalación esperan que les ofrezcamos mantención</b>
-    <span>{{ global_stats.inst_sin_contactar }} sin contactar aún · <b style="display:inline">{{ global_stats.inst_listos or 0 }} listos para cotizar</b> (con contacto, equipos y tarifa){% if global_stats.inst_vencida_1a %} · <b style="display:inline">{{ global_stats.inst_vencida_1a }} con la 1ª mantención ya vencida según su factura</b>{% endif %}{% if global_stats.inst_vencidos %} · {{ global_stats.inst_vencidos }} con seguimiento vencido{% endif %}.
-      Contáctalos, ofrece el plan de mantención con descuento y gestiona su contrato.</span>
-  </div>
-  <button type="button" class="btn btn-sm" onclick="aplicarKpiFiltro('instalacion')">
-    <i class="bi bi-funnel-fill me-1"></i>Ver clientes</button>
-</div>
-<style>
-.inst-alerta{display:flex;gap:11px;align-items:center;margin-bottom:14px;padding:12px 14px;
-  background:#f0fdfa;border:1px solid #99f6e4;border-radius:12px}
-.inst-alerta > i{color:#0d9488;font-size:1.2rem;flex:0 0 auto}
-.inst-alerta > div{flex:1;min-width:0;line-height:1.4}
-.inst-alerta b{display:block;font-size:.88rem;color:#115e59;font-weight:800}
-.inst-alerta span{display:block;font-size:.78rem;color:#0f766e}
-.inst-alerta .btn{flex:0 0 auto;background:#0d9488;border-color:#0d9488;color:#fff;font-weight:800;min-height:38px}
-.inst-alerta .btn:hover{background:#0f766e;border-color:#0f766e;color:#fff}
-@media (max-width:640px){ .inst-alerta{flex-wrap:wrap} .inst-alerta .btn{width:100%} }
-</style>
-{% endif %}
+{# (5-nov-2026) El aviso «clientes de instalación esperan que les ofrezcamos mantención» se movió arriba, junto al de «Salud del proceso»: ver .cl-avisos. #}
 {%- set tot   = global_stats.total or 0 %}
 <div class="kpi-strip">
   <div class="kpi-card kpi-clickable {% if not filtros.estado and not filtros.contrato and not filtros.equipos %}active{% endif %}"
@@ -1845,4 +1851,7 @@ function aplicarKpiFiltro(tipo) {
   flex:0 0 auto;width:auto;min-width:100px;border-left:none!important;
 }
 </style>
+{#- 🧭 2026-11-05 (Daniel: «enchularlo»): repaso de la lista (letra ≥ 12 px, botones de 44 px, datos completos, tarjeta compacta en celular, avisos en una fila).
+    Va DESPUÉS de todos los <style> de la página para ganarles a igual especificidad. -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='clientes_lista.css') }}">
 {% endblock %}

@@ -319,6 +319,47 @@
 .o2m-op.off:hover{transform:none;box-shadow:none;border-color:#e5e7eb}
 .o2m-op.off .n{color:#374151}
 .o2m-op.off .l{color:#4b5563}
+/* 🕒 2026-11-05 (Daniel: «¿qué pasó con el horario? déjalo en bloques y déjalo como regla del sistema… obvio debe prellenar la hora»): la hora del vehículo
+   se elige en BLOQUES de 30 min (Mañana 08–13 / Tarde 14–17, colación al medio), igual que en Solicitudes de vehículo y en /retiros/solicitar; el horario sale
+   del servidor (flota_reglas). Botones de 44 px y letra ≥ 12 px (REGLA #61); elegido = verde con check; no disponible = gris con borde punteado, NUNCA opacidad.
+   Dos columnas (Sale | Vuelve) desde 768 px y una en el celular (minmax(0,1fr): una columna `1fr` suelta no baja del ancho de su contenido). */
+.o2m-hb{margin:.25rem 0 .5rem}
+.o2m-hb-res{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin:.35rem 0 .6rem;padding:8px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-left:5px solid #16a34a;
+  border-radius:10px;font-size:.95rem;color:#14532d}
+.o2m-hb-res span{color:#4b5563;font-size:.85rem}
+.o2m-hb-filas{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 22px}
+@media (max-width:767.98px){.o2m-hb-filas{grid-template-columns:minmax(0,1fr)}}
+.o2m-hb-fila{min-width:0}
+.o2m-hb-tit{font-weight:800;font-size:1rem;color:#0a0a0a;margin:.3rem 0 2px}
+.o2m-hb-tit b{color:#166534;font-variant-numeric:tabular-nums}
+.o2m-hb-sec{font-size:.8rem;font-weight:700;color:#4b5563;margin:8px 0 5px}
+.o2m-hb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px}
+.o2m-hb-b{min-height:44px;padding:6px 4px;border:1.5px solid #e5e7eb;border-radius:10px;background:#fff;color:#0a0a0a;font-weight:700;font-size:.9rem;
+  font-variant-numeric:tabular-nums;cursor:pointer;transition:border-color .16s,background-color .16s;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.o2m-hb-b:hover{border-color:#9ca3af}
+.o2m-hb-b:focus-visible,.o2m-hb-mano summary:focus-visible{outline:2px solid var(--ilus-red,#dc2626);outline-offset:2px}
+.o2m-hb-b.sel{border-color:#16a34a;background:#f0fdf4;color:#166534;box-shadow:0 0 0 1px #16a34a}
+.o2m-hb-b.off{background:#f3f4f6;border-style:dashed;color:#4b5563;cursor:not-allowed;box-shadow:none}
+.o2m-hb-b.off:hover{border-color:#e5e7eb}
+.o2m-hb-col{display:flex;align-items:center;gap:6px;margin:9px 0 2px;padding:6px 10px;background:#f9fafb;border:1px dashed #d1d5db;border-radius:8px;font-size:.8rem;color:#4b5563}
+.o2m-hb-mano{margin:.5rem 0 .25rem}
+.o2m-hb-mano summary{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;min-height:44px;cursor:pointer;font-size:.9rem;color:#374151}
+.o2m-hb-mano summary .t{font-weight:700;white-space:nowrap}
+.o2m-hb-mano summary .m{font-weight:400;color:#4b5563}
+.o2m-hb-chev{margin-left:auto;transition:transform .16s}
+.o2m-hb-mano[open] .o2m-hb-chev{transform:rotate(180deg)}
+.o2m-hb-vol{margin:.6rem 0 .15rem}
+/* En el celular los bloques se compactan: 5 o 6 por fila (botones de 44 px de alto y ~50 de ancho) y menos aire entre secciones, para no alargar la pantalla. */
+@media (max-width:575.98px){
+  .o2m-hb-grid{grid-template-columns:repeat(auto-fill,minmax(48px,1fr));gap:5px}
+  .o2m-hb-b{padding:6px 1px;font-size:.88rem}
+  .o2m-hb-b.sel{font-weight:800;box-shadow:0 0 0 2px #16a34a}      /* sin el check (no cabe en una línea): aro grueso y negrita, además de aria-pressed y del resumen de arriba */
+  .o2m-hb-b.sel i{display:none}
+  .o2m-hb-sec{margin:6px 0 4px}
+  .o2m-hb-col{margin:6px 0 0;padding:4px 8px}
+  .o2m-hb-tit{margin:.2rem 0 0}
+  .o2m-hb-filas{gap:2px}
+}
 /* ✏️ 2026-10-18 (Daniel: «lo creé y no se edita?»): lápiz para editar un
    tipo de trabajo interno sin salir del asistente. */
 .o2m-op-wrap{position:relative;display:flex}
@@ -1852,8 +1893,10 @@ window.OT2C = (function(){
          // vehículo opcional de la OT. `vehiculo_id` null = «Sin vehículo». `chofer_id` es el de flota_choferes (quien retira la llave: uno de los
          // técnicos internos ya enrolados). `desde`/`hasta` siguen la hora de la OT mientras la persona no las cambie (`manualHora`). `data` = lo que
          // dijo el servidor de la disponibilidad (solo lee). Viaja en crear() como `vehiculo`; el servidor lo revalida todo.
+         // 🕒 2026-11-05: `notas` = lo que se movió al prellenar la hora de la OT en los bloques (se dice, no se cambia en silencio) y `ajusteAbierto` =
+         // si «Ajustar a mano» está abierto (null = todavía no lo decidió la persona: se abre solo si la hora no cae en un bloque).
          veh:{vehiculo_id:null, chofer_id:null, usuario_id:null, desde:'', hasta:'', manualHora:false, manualChofer:false,
-              data:null, cargando:false, error:false, aviso:''},
+              data:null, cargando:false, error:false, aviso:'', notas:[], ajusteAbierto:null},
          // 🩺 2026-10-21 (REGLA #38, Daniel: «que la OT avise para que se tome el caso y se levante una acción que debería ser otra OT»):
          // esta OT es el SEGUIMIENTO de hallazgos de otra OT. Llega de la tarjeta «Hallazgos de esta OT» (OT2C.abrirDesdeHallazgos): el cliente, los
          // equipos, el tipo correctiva, el título y el motivo ya vienen escritos (la persona decide qué queda, REGLA #32) y las fotos del hallazgo
@@ -4650,9 +4693,85 @@ window.OT2C = (function(){
   }
   // El paso no existe para un técnico (rol) ni para quien no tiene el permiso «Solicitar vehículos» (el servidor responde 403 una vez y se recuerda).
   function _o2mVehAplica(){ return !O2M_ES_TECNICO && !window.__o2mVehDenegado && _o2mVehTecIds().length > 0; }
-  function _o2mVehSync(){          // la hora del vehículo sigue la de la OT mientras la persona no la haya cambiado
+  /* ── HORARIO EN BLOQUES (2026-11-05) ──────────────────────────────────────────────────────────────────────────────────────────────────
+     Daniel, viendo «Sale a las 14:00 / Vuelve a las 18:00» con el aviso «queda fuera del horario de llaves»: «¿qué pasó con el horario? déjalo en
+     BLOQUES y déjalo como REGLA DEL SISTEMA… obvio debe PRELLENAR la hora». La hora del vehículo se elige en bloques de 30 min (Mañana / Tarde, con la
+     colación al medio), como en Solicitudes de vehículo: la SALIDA es el comienzo de un bloque y la VUELTA el final de uno (los mismos extremos que
+     flota_reglas.en_horario). Sale ya PRELLENADA con la hora de la OT llevada a los bloques; si la OT empieza antes de abrir, cae en la colación o termina
+     después del cierre, se prellena lo más cercano DENTRO del horario y se DICE (nota ámbar): nada cambia en silencio. «Ajustar a mano» queda plegado
+     para las excepciones y solo alerta (decisión del 02-nov: fuera de horario se avisa, no se traba).
+     UNA sola fuente: el horario lo manda el servidor en `horario` (flota_reglas.HORARIO_LLAVES); el valor de abajo es solo el de partida mientras llega y
+     una prueba lo compara con flota_reglas. La misma cuenta está en Python (flota_reglas.ajustar_a_bloques) y una prueba de paridad vigila que den lo mismo. */
+  var _O2M_VEH_TRAMOS_DEF = [[480, 780], [840, 1020]];        // minutos del día = flota_reglas.HORARIO_LLAVES
+  var _O2M_VEH_PASO_DEF = 30;                                  // minutos = flota_reglas.PASO_BLOQUE_MIN
+  function _o2mVehHorario(){ return (S.veh && S.veh.data && S.veh.data.horario) || null; }
+  function _o2mVehTramos(){ var h = _o2mVehHorario(); return (h && h.tramos && h.tramos.length) ? h.tramos : _O2M_VEH_TRAMOS_DEF; }
+  function _o2mVehPaso(){ var h = _o2mVehHorario(); return (h && h.paso_min > 0) ? h.paso_min : _O2M_VEH_PASO_DEF; }
+  function _o2mVehMin(t){          // 'HH:MM' → minutos del día (null si no es una hora)
+    var m = /^(\d{1,2}):(\d{2})/.exec(String(t == null ? '' : t));
+    if (!m) return null;
+    var h = parseInt(m[1], 10), n = parseInt(m[2], 10);
+    return (h > 23 || n > 59) ? null : h * 60 + n;
+  }
+  function _o2mVehHm(m){           // minutos del día → 'HH:MM'
+    var h = Math.floor(m / 60), n = m % 60;
+    return (h < 10 ? '0' : '') + h + ':' + (n < 10 ? '0' : '') + n;
+  }
+  /* El final del bloque que empieza en `m` (la vuelta más corta posible si se sale a esa hora). */
+  function _o2mVehFinBloque(m){
+    var tr = _o2mVehTramos(), paso = _o2mVehPaso(), i;
+    for (i = 0; i < tr.length; i++){ if (m >= tr[i][0] && m < tr[i][1]) return Math.min(m + paso, tr[i][1]); }
+    return m + paso;
+  }
+  /* La hora de la OT llevada a los bloques: {desde, hasta, kd, kh, notas}. kd/kh = por qué se movió ('' = ya era un bloque · 'bloque' = cayó dentro de uno ·
+     'antes' = antes de abrir · 'colacion' = entre los dos tramos · 'despues' = ya cerrado). Misma cuenta que flota_reglas.ajustar_a_bloques. */
+  function _o2mVehPrellenado(hini, hfin){
+    var tr = _o2mVehTramos(), paso = _o2mVehPaso(), a = _o2mVehMin(hini), b = _o2mVehMin(hfin);
+    var inicios = [], finales = [], kd = '', kh = '', d = null, h = null, i;
+    tr.forEach(function(t){ for (var s = t[0]; s < t[1]; s += paso){ inicios.push(s); finales.push(Math.min(s + paso, t[1])); } });
+    if (a != null){
+      if (a < tr[0][0]){ d = inicios[0]; kd = 'antes'; }
+      for (i = 0; i < tr.length && d == null; i++){
+        if (a >= tr[i][0] && a < tr[i][1]){ d = tr[i][0] + Math.floor((a - tr[i][0]) / paso) * paso; kd = (d === a) ? '' : 'bloque'; }
+        else if (i + 1 < tr.length && a >= tr[i][1] && a < tr[i + 1][0]){ d = tr[i + 1][0]; kd = 'colacion'; }
+      }
+      if (d == null){ d = inicios[inicios.length - 1]; kd = 'despues'; }
+    }
+    if (b != null){
+      if (b <= tr[0][0]){ h = finales[0]; kh = 'antes'; }
+      for (i = 0; i < tr.length && h == null; i++){
+        if (b > tr[i][0] && b <= tr[i][1]){ h = Math.min(tr[i][0] + Math.ceil((b - tr[i][0]) / paso) * paso, tr[i][1]); kh = (h === b) ? '' : 'bloque'; }
+        else if (i + 1 < tr.length && b > tr[i][1] && b <= tr[i + 1][0]){ h = Math.min(tr[i + 1][0] + paso, tr[i + 1][1]); kh = 'colacion'; }
+      }
+      if (h == null){ h = finales[finales.length - 1]; kh = 'despues'; }
+    }
+    return {desde: d == null ? '' : _o2mVehHm(d), hasta: h == null ? '' : _o2mVehHm(h), kd: kd, kh: kh,
+            notas: _o2mVehNotas(hini, hfin, d, h, kd, kh, tr, paso)};
+  }
+  /* Lo que se movió al prellenar, dicho con palabras. 'warn' = hubo que mover algo que SÍ importa (ámbar); 'info' = solo se llevó al bloque. */
+  function _o2mVehNotas(hini, hfin, d, h, kd, kh, tr, paso){
+    var n = [], abre = tr[0][0], cierra = tr[tr.length - 1][1], hm = _o2mVehHm;
+    if (kd === 'antes') n.push({tono: 'warn', t: 'La OT empieza a las ' + hini + ', antes de que se entreguen las llaves (desde las ' + hm(abre) + '): la salida quedó a las ' + hm(d) +
+      '. Si el vehículo sale antes, ajusta la hora a mano.'});
+    else if (kd === 'colacion') n.push({tono: 'warn', t: 'La OT empieza a las ' + hini + ', durante la colación (no se entregan llaves): la salida quedó a las ' + hm(d) + '.'});
+    else if (kd === 'despues') n.push({tono: 'warn', t: 'La OT empieza a las ' + hini + ', después de la entrega de llaves (hasta las ' + hm(cierra) + '): la salida quedó a las ' + hm(d) + '.'});
+    if (kh === 'despues') n.push({tono: 'warn', t: 'La OT termina a las ' + hfin + ', pero las llaves se reciben hasta las ' + hm(cierra) + ': la devolución quedó a las ' + hm(h) +
+      '. Si el vehículo vuelve más tarde, ajusta la hora a mano.'});
+    else if (kh === 'colacion') n.push({tono: 'warn', t: 'La OT termina a las ' + hfin + ', durante la colación: la devolución quedó a las ' + hm(h) + ', el primer horario en que se reciben llaves.'});
+    else if (kh === 'antes') n.push({tono: 'warn', t: 'La OT termina a las ' + hfin + ', antes de que abra el horario de llaves: la devolución quedó a las ' + hm(h) + '.'});
+    if (kd === 'bloque' || kh === 'bloque'){
+      n.push({tono: 'info', t: (d != null && h != null)
+        ? 'La OT es de ' + hini + ' a ' + hfin + '; el vehículo se agenda en bloques de ' + paso + ' min: sale a las ' + hm(d) + ' y vuelve a las ' + hm(h) + '.'
+        : 'El vehículo se agenda en bloques de ' + paso + ' min' + (d != null ? ': sale a las ' + hm(d) + '.' : (h != null ? ': vuelve a las ' + hm(h) + '.' : '.'))});
+    }
+    return n;
+  }
+  function _o2mVehSync(){          // la hora del vehículo sigue la de la OT (llevada a los bloques) mientras la persona no la haya cambiado
     var V = S.veh;
-    if (!V.manualHora){ V.desde = S.hini || ''; V.hasta = S.hfin || ''; }
+    if (!V.manualHora){
+      var aj = _o2mVehPrellenado(S.hini || '', S.hfin || '');
+      V.desde = aj.desde; V.hasta = aj.hasta; V.notas = aj.notas;
+    }
     return V;
   }
   function _o2mVehPorId(id){
@@ -4718,10 +4837,14 @@ window.OT2C = (function(){
         return;
       }
       if (!j || !j.ok){ _o2mVehFalla(); _o2mVehAvisar('No se pudo revisar la disponibilidad de los vehículos.'); return; }
-      V.data = j; V.error = false; _o2mVehAuto();
+      var _horaAntes = V.desde + '|' + V.hasta;
+      V.data = j; V.error = false;
+      _o2mVehSync();      // 🕒 con los bloques que mandó el servidor la hora prellenada puede cambiar (casi nunca: es el mismo horario de siempre)
+      _o2mVehAuto();
       _o2mVehPintar(); refrescarAnclas();
       _o2mVehAvisar((j.vehiculos || []).map(function(v){ return v.titulo + (v.libre ? ': libre' : ': no disponible'); }).join('. '));
       if (V.aviso && window.ilusToast){ ilusToast(V.aviso, {type:'warning', duration:9000}); V.aviso = ''; }
+      if (V.desde + '|' + V.hasta !== _horaAntes) _o2mVehCargarDebounced();      // cambió la hora que se consulta: se vuelve a mirar quién está libre
     }).catch(function(){
       if (tok !== _o2mVehToken) return;
       V.cargando = false; _o2mVehFalla(); _o2mVehAvisar('No se pudo revisar la disponibilidad de los vehículos.');
@@ -4741,6 +4864,65 @@ window.OT2C = (function(){
       '<div id="o2mVehCuerpo"></div>';
     _o2mVehPintar();
     _o2mVehCargar();
+  }
+  /* Una fila de bloques: `campo` = 'desde' (cada botón es el COMIENZO de un bloque) o 'hasta' (cada botón es el FINAL de uno); `sel` = la hora elegida y
+     `otro` = la hora del otro campo, en minutos. En la fila de la vuelta, lo que no es posterior a la salida se ve gris y no se puede elegir. */
+  function _o2mVehGrid(campo, sel, otro){
+    var tr = _o2mVehTramos(), paso = _o2mVehPaso(), h = '';
+    tr.forEach(function(t, i){
+      h += '<div class="o2m-hb-sec">' + (i === 0 ? '☀️ Mañana' : (i === 1 ? '🌤 Tarde' : 'Tramo ' + (i + 1))) + ' · ' + _o2mVehHm(t[0]) + '–' + _o2mVehHm(t[1]) + '</div><div class="o2m-hb-grid">';
+      for (var s = t[0]; s < t[1]; s += paso){
+        var m = (campo === 'desde') ? s : Math.min(s + paso, t[1]);
+        var on = sel === m, off = (campo === 'hasta') && otro != null && m <= otro, txt = _o2mVehHm(m);
+        h += '<button type="button" id="o2mVehB' + campo + m + '" class="o2m-hb-b' + (on ? ' sel' : '') + (off ? ' off' : '') + '" aria-pressed="' + on + '"' +
+          (off ? ' aria-disabled="true"' : '') + ' aria-label="' + (campo === 'desde' ? 'Sale a las ' : 'Vuelve a las ') + txt + (off ? ' (no disponible: es antes de la salida)' : '') + '"' +
+          ' onclick="OT2C.vehBloque(\'' + campo + '\',' + m + ')">' + (on ? '<i class="bi bi-check-lg me-1"></i>' : '') + txt + '</button>';
+      }
+      h += '</div>';
+      if (i < tr.length - 1) h += '<div class="o2m-hb-col"><i class="bi bi-cup-hot"></i>Colación ' + _o2mVehHm(t[1]) + '–' + _o2mVehHm(tr[i + 1][0]) + ' · no se entregan llaves</div>';
+    });
+    return h;
+  }
+  /* La hora del vehículo: los bloques de salida y de vuelta (ya elegidos con la hora de la OT), lo que se movió al prellenar y «Ajustar a mano» plegado. */
+  function _o2mVehHoraHtml(nota){
+    var V = S.veh, a = _o2mVehMin(V.desde), b = _o2mVehMin(V.hasta), tr = _o2mVehTramos(), paso = _o2mVehPaso();
+    var enBloque = function(m, esFin){       // ¿esa hora es el comienzo (salida) o el final (vuelta) de un bloque?
+      if (m == null) return true;
+      return tr.some(function(t){
+        for (var s = t[0]; s < t[1]; s += paso){ if ((esFin ? Math.min(s + paso, t[1]) : s) === m) return true; }
+        return false;
+      });
+    };
+    var aMano = !enBloque(a, false) || !enBloque(b, true);
+    var abierto = (V.ajusteAbierto == null) ? aMano : !!V.ajusteAbierto;       // una hora fuera de los bloques abre «Ajustar a mano» sola, una vez
+    var h = '<div class="o2m-hb" role="group" aria-label="Horario del vehículo, en bloques de ' + paso + ' minutos">' +
+      '<div class="fl" style="margin-top:.25rem">¿A qué hora sale y a qué hora vuelve? <span style="font-weight:400;color:#4b5563">Se elige en bloques de ' + paso +
+      ' minutos, dentro del horario de llaves.</span></div>';
+    if (a != null && b != null && a < b){
+      var dur = b - a, hh = Math.floor(dur / 60), mm = dur % 60;
+      h += '<div class="o2m-hb-res"><i class="bi bi-clock-history"></i>Sale <b>' + esc(V.desde) + '</b> · Vuelve <b>' + esc(V.hasta) + '</b> ' +
+        '<span>(' + (hh ? hh + ' h' : '') + (hh && mm ? ' ' : '') + (mm ? mm + ' min' : '') + ')</span></div>';
+    }
+    h += '<div class="o2m-hb-filas">' +
+      '<div class="o2m-hb-fila"><div class="o2m-hb-tit">Sale a las <b>' + (V.desde ? esc(V.desde) : '—') + '</b></div>' + _o2mVehGrid('desde', a, b) + '</div>' +
+      '<div class="o2m-hb-fila"><div class="o2m-hb-tit">Vuelve a las <b>' + (V.hasta ? esc(V.hasta) : '—') + '</b></div>' + _o2mVehGrid('hasta', b, a) + '</div></div>';
+    if (!V.manualHora){
+      (V.notas || []).forEach(function(n){
+        h += nota('<i class="bi ' + (n.tono === 'warn' ? 'bi-exclamation-triangle-fill' : 'bi-info-circle') + ' me-1"></i>' + esc(n.t), n.tono === 'warn' ? '#92400e' : '#4b5563');
+      });
+    }
+    if (V.manualHora && (S.hini || S.hfin)){
+      h += '<div class="o2m-hb-vol"><button type="button" id="o2mVehRestaurar" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.vehRestaurar()">' +
+        '<i class="bi bi-arrow-counterclockwise me-1"></i>Volver a la hora de la OT (' + esc(S.hini || '—') + '–' + esc(S.hfin || '—') + ')</button></div>';
+    }
+    h += '<details class="o2m-hb-mano" id="o2mVehAjuste"' + (abierto ? ' open' : '') + ' ontoggle="OT2C.vehAjuste(this.open)">' +
+      '<summary><i class="bi bi-sliders"></i><span class="t">Ajustar a mano</span> <span class="m">(por ejemplo, 12:10, o una hora fuera del horario de llaves)</span><i class="bi bi-chevron-down o2m-hb-chev" aria-hidden="true"></i></summary>' +
+      '<div class="row g-3" style="margin-top:.25rem">' +
+      '<div class="col-6 col-md-3"><label class="fl" for="o2mVehDesde">Sale a las</label>' +
+      '<input type="time" step="60" class="form-control" id="o2mVehDesde" value="' + esc(V.desde) + '" onchange="OT2C.vehHora(\'desde\',this.value)"></div>' +
+      '<div class="col-6 col-md-3"><label class="fl" for="o2mVehHasta">Vuelve a las</label>' +
+      '<input type="time" step="60" class="form-control" id="o2mVehHasta" value="' + esc(V.hasta) + '" onchange="OT2C.vehHora(\'hasta\',this.value)"></div></div></details></div>';
+    return h;
   }
   function _o2mVehPintar(){
     var c = document.getElementById('o2mVehCuerpo'); if (!c) return;
@@ -4796,11 +4978,7 @@ window.OT2C = (function(){
       if (!algunoPuede){
         h += nota('<i class="bi bi-exclamation-triangle-fill me-1"></i>Ninguno de los técnicos elegidos puede manejar este vehículo ahora. Enrola a alguien en Solicitudes de vehículo → Choferes, elige otro técnico, o marca «Sin vehículo».', '#92400e');
       }
-      h += '<div class="row g-3" style="margin-top:.25rem">'+
-        '<div class="col-6 col-md-3"><label class="fl" for="o2mVehDesde">Sale a las</label>'+
-        '<input type="time" class="form-control" id="o2mVehDesde" value="'+esc(V.desde)+'" onchange="OT2C.vehHora(\'desde\',this.value)"></div>'+
-        '<div class="col-6 col-md-3"><label class="fl" for="o2mVehHasta">Vuelve a las</label>'+
-        '<input type="time" class="form-control" id="o2mVehHasta" value="'+esc(V.hasta)+'" onchange="OT2C.vehHora(\'hasta\',this.value)"></div></div>';
+      h += _o2mVehHoraHtml(nota);        // 🕒 2026-11-05: la hora se elige en BLOQUES, ya prellenada con la de la OT; «Ajustar a mano» queda plegado
       if (V.desde && V.hasta && V.desde >= V.hasta) h += nota('La hora de regreso tiene que ser después de la de salida.', '#b91c1c');
       h += nota('<i class="bi bi-info-circle me-1"></i>Queda «Por confirmar» hasta que la gestión de flota la confirme (responde dentro de '+
         Math.round((d.sla_respuesta_min || 120) / 60)+' horas hábiles). Las llaves se entregan el día de la reserva, '+esc(d.horario_llaves || '')+
@@ -4838,7 +5016,47 @@ window.OT2C = (function(){
   }
   function vehHora(campo, v){
     S.veh[campo] = v || ''; S.veh.manualHora = true;
+    _o2mVehPintar();         // 🕒 los bloques de arriba siguen a lo que se escribió a mano
     _o2mVehCargarDebounced(); refrescarAnclas();
+  }
+  /* 🕒 Un bloque tocado: «Sale» es el comienzo de un bloque y «Vuelve» el final de uno. Si la nueva salida deja la vuelta antes (o igual), la vuelta pasa al
+     final de ese bloque y SE DICE (toast + aviso para lector de pantalla): nada cambia en silencio. Lo elegido aquí ya no lo pisa la hora de la OT. */
+  function _o2mVehExtremos(campo){         // las horas que SÍ se pueden elegir: comienzos de bloque (salida) o finales de bloque (vuelta)
+    var tr = _o2mVehTramos(), paso = _o2mVehPaso(), out = [];
+    tr.forEach(function(t){ for (var s = t[0]; s < t[1]; s += paso) out.push(campo === 'desde' ? s : Math.min(s + paso, t[1])); });
+    return out;
+  }
+  function vehBloque(campo, m){
+    var V = S.veh, movio = '';
+    m = parseInt(m, 10);
+    if (isNaN(m) || (campo !== 'desde' && campo !== 'hasta') || _o2mVehExtremos(campo).indexOf(m) < 0) return;
+    var a = _o2mVehMin(V.desde), b = _o2mVehMin(V.hasta);
+    if (campo === 'hasta'){
+      if (a != null && m <= a){
+        if (window.ilusToast) ilusToast('La vuelta tiene que ser después de la salida (' + V.desde + ').', {type:'warning'});
+        return;
+      }
+      V.hasta = _o2mVehHm(m);
+    } else {
+      V.desde = _o2mVehHm(m);
+      if (b != null && b <= m){
+        V.hasta = _o2mVehHm(_o2mVehFinBloque(m));
+        movio = ' La vuelta pasó a las ' + V.hasta + ', porque tiene que ser después de la salida.';
+        if (window.ilusToast) ilusToast('La vuelta pasó a las ' + V.hasta + ', porque tiene que ser después de la salida.', {type:'info'});
+      }
+    }
+    V.manualHora = true; V.notas = [];
+    _o2mVehPintar(); _o2mVehCargarDebounced(); refrescarAnclas();
+    _o2mVehAvisar('Sale a las ' + (V.desde || 'sin definir') + ' y vuelve a las ' + (V.hasta || 'sin definir') + '.' + movio);
+  }
+  function vehAjuste(abierto){ S.veh.ajusteAbierto = !!abierto; }       // «Ajustar a mano» abierto o plegado: se recuerda entre repintados
+  /* Vuelve a la hora de la OT (llevada a los bloques) y deja que la siga de nuevo. */
+  function vehRestaurar(){
+    var V = S.veh;
+    V.manualHora = false; V.ajusteAbierto = null;
+    _o2mVehSync();
+    _o2mVehPintar(); _o2mVehCargarDebounced(); refrescarAnclas();
+    _o2mVehAvisar('Volvió a la hora de la OT: sale a las ' + (V.desde || 'sin definir') + ' y vuelve a las ' + (V.hasta || 'sin definir') + '.');
   }
   function vehReintentar(){ S.veh.error = false; _o2mVehCargar(); }
   /* Lo que respondió el servidor sobre el vehículo al crear la OT (también al aprobarla a distancia): reservado → un aviso; si no se pudo, devuelve
@@ -14679,7 +14897,7 @@ window.OT2C = (function(){
           setNotaVentaInterna:setNotaVentaInterna, abrirBusquedaDocInterno:abrirBusquedaDocInterno,
           abrirNuevoTipoInterno:abrirNuevoTipoInterno, _o2mNtGuardar:_o2mNtGuardar, _o2mNtIcono:_o2mNtIcono,
           setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
-          tecTog:tecTog, vehSel:vehSel, vehChofer:vehChofer, vehHora:vehHora, vehReintentar:vehReintentar, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
+          tecTog:tecTog, vehSel:vehSel, vehChofer:vehChofer, vehHora:vehHora, vehBloque:vehBloque, vehAjuste:vehAjuste, vehRestaurar:vehRestaurar, vehReintentar:vehReintentar, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
           eqModo:eqModo,
           eqAgregarDoc:_o2mEqAgregarDocumento,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,

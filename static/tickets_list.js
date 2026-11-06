@@ -2198,4 +2198,29 @@ if(btnZzInstalacion){
     }
   });
 }
+// ── Ficha del cliente → «Nuevo ticket» (5-nov-2026, Daniel: «todo se centraliza en la ficha del cliente»). /tickets?desde_cliente=<id> abre este mismo
+//    modal con los datos de ESE cliente como punto de partida. Solo usa endpoints que ya existen (los mismos que lee la ficha). Nada se manda solo:
+//    la empresa, el RUT, el contacto y el teléfono se precargan si el campo está vacío y el correo queda como chip «detectado → usar» (el del ERP/ficha
+//    es una sugerencia, nunca se escribe solo). Si algo falla, el modal se abre igual y el cliente se busca a mano. ──
+(function(){
+  let cid = '';
+  try { cid = new URLSearchParams(location.search).get('desde_cliente') || ''; } catch(e) { cid = ''; }
+  if(!/^\d{1,9}$/.test(cid)) return;
+  const leer = function(url){ return fetch(url, {credentials:'same-origin'}).then(function(r){ return r.json(); }).catch(function(){ return null; }); };
+  Promise.all([
+    leer('/tickets/api/clientes-ficha/'+cid+'/tickets?page=1&per_page=5'),
+    leer('/mantenciones/api/clientes/'+cid+'/contactos')
+  ]).then(function(res){
+    const t = res[0], c = res[1];
+    const cli = (t && t.ok && t.cliente) ? t.cliente : null;
+    const cont = (c && c.ok && Array.isArray(c.contactos) && c.contactos[0]) ? c.contactos[0] : null;
+    try{ ntModal.show(); }catch(e){}
+    try{ history.replaceState(null, '', location.pathname); }catch(e){}          // que recargar la página no vuelva a abrir el modal
+    if(!cli && !cont){ ilusToast('No se pudieron leer los datos del cliente: búscalo en el formulario.', {type:'warning'}); return; }
+    ntwProponerCliente({
+      empresa: cli ? cli.razon_social : '', rut: cli ? cli.rut : '',
+      contacto: cont ? cont.nombre : '', telefono: cont ? cont.tel : '', email: cont ? cont.email : ''
+    }, 'ficha del cliente');
+  });
+})();
 }); // cierre de document.addEventListener('DOMContentLoaded', ...)
