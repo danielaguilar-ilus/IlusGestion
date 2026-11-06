@@ -159937,12 +159937,13 @@ def repreb_pedir(rid):
     rep = mysql_fetchone("SELECT id, sku, descripcion, cantidad, activo FROM mant_repuestos_stock WHERE id=%s", (rid,))
     if not rep or not rep.get("activo"):
         return jsonify({"ok": False, "error": "Repuesto no encontrado."}), 404
-    err = _repreb.validar_pedido(rep["cantidad"], d.get("cantidad"), d.get("argumento"), d.get("tido"), d.get("nudo"), tipo)
+    es_super = _repreb.aplica_en_el_acto(g.permissions.get("superadmin"))
+    err = _repreb.validar_pedido(rep["cantidad"], d.get("cantidad"), d.get("argumento"), d.get("tido"), d.get("nudo"), tipo,
+                                 es_superadmin=es_super)
     if err:
         return jsonify({"ok": False, "error": err}), 400
     tido, nudo, _e_doc = _repreb.evaluar_doc(d.get("tido"), d.get("nudo"))
     con_doc = bool(tido and nudo)
-    es_super = _repreb.aplica_en_el_acto(g.permissions.get("superadmin"))
     if not es_super and mysql_fetchone(
             "SELECT id FROM mant_repuestos_rebajas WHERE repuesto_id=%s AND estado='pendiente' LIMIT 1", (rid,)):
         return jsonify({"ok": False, "error": "Este repuesto ya tiene un ajuste esperando autorización. "
