@@ -9,7 +9,7 @@ Qué se vigila:
   2. El bloque del correo A PRUEBA DE OUTLOOK DE ESCRITORIO: tablas, `bgcolor` + `width` + `height` y el relleno en el <td>; sin <img>; sin padding ni margin en
      <table>/<a>; letra y números grandes; cinco celdas de ~20 %; todo escapado; ancho total <= 520 px.
   3. Las plantillas: la variable `{{encuesta_html}}` y la CADENA DE VERSIONES (la sembrada sin editar sube sola; la editada no).
-  4. El interruptor `OT_ENCUESTA_ACTIVA` (nace APAGADA, no está en ningún archivo del repositorio, la vista previa y la prueba la muestran siempre) y a QUIÉN
+  4. El interruptor `OT_ENCUESTA_ACTIVA` (nació APAGADA; se enciende SOLO en deploy.yml con el «sí» de Daniel del 6-nov; la vista previa y la prueba la muestran siempre) y a QUIÉN
      le llega la encuesta (solo al cliente: nunca al equipo ni a un técnico, porque quien toca un número responde).
   5. Las rutas con un Flask de mentira y una base en memoria: GET no guarda nada, POST guarda UNA vez, enlace inválido/vencido, límite de intentos, vista previa.
   6. Confidencialidad: un técnico (interno, elevado o externo) no ve resultados ni comentarios.
@@ -1123,12 +1123,13 @@ class TestCableado(unittest.TestCase):
                    "/ot/api/77/encuesta", f"/otx-encuesta/{t}"):
             self.assertFalse(exento(no), no)
 
-    def test_la_variable_no_se_enciende_en_ningun_archivo_del_repositorio(self):
-        """REGLA #23: el bloque nace APAGADO y solo Daniel autoriza encenderlo (como `RETIROS_ENCUESTA_ACTIVA`: `append_env` en deploy.yml)."""
+    def test_la_variable_solo_se_enciende_en_deploy_yml(self):
+        """REGLA #23: el bloque solo se enciende en `deploy.yml` (`append_env`, como `RETIROS_ENCUESTA_ACTIVA`), con el «sí» de Daniel del 6-nov-2026
+        («enciende tú la encuesta… enviemos a partir de hoy»). En ningún otro archivo de configuración o de código se fija su valor."""
         permitidos = {".py", ".md", ".js", ".html", ".txt"}
         sospechosos = []
         for carpeta, subs, archivos in os.walk(RAIZ):
-            subs[:] = [s for s in subs if s not in (".git", ".claude", "node_modules", "__pycache__", ".pytest_cache", "venv", ".venv")]
+            subs[:] = [s for s in subs if s not in (".git", ".github", ".claude", "node_modules", "__pycache__", ".pytest_cache", "venv", ".venv")]   # `.github`: ahí SÍ va (abajo)
             for nombre in archivos:
                 ruta = os.path.join(carpeta, nombre)
                 ext = os.path.splitext(nombre)[1].lower()
@@ -1143,7 +1144,10 @@ class TestCableado(unittest.TestCase):
         self.assertEqual(sospechosos, [], "la variable aparece en: %s" % sospechosos)
         deploy = os.path.join(RAIZ, ".github", "workflows", "deploy.yml")
         if os.path.exists(deploy):
-            self.assertNotIn(E.ENV_ACTIVA, FC.texto(".github/workflows/deploy.yml"))
+            yml = FC.texto(".github/workflows/deploy.yml")
+            self.assertIn('append_env OT_ENCUESTA_ACTIVA            "1"', yml)                              # encendida (autorizado 6-nov)
+            self.assertIn("|OT_ENCUESTA_ACTIVA):'", yml)                                                  # y limpiada antes de anexar (sin claves duplicadas)
+            self.assertEqual(yml.count("append_env " + E.ENV_ACTIVA), 1)
         for fuente in ("app.py", "ot_comunicacion.py", "comm_correos_registro.py", "ot_encuesta.py"):
             self.assertNotRegex(FC.texto(fuente), r"os\.environ\[\s*['\"]" + E.ENV_ACTIVA, fuente)
             self.assertNotRegex(FC.texto(fuente), r"environ\.setdefault\(\s*['\"]" + E.ENV_ACTIVA, fuente)

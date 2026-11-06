@@ -17,7 +17,8 @@ LO QUE ESTE MÓDULO HACE
 PRIVACIDAD (Ley 19.628 modificada por la 21.719): la respuesta se guarda con la OT, sin nombre, sin correo y sin dirección IP; se conserva
 MESES_CONSERVACION meses. El comentario se guarda como texto y se muestra SIEMPRE escapado.
 
-REGLA #23 / #22: el bloque solo viaja en los correos REALES con `OT_ENCUESTA_ACTIVA=1` (nace APAGADA; no está en deploy.yml). La vista previa de Control de
+REGLA #23 / #22: el bloque solo viaja en los correos REALES con `OT_ENCUESTA_ACTIVA=1` (nació APAGADA; Daniel la autorizó el 6-nov-2026 y se enciende en
+deploy.yml; sin esa línea vuelve a estar apagada). La vista previa de Control de
 correos y «Enviarme una prueba» lo muestran siempre, con el token «vista-previa» (esa página no guarda nada).
 
 Pruebas: tests/test_ot_encuesta.py.
@@ -35,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 # Flask se importa DENTRO de `register_ot_encuesta_routes`: el resto del módulo es puro y lo importan `comm_correos_registro` (la vista previa) y las pruebas.
 
 # ── Identificadores ──────────────────────────────────────────────────────────────────────────────────────────────────────
-ENV_ACTIVA = "OT_ENCUESTA_ACTIVA"          # nace APAGADA; encenderla requiere el «sí» explícito de Daniel (REGLAS #22 y #23)
+ENV_ACTIVA = "OT_ENCUESTA_ACTIVA"          # encendida en deploy.yml con el «sí» de Daniel (6-nov-2026); apagarla también requiere su permiso (REGLAS #22 y #23)
 RUTA_BASE = "/ot-encuesta"                 # página pública
 RUTA_RESULTADOS = "/ot/encuestas"          # resultados internos
 TOKEN_VISTA_PREVIA = "vista-previa"        # token de la página de ejemplo (no guarda nada)
