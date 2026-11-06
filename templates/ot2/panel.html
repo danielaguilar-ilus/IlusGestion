@@ -993,7 +993,8 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
       </a>
       {% endif %}
       {#- 😊 2026-11-06 (REGLA #68): satisfacción de los clientes (encuesta corta «¿Cómo fue tu servicio?»). Solo gestión: la ruta lleva @_no_tecnico. -#}
-      {% if not es_tecnico %}
+      {#- 2026-11-06 (Daniel: «solo para el superadmin… y controlable por los usuarios y roles»): superadmin o el permiso «Satisfacción de las OT». -#}
+      {% if not es_tecnico and (permissions.superadmin or permissions.mant_ot_encuesta) %}
       <a href="/ot/encuestas" class="btn btn-sm btn-outline-light"
          title="Cómo calificaron los clientes el servicio: promedio, comentarios y notas por revisar">
         <i class="bi bi-emoji-smile me-1"></i>Satisfacción

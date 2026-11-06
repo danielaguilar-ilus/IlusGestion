@@ -27,6 +27,7 @@ EN_PRODUCCION = {
     "retiros/agenda_confirmada": "¿Necesitas reagendar o tienes una duda? Responde este correo y te ayudamos.",
     "retiros/fallida": "te contactaremos para coordinar una nueva fecha; también puedes responder este correo y te ayudamos a la brevedad.",
     "retiros/informacion_incompleta": "Te contactaremos a la brevedad para confirmar qué falta. También puedes responder este correo con cualquier dato que te haya faltado.",
+    "tickets/resuelto": "Si el problema persiste, responde este correo y retomamos tu caso.",
     "retiros/rechazada (título)": "Si fue un error, escríbenos respondiendo este correo",
     "retiros/rechazada (cuerpo)": "Si fue un error o quieres reagendar, escríbenos respondiendo este correo y te ayudamos a la brevedad.",
     "retiros/recordatorio_24h": "¿Imprevistos? Responde este correo o llámanos. Es mejor avisar a no llegar.",
@@ -143,18 +144,17 @@ class TestElArranque(unittest.TestCase):
 
     def test_cambia_solo_las_filas_que_corresponden(self):
         bd, n = self._correr(self._filas())
-        self.assertEqual(n, 3)                                                                 # 1, 2 y 4
+        self.assertEqual(n, 4)                                                                 # 1, 2, 3 (Tickets «Resuelto») y 4
         por_id = {f["id"]: f["cuerpo"] for f in bd.filas}
-        for i in (1, 2, 4):
+        for i in (1, 2, 3, 4):
             self.assertFalse(CSR.dice_responder(por_id[i]), i)
             self.assertIn("ticket de soporte", por_id[i].lower(), i)
         self.assertTrue(por_id[1].startswith("<p>Hola</p>"))                                   # el resto del cuerpo, intacto
-        self.assertEqual([u[1] for u in bd.updates], ["sistema"] * 3)
+        self.assertEqual([u[1] for u in bd.updates], ["sistema"] * 4)
 
-    def test_no_toca_tickets_ni_la_comunicacion_interna_ni_lo_editado_a_mano(self):
+    def test_no_toca_la_comunicacion_interna_ni_lo_editado_a_mano(self):
         bd, _ = self._correr(self._filas())
         por_id = {f["id"]: f["cuerpo"] for f in bd.filas}
-        self.assertIn("responde este correo", por_id[3])                                       # tickets: ahí responder SÍ agrega al ticket
         self.assertIn("responde este correo", por_id[7].lower())                               # interna
         self.assertIn("Texto que Daniel escribió", por_id[5])                                  # la frase editada no está tal cual: queda
         self.assertEqual(por_id[6], "<a>Responder la propuesta →</a>")
@@ -203,9 +203,7 @@ class TestElArranque(unittest.TestCase):
 _RX = re.compile(r"respond[ae]\w*\s+(?:a\s+|en\s+)?(?:este|el|tu|ese)\s+(?:correo|mail|email)|escr[ií]benos\s+respondiendo|respuesta a este correo",
                  re.IGNORECASE)
 _PERMITIDOS_EN_APP = (
-    "Si el problema persiste, responde este correo y retomamos tu caso.",                      # Tickets: el lector IMAP procesa la respuesta
     "Si está conforme, responda este correo para que se emita la orden de compra.",           # correo al PROVEEDOR (facturas): responder es la vía
-    "persiste, responde este correo y retomamos tu caso.",                                       # Tickets (la misma frase, partida en dos líneas)
     "Si no responde el correo, llamar por teléfono",                                           # nota para el EJECUTIVO (el cliente no contestó), no un correo al cliente
     "Si necesitas reagendar o cancelar, responde este correo o contacta a tu ejecutivo.",     # semilla ORIGINAL (`_MANT_TPL` / `_mantenciones_tpl_seed`): base de la cadena
     "Si tienes alguna observación, responde este correo y te contactaremos a la brevedad.",   # ídem
@@ -214,7 +212,7 @@ _PERMITIDOS_EN_APP = (
 
 class TestLaGuarda(unittest.TestCase):
     def test_los_archivos_de_correos_al_cliente_no_piden_responder(self):
-        for rel in ("pickups_module.py", "ot_correos_tecnicos.py", "ot_recordatorio_24h.py", "retiros_desviaciones.py",
+        for rel in ("tickets_module.py", "pickups_module.py", "ot_correos_tecnicos.py", "ot_recordatorio_24h.py", "retiros_desviaciones.py",
                     "templates/retiros/public_tracking.html", "static/comunicaciones_index.js"):
             malos = [(i + 1, l.strip()[:120]) for i, l in enumerate(FC.texto(rel).split("\n")) if _RX.search(l) and not l.lstrip().startswith(("#", "//"))]
             self.assertEqual(malos, [], rel)

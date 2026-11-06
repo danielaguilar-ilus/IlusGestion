@@ -13,7 +13,8 @@ no está tal cual no se toca. Se compara por FRASE exacta, nunca por el cuerpo e
 código (lección de la «OT completada», 6-nov).
 
 NO se tocan, a propósito:
-  · el módulo `tickets`: ahí el lector IMAP SÍ procesa las respuestas y las agrega al ticket (el canal real es responder el correo);
+  · `tickets` SÍ se corrige desde el 6-nov (Daniel: «repáralo nomás»): el correo ya no invita a responder, aunque el lector IMAP sigue agregando al ticket
+    las respuestas que lleguen igual;
   · `comunicacion_interna` (correos entre el equipo) y WhatsApp/SMS (otro canal);
   · los correos al PROVEEDOR (facturas de proveedor: ahí responder es la vía).
 """
@@ -23,7 +24,7 @@ import re
 COMO_CREAR_TICKET = "crea un ticket de soporte con el botón de abajo"
 
 # Módulos cuyas plantillas NO se reescriben (ver arriba).
-MODULOS_EXCLUIDOS = ("tickets", "comunicacion_interna")
+MODULOS_EXCLUIDOS = ("comunicacion_interna",)
 
 # (frase exacta que está hoy, frase nueva). El orden importa: lo más largo primero (una frase no contiene a la siguiente).
 REEMPLAZOS = (
@@ -62,6 +63,9 @@ REEMPLAZOS = (
      "¿Necesitas reagendar o cancelar? Crea un ticket de soporte con el botón de abajo."),
     ("Si tienes alguna observación, responde este correo y te contactaremos a la brevedad.",
      "Si tienes alguna observación, crea un ticket de soporte con el botón de abajo."),
+    # ── Tickets: «Resuelto» (Daniel, 6-nov: «repáralo nomás»; el lector IMAP sigue procesando si alguien responde igual, pero el correo ya no lo invita) ──
+    ("Si el problema persiste, responde este correo y retomamos tu caso.",
+     "Si el problema persiste, crea un ticket de soporte con el botón de abajo y retomamos tu caso."),
 )
 
 # «OT OT-2026-00123»: el número de la OT ya trae el prefijo «OT-», y varios asuntos guardados escribían «OT {{ot}}» (Daniel, 6-nov: «sigue diciendo OT OT, ¿por qué?»).
