@@ -82,6 +82,7 @@ import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién pued
 import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
 import ot_equipos_filas as _oef       # 2026-11-05: Paso «Equipos y su checklist»: una fila con cantidad ↔ una fila por unidad + checklist por producto (módulo puro con pruebas)
 import ot_firma_vigencia as _ofv      # 2026-11-05: el enlace de firma remota del cliente vence en 48 HORAS HÁBILES (módulo puro con pruebas)
+import email_outlook_safe as _eos     # 2026-11-06: el HTML del correo se reescribe para Outlook de escritorio (relleno y margen de tablas, botones) justo antes de enviar
 import correos_sin_responder as _csr   # 2026-11-06: ningún correo al cliente dice «responde este correo»: todo va por TICKET (frases + arranque; módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import ot_seguimiento as _oseg     # 2026-11-06 (REGLA #67): seguimiento en vivo de la OT para el cliente (paso del servicio, textos y token propio; módulo puro con pruebas)
@@ -10815,6 +10816,12 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
     # la ruta principal de envío (cron/OT/recovery/retiros/transporte); la otra
     # ruta, `_send_email_dinamico` (técnico externo), también aplica el helper.
     to_addr, subject = _apply_test_redirect(to_addr, subject)
+    # 2026-11-06 (Daniel: «en Outlook no se ve bien… sin dañar celular ni Gmail»): Outlook de escritorio ignora el padding/margin de las tablas y el padding de un <a>; el
+    # filtro (puro, idempotente, nunca lanza) deja el relleno y el fondo en una celda. Gmail y el celular lo ven igual que antes.
+    try:
+        html_body = _eos.outlook_safe(html_body)
+    except Exception:
+        pass
     marca = _get_marca()
     att_norm = _email_normalize_attachments(attachments)
     provider = (os.environ.get("ILUS_EMAIL_PROVIDER") or "smtp").strip().lower()
@@ -10921,10 +10928,23 @@ def _send_ilus_email_real(to_addr: str, subject: str, html_body: str,
                     _tsub = (_fm.split("/", 1)[1] or "plain")
                     _part = MIMEText(_txt, _tsub, "utf-8")
                     if _tsub == "calendar":
+                        # 2026-11-06 (Daniel: «me pide calendarizar en el celular, pero en el computador no»): la invitación al CLIENTE es METHOD:REQUEST con RSVP; el
+                        # encabezado decía PUBLISH, así que Outlook de escritorio la trataba como un archivo cualquiera. Con RSVP=TRUE se declara REQUEST (igual que el
+                        # contenido) y, además del adjunto, va una copia INLINE (text/calendar dentro del multipart/alternative): así Outlook muestra «Aceptar / Rechazar»
+                        # y Gmail la tarjeta de invitación. El resto (técnicos, sin RSVP) queda como estaba.
+                        _ics_plano = _txt.replace("\r\n ", "").replace("\n ", "").upper()           # las líneas del .ics van PLEGADAS a 75 caracteres: «RSVP=TRUE» podría quedar partido
+                        _met = "REQUEST" if ("RSVP=TRUE" in _ics_plano and "METHOD:REQUEST" in _ics_plano) else "PUBLISH"
                         try:
-                            _part.set_param("method", "PUBLISH")
+                            _part.set_param("method", _met)
                         except Exception:
                             pass
+                        if _met == "REQUEST":
+                            try:
+                                _inline = MIMEText(_txt, "calendar", "utf-8")
+                                _inline.set_param("method", "REQUEST")
+                                _alt.attach(_inline)
+                            except Exception as _e_inl:
+                                print(f"[ILUS][EMAIL] invitación inline no agregada: {_e_inl}")
                 else:
                     _sub = "octet-stream"
                     if _fm and "/" in _fm:
