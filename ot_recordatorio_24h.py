@@ -286,6 +286,9 @@ def variables_recordatorio(ot, inicio, hoy, *, nombre_destinatario="", link_ot="
     if para == "cliente":
         base["que_esperar_html"] = que_esperar_html(ot.get("equipos"), ot.get("tecnicos"))
         base["preparacion_html"] = preparacion_html(ot.get("tipo"))
+        # «Tu servicio, paso a paso»: el recordatorio es el paso 2; lo que sigue es la visita (siempre es verdad: es el proceso de Servicio Técnico).
+        base["recorrido_html"] = _ocom.recorrido_html(
+            "recordatorio", "nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma.")
     else:
         if not oculto:
             base["como_llegar_html"] = como_llegar_html(ot.get("direccion"))

@@ -127,6 +127,27 @@ DEMO_EXTRA = {
     "dia": "mañana", "nombre_tecnico": "Pedro", "tecnicos": "Pedro Pérez", "tipo_mantencion": "Mantención preventiva",
     "ot": "OT-2026-00123", "cliente": "Gimnasio Demo SpA", "direccion": "Av. Demo 1234, Las Condes", "maquina": "Trotadora ILUS Pro 9000",
     "fecha": "21/10/2026", "link_ot": "https://ilusfitness.com/ot/123",
+    # «Tu servicio, paso a paso», firma del equipo e invitación de calendario (5-nov-2026): vista previa con datos de mentira.
+    "recorrido_html": ('<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:22px 0 4px"><tr>'
+                       '<td colspan="4" style="font-size:11px;font-weight:800;letter-spacing:.1em;color:#6b7280;padding:0 3px 8px">TU SERVICIO, PASO A PASO</td></tr><tr>'
+                       '<td width="25%" valign="top" style="padding:0 3px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>'
+                       '<td height="5" style="height:5px;line-height:5px;font-size:0;background:#16a34a;border-radius:3px">&nbsp;</td></tr></table>'
+                       '<div style="padding-top:6px;font-size:11px;line-height:15px;font-weight:700;color:#166534">&#10003; Visita agendada</div></td>'
+                       '<td width="25%" valign="top" style="padding:0 3px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>'
+                       '<td height="5" style="height:5px;line-height:5px;font-size:0;background:#dc2626;border-radius:3px">&nbsp;</td></tr></table>'
+                       '<div style="padding-top:6px;font-size:11px;line-height:15px;font-weight:800;color:#b91c1c">2 &middot; Recordatorio</div></td>'
+                       '<td width="25%" valign="top" style="padding:0 3px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>'
+                       '<td height="5" style="height:5px;line-height:5px;font-size:0;background:#e5e7eb;border-radius:3px">&nbsp;</td></tr></table>'
+                       '<div style="padding-top:6px;font-size:11px;line-height:15px;font-weight:600;color:#6b7280">3 &middot; Visita y firma</div></td>'
+                       '<td width="25%" valign="top" style="padding:0 3px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>'
+                       '<td height="5" style="height:5px;line-height:5px;font-size:0;background:#e5e7eb;border-radius:3px">&nbsp;</td></tr></table>'
+                       '<div style="padding-top:6px;font-size:11px;line-height:15px;font-weight:600;color:#6b7280">4 &middot; Documento firmado</div></td></tr></table>'
+                       '<p style="margin:10px 0 0;font-size:13px;color:#444;line-height:1.6"><strong style="color:#222">Qué sigue:</strong> '
+                       'nuestro técnico llega en el horario indicado y, al terminar, te pedirá confirmar el trabajo con tu firma.</p>'),
+    "firma_sstt_html": ('<p style="margin:22px 0 0;font-size:13px;line-height:1.6;color:#444"><strong style="color:#222">Equipo de Servicio Técnico</strong><br>'
+                        'ILUS Fitness &middot; Gracias por confiar en nosotros.</p>'),
+    "invitacion_html": ('<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65"><strong>Agrégala a tu calendario:</strong> te adjuntamos la '
+                        'invitación (archivo .ics). Ábrela y acéptala para que la visita quede en tu agenda.</p>'),
     # Bloques de valor (5-nov-2026): solo para la vista previa, con datos de mentira.
     "resumen_trabajo_html": ('<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #16a34a;'
                              'border-radius:4px;padding:14px 18px;margin:18px 0"><tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;'

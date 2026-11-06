@@ -80,6 +80,7 @@ import anexo_lugar as _axl        # 2026-11-03: «Lugar del Servicio» del anexo
 import ot_intenciones as _oint   # 2026-10-25 (REGLA #47): intenciones del costeo (por qué, quién lo asume) y su validación: módulo puro con pruebas
 import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
 import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
+import ot_firma_vigencia as _ofv      # 2026-11-05: el enlace de firma remota del cliente vence en 48 HORAS HÁBILES (módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
@@ -133694,12 +133695,27 @@ def _ot_firma_key():
     return k.encode() if isinstance(k, str) else (k or b"ilus-firma")
 
 
-def _ot_firma_token(vid, ttl_horas=120):
-    """Token firmado (HMAC) que codifica la OT + expiración. Sin estado en BD."""
+def _ot_firma_token(vid, ttl_horas=120, exp_epoch=None):
+    """Token firmado (HMAC) que codifica la OT + expiración. Sin estado en BD. `exp_epoch` (segundos desde 1970) fija el vencimiento exacto;
+    sin él se usa `ttl_horas` corridas desde ahora (el enlace al documento firmado, 30 días, y el resto de los usos de siempre)."""
     import hmac as _hmac, hashlib as _hl, base64 as _b64
-    exp = int(time.time()) + int(ttl_horas) * 3600
+    exp = int(exp_epoch) if exp_epoch else int(time.time()) + int(ttl_horas) * 3600
     sig = _hmac.new(_ot_firma_key(), f"{vid}:{exp}".encode(), _hl.sha256).hexdigest()[:24]
     return _b64.urlsafe_b64encode(f"{vid}:{exp}:{sig}".encode()).decode().rstrip("=")
+
+
+def _ot_firma_remota_vigencia(ahora=None):
+    """(epoch de vencimiento, texto) del enlace de FIRMA REMOTA del cliente: 48 horas HÁBILES desde ahora (Daniel, 5-nov-2026; manual MAN-SST-INS-01
+    §4). Cuenta solo lunes a viernes sin feriados de Chile, como la anticipación de Retiros (ver ot_firma_vigencia.py). El texto dice la fecha y
+    la hora de Chile en que vence («el lunes 09/11/2026 a las 15:00»). Nunca lanza: ante cualquier error cae a 48 horas corridas."""
+    try:
+        from cl_feriados import es_dia_habil as _hab
+        ahora = ahora or _now_chile()
+        venc = _ofv.vence_el(ahora.replace(tzinfo=None), _hab)
+        return int(venc.replace(tzinfo=ahora.tzinfo).timestamp()), _ofv.texto_vence(venc)
+    except Exception as e:
+        print(f"[firma-remota] vigencia: {type(e).__name__}: {e}", flush=True)
+        return int(time.time()) + _ofv.HORAS_VIGENCIA * 3600, "en 48 horas"
 
 
 def _ot_firma_token_validar(token):
@@ -134052,7 +134068,10 @@ def mant_ot_enviar_firma_remota(vid):
     if (v.get("estado") or "").lower() != "firmada_tecnico":
         return jsonify({"ok": False, "error": f"La OT no está lista para la firma del cliente (estado: {v.get('estado')})."}), 400
 
-    token = _ot_firma_token(vid)
+    # 2026-11-05 (Daniel: «cambia el enlace de firma a 48 horas hábiles»): antes 120 h corridas («vence en 5 días»). Ahora solo cuentan los días
+    # hábiles y el texto dice hasta qué día y hora de Chile sirve (ver ot_firma_vigencia.py).
+    _exp_firma, _vence_txt = _ot_firma_remota_vigencia()
+    token = _ot_firma_token(vid, exp_epoch=_exp_firma)
     link = _public_base_url() + "/firmar-ot/" + token
     numero = v.get("numero_ot") or f"OT #{vid}"
     razon = v.get("razon_social") or "estimado cliente"
@@ -134078,7 +134097,7 @@ def mant_ot_enviar_firma_remota(vid):
                 mensaje = (f"Hola {saludo}, el servicio técnico de tus equipos fue realizado "
                            f"(orden {numero}). Para dejarlo conforme, revisa el detalle y firma "
                            f"aquí (puedes hacerlo desde el celular):\n{link}\n\nEl enlace es "
-                           f"personal y vence en 5 días. — ILUS Fitness")
+                           f"personal y vence {_vence_txt} ({_ofv.TEXTO_PLAZO}). — ILUS Fitness")
                 from urllib.parse import quote as _url_quote
                 wa_numero = tel_norm.lstrip("+")
                 wa_resultado = {
@@ -134093,6 +134112,7 @@ def mant_ot_enviar_firma_remota(vid):
             return jsonify({
                 "ok": True, "canal": "whatsapp", "enviado": None,
                 "telefono": wa_resultado["telefono"], "link": link, "wa_link": wa_resultado["wa_link"],
+                "vence": _vence_txt,
                 "mensaje": "Se abrirá WhatsApp con el mensaje listo — revísalo y confírmalo tú mismo.",
             })
 
@@ -134116,13 +134136,17 @@ def mant_ot_enviar_firma_remota(vid):
                     "customer_name": razon,
                     "message": ("El servicio técnico de tus equipos fue realizado. Para dejarlo conforme, "
                                 "revisa el detalle y firma en línea (puedes hacerlo desde tu celular). "
-                                "El enlace es personal y vence en 5 días."),
+                                f"El enlace es personal y vence {_vence_txt} ({_ofv.TEXTO_PLAZO})."),
+                    # 2026-11-05 («correos ordenados, comunicativos»): «Tu servicio, paso a paso» (paso 3) y lo que sigue, solo lo que de verdad va a salir.
+                    "detail_rows_html": "<tr><td>" + _ocom.recorrido_html(
+                        "visita", ("apenas firmes, nuestro equipo cierra tu orden y te envía el documento firmado por correo."
+                                   if _ot_com_promesas()["documento"] else "apenas firmes, nuestro equipo de Servicio Técnico cierra tu orden.")) + "</td></tr>",
                     "primary_cta_url": link,
                     "primary_cta_label": "Revisar y firmar la OT",
                 })
             except Exception:
                 html = (f"<p>Hola {razon},</p><p>Firma tu orden de trabajo {numero} en este enlace "
-                        f"(vence en 5 días): <a href='{link}'>{link}</a></p>")
+                        f"(vence {_vence_txt}): <a href='{link}'>{link}</a></p>")
             try:
                 ok = _send_ilus_email(email_dest, _brand_subject(f"Firma tu orden de trabajo {numero}"), html,
                                       evento="ot_firma_remota", modulo="mantenciones",
@@ -134137,8 +134161,9 @@ def mant_ot_enviar_firma_remota(vid):
             if mail_resultado.get("error"):
                 return jsonify({"ok": False, "error": mail_resultado["error"]}), 400
             return jsonify({"ok": True, "canal": "email", "enviado": mail_resultado["enviado"],
-                            "email": mail_resultado["email"], "link": link,
-                            "mensaje": (f"Link de firma enviado a {mail_resultado['email']}." if mail_resultado["enviado"] else
+                            "email": mail_resultado["email"], "link": link, "vence": _vence_txt,
+                            "mensaje": (f"Link de firma enviado a {mail_resultado['email']}. El enlace vence {_vence_txt} ({_ofv.TEXTO_PLAZO})."
+                                        if mail_resultado["enviado"] else
                                         "El correo no salió (revisa el canal de email), pero el link quedó generado — puedes copiarlo.")})
 
     # ── canal == 'ambos': fusiona los dos resultados, degradación honesta ──
@@ -134161,8 +134186,9 @@ def mant_ot_enviar_firma_remota(vid):
     return jsonify({
         "ok": True, "canal": "ambos", "link": link,
         "wa_link": wa_resultado.get("wa_link"), "telefono": wa_resultado.get("telefono"),
-        "email": mail_resultado.get("email"), "enviado": mail_resultado.get("enviado"),
-        "mensaje": "Se mandó por: " + " y ".join(partes) + (". " + " · ".join(avisos) if avisos else "."),
+        "email": mail_resultado.get("email"), "enviado": mail_resultado.get("enviado"), "vence": _vence_txt,
+        "mensaje": ("Se mandó por: " + " y ".join(partes) + (". " + " · ".join(avisos) if avisos else ".")
+                    + f" El enlace vence {_vence_txt} ({_ofv.TEXTO_PLAZO})."),
     })
 
 
@@ -142482,6 +142508,41 @@ def _ot_cliente_ics_fn(v, variables):
     return _fn
 
 
+def _ot_com_promesas():
+    """Lo que el sistema de verdad le va a mandar al cliente, mirando los interruptores AHORA (interruptor general, llave de Servicio Técnico, el
+    interruptor de cada correo en Control de correos y el freno de emergencia): {recordatorio, documento}. Los correos solo PROMETEN («te enviaremos un
+    recordatorio…») lo que va a salir; si Daniel apaga uno, el texto deja de prometerlo. Nunca lanza."""
+    out = {"recordatorio": False, "documento": False}
+    try:
+        activo = bool(_ocom.cliente_activo())
+        out["recordatorio"] = activo and _correo_bloqueo_previo(_ocom.MODULO_GENERAL, _ocom.CORREO_RECORDATORIO_CLIENTE) is None
+        out["documento"] = activo and _correo_bloqueo_previo(_ocom.MODULO_GENERAL, _ocom.CORREO_TERMINADA_CLIENTE) is None
+    except Exception as e:
+        print(f"[ot-com] promesas: {type(e).__name__}: {e}", flush=True)
+    return out
+
+
+def _ot_com_bloques_creacion(v, variables, con_invitacion=False):
+    """Las variables de valor del correo «OT creada» al cliente (ver la plantilla `visita_agendada`): invitación de calendario (solo si el correo la lleva),
+    «Tu servicio, paso a paso» (paso 1; lo que sigue solo si se va a cumplir), «Qué va a pasar», «Para dejar todo listo» según el tipo de trabajo y la
+    firma del equipo de Servicio Técnico. `variables` es el diccionario de `_mant_ot_creacion_variables` (texto sin escapar). Nunca lanza."""
+    try:
+        tec_txt = (variables.get("tecnico") or "").strip()
+        personas = [] if tec_txt in ("", "Por confirmar") else [p.strip() for p in tec_txt.split(",") if p.strip()]
+        eq_txt = (variables.get("maquina") or "").strip()
+        equipos = [] if eq_txt in ("", "—") else [p.strip() for p in eq_txt.split(",") if p.strip()]
+        sigue = ("te enviaremos un recordatorio 24 horas antes de la visita." if _ot_com_promesas()["recordatorio"]
+                 else "nuestro técnico llegará en el horario indicado.")
+        return {"invitacion_html": _ocom.invitacion_html() if con_invitacion else "",
+                "recorrido_html": _ocom.recorrido_html("agendada", sigue),
+                "que_esperar_html": _orec.que_esperar_html(equipos, personas),
+                "preparacion_html": _orec.preparacion_html(v.get("tipo")),
+                "firma_sstt_html": _ocom.firma_sstt_html()}
+    except Exception as e:
+        print(f"[ot-com] bloques de la creación: {type(e).__name__}: {e}", flush=True)
+        return {}
+
+
 def _mant_ot_email_cliente_creacion(vid):
     """Correo al CLIENTE apenas se crea la OT (plantilla 'visita_agendada',
     ya sembrada). Solo aplica a OT con cliente real -- trabajo interno no
@@ -142510,6 +142571,12 @@ def _mant_ot_email_cliente_creacion(vid):
                 destinos.append(_e_cli)
         if not destinos:
             return
+        # 2026-11-05 («correos ordenados, de Servicio Técnico, comunicativos» y «que aporte valor»): la plantilla nueva trae «Tu servicio, paso a paso»,
+        # «Qué va a pasar», «Para dejar todo listo», la invitación de calendario y la firma del equipo. Los arma el código con datos reales de la OT; una
+        # plantilla editada a mano que no tenga esas variables simplemente no las muestra (el reemplazo borra lo que no se usa).
+        _ics_fn = _ot_cliente_ics_fn(v, variables)
+        variables = dict(variables)
+        variables.update(_ot_com_bloques_creacion(v, variables, con_invitacion=bool(_ics_fn)))
         tpl = None
         try:
             tpl = _render_comm_template("visita_agendada", "email", variables, modulo="mantenciones")
@@ -142537,7 +142604,7 @@ def _mant_ot_email_cliente_creacion(vid):
         html = _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {variables['ot']}")
         res = _mant_send_email_multi(v["cliente_id"], asunto, html, correo="ot_creada_cliente",
                                      evento="visita_agendada", emails=destinos,
-                                     attachments=_ot_cliente_ics_fn(v, variables))
+                                     attachments=_ics_fn)
         if res["enviados"]:
             _mant_log("visita", vid, "email_creacion_cliente", f"a {', '.join(res['enviados'])} — OT {variables['ot']}")
     except Exception as e:
@@ -143605,7 +143672,16 @@ def _ensure_comm_template_ot_comunicacion():
         # 2026-11-05 («que el mensaje aporte valor»): una plantilla que SIGUE EXACTAMENTE igual a su versión anterior —nadie la editó en
         # Comunicaciones— pasa a la versión vigente (con «Resumen del trabajo», «Qué va a pasar», «Cómo llegar»…). Si una persona la tocó,
         # queda como la dejó. El UPDATE lleva `AND cuerpo=%s`: si alguien la edita justo ahora, no se pisa.
-        for slug_a, anteriores in (getattr(_ocom, "SEMILLAS_ANTERIORES", None) or {}).items():
+        # 2026-11-05 («correos ordenados, de Servicio Técnico, comunicativos»): lo mismo para «OT creada: visita agendada» (`visita_agendada`), la plantilla
+        # más antigua, cuya semilla original vive en `_mantenciones_tpl_seed` (fuente única de lo que se sembró). Si algo falla al leerla, solo esa se omite.
+        anteriores_todas = dict(getattr(_ocom, "SEMILLAS_ANTERIORES", None) or {})
+        nuevas_todas = dict(_ocom.SEMILLAS)
+        nuevas_todas.update(getattr(_ocom, "SEMILLAS_EXTRA", None) or {})
+        try:
+            anteriores_todas[_ocom.PLANTILLA_VISITA_AGENDADA] = (_mantenciones_tpl_seed()[_ocom.PLANTILLA_VISITA_AGENDADA],)
+        except Exception as _e_va:
+            print(f"[ensure_comm_tpl] semilla original de visita_agendada no disponible: {type(_e_va).__name__}", flush=True)
+        for slug_a, anteriores in anteriores_todas.items():
             fila_a = mysql_fetchone(
                 "SELECT id, asunto, cuerpo FROM comm_templates WHERE modulo=%s AND estado=%s AND canal='email' LIMIT 1",
                 (_ocom.MODULO_PLANTILLAS, slug_a))
@@ -143613,7 +143689,7 @@ def _ensure_comm_template_ot_comunicacion():
                 continue
             _nn = lambda s: (s or "").replace("\r\n", "\n").strip()
             if any(_nn(fila_a.get("asunto")) == _nn(a0) and _nn(fila_a.get("cuerpo")) == _nn(c0) for a0, c0 in anteriores):
-                a2, c2 = _ocom.SEMILLAS[slug_a]
+                a2, c2 = nuevas_todas[slug_a]
                 mysql_execute("UPDATE comm_templates SET asunto=%s, cuerpo=%s, updated_by=%s WHERE id=%s AND cuerpo=%s",
                               (a2, c2, "sistema", fila_a["id"], fila_a.get("cuerpo")))
                 print(f"[ensure_comm_tpl] '{slug_a}' (semilla anterior sin editar) pasó a la versión con más valor", flush=True)
@@ -143815,8 +143891,9 @@ def _ot_terminada_notificar(vid, origen="aprobar_cierre"):
         ot, numero = datos["ot"], datos["numero"]
         ref = {"tipo": "OT", "id": v_id, "codigo": numero}
         enlace_doc = _ot_com_enlace_firmada(v_id)
+        # «Tu servicio, paso a paso»: con el documento firmado, los cuatro pasos quedan completos (solo lo usa el correo al cliente).
         comunes = dict(link_ot_firmada=enlace_doc, link_ot=f"{_public_base_url()}/ot/{v_id}", aprobado_por=datos["aprobado_por"],
-                       cerrada_en=datos["cerrada_en"], tecnicos_nombres=datos["personas"])
+                       cerrada_en=datos["cerrada_en"], tecnicos_nombres=datos["personas"], recorrido=_ocom.recorrido_html("documento"))
         contacto = (datos["fila"].get("contacto_nombre") or datos["fila"].get("cli_contacto_nombre") or "").strip()
 
         # 1) al cliente (UN correo por dirección: cada uno queda con su resultado)
