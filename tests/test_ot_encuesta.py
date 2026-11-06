@@ -1179,7 +1179,7 @@ class TestCableado(unittest.TestCase):
         self.assertIn('href="/ot/encuestas"', FC.texto("templates/ot2/_enviar_ot.html"))
         panel = FC.texto("templates/ot2/panel.html")
         i = panel.index('href="/ot/encuestas"')
-        self.assertIn("{% if not es_tecnico %}", panel[i - 400:i])             # un técnico ni ve el botón
+        self.assertIn("{% if not es_tecnico and (permissions.superadmin or permissions.mant_ot_encuesta) %}", panel[i - 500:i])   # técnico: ni ve el botón
 
     def test_sin_popups_nativos_ni_nombre_viejo_en_lo_nuevo(self):
         archivos = ["static/ot_encuesta.js", "static/ot_encuesta.css", "ot_encuesta.py", "templates/ot2/encuestas.html"] + [
@@ -1222,6 +1222,45 @@ class TestCableado(unittest.TestCase):
         self.assertNotIn("googleapis", css)
         for gris in re.findall(r"(?<![-\w])color:\s*#9ca3af", css, re.I):
             self.fail("texto #9ca3af sobre blanco no cumple el contraste (REGLA #61)")
+
+
+class TestPermisoSatisfaccion(unittest.TestCase):
+    """Daniel (6-nov-2026): «eso debería estar solo para el superadmin en órdenes de trabajo y controlable por los usuarios y roles»."""
+
+    @staticmethod
+    def _puede(permisos, tecnico=False):
+        class _G(dict):
+            pass
+        amb = {"g": _G(permissions=permisos), "_es_rol_tecnico": lambda: tecnico}
+        FC.extraer(amb, "app.py", ("_ot_encuesta_puede_ver",), ())
+        return amb["_ot_encuesta_puede_ver"]()
+
+    def test_superadmin_siempre_los_demas_solo_con_el_permiso(self):
+        self.assertTrue(self._puede({"superadmin": True}))
+        self.assertTrue(self._puede({"mant_ot_encuesta": True}), "una persona o un rol con el permiso encendido")
+        self.assertFalse(self._puede({}))
+        self.assertFalse(self._puede({"admin": True, "mantenciones": True}), "ni el admin ni ver OT bastan: el permiso nace apagado")
+        self.assertFalse(self._puede({"mant_ot_encuesta": False}))
+
+    def test_un_tecnico_nunca_aunque_se_encienda(self):
+        self.assertFalse(self._puede({"mant_ot_encuesta": True}, tecnico=True))
+        self.assertFalse(self._puede({"superadmin": True}, tecnico=True))
+
+    def test_esta_cableado_en_los_permisos_y_nace_apagado(self):
+        app = FC.texto("app.py")
+        self.assertIn('    "mant_ot_encuesta",\n', app)                                                  # PERMS_KEYS (permisos individuales)
+        self.assertIn('base["mant_ot_encuesta"] = bool(man.get("ot_encuesta"))', app)                   # nace apagado (no es de tipo bloqueo)
+        self.assertIn('"ot_encuesta",\n', app)                                                          # matriz de roles (Servicio Técnico)
+        self.assertIn('"ot_encuesta": {"label": "Satisfacción de las OT', app)                          # etiqueta
+        self.assertNotIn('"ot_encuesta": {"label": "Satisfacción de las OT (resultados de la encuesta a los clientes)",\n'
+                         '                         "tipo": "bloqueo"', app)
+
+    def test_la_pantalla_el_boton_y_la_ficha_usan_la_misma_regla(self):
+        src = FC.texto("ot_encuesta.py")
+        self.assertIn('puede_ver = ctx.get("_ot_encuesta_puede_ver")', src)
+        self.assertIn("if puede_ver and not puede_ver():\n            abort(403)", src)
+        self.assertIn("if _ot_encuesta_puede_ver():\n                ctx[\"encuesta\"] = _ot_encuesta_para_ficha(", FC.texto("app.py"))
+        self.assertIn("permissions.superadmin or permissions.mant_ot_encuesta", FC.texto("templates/ot2/panel.html"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════

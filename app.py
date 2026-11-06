@@ -5060,6 +5060,11 @@ PERMS_KEYS = (
     # en True y Daniel no es responsable de nada por serlo; la lista de candidatos sale de ot_responsable.es_candidato (permiso
     # EXPLÍCITO, activo y fuera de la familia técnico). Dormido por completo mientras nadie lo tenga encendido.
     "mant_ot_responsable",
+    # mant_ot_encuesta — «Satisfacción de las OT» (aditivo 2026-11-06, REGLA #68). Daniel: «eso debería estar solo para el superadmin en órdenes de
+    # trabajo y controlable por los usuarios y roles». Quien lo tiene ve el botón «Satisfacción» del panel de OT, la pantalla /ot/encuestas y la
+    # tarjeta de respuestas de la ficha. Nace APAGADO para todos los roles y personas (no es de tipo bloqueo); el superadmin lo ve siempre; la
+    # familia técnico nunca, aunque se encienda. Se enciende por persona (Permisos individuales) o por rol (Roles → Servicio Técnico).
+    "mant_ot_encuesta",
     # mant_inc_excel — «Descargar Excel de Incidencias» (aditivo 2026-11-04). Daniel: «Víctor me pide ver el botón de Excel» de la bodega
     # de Incidencias, que desde el 08-oct era solo de admin. Nace APAGADO para todos los roles y personas (no es de tipo bloqueo); se
     # enciende por persona en «Permisos individuales» o por rol en Roles → Servicio Técnico. Admin y superadmin lo conservan sin
@@ -5239,6 +5244,8 @@ def _build_perms_from_matrix(role):
     # 🙋 2026-10-21 (REGLA #36): «Responsable de OT». Nace APAGADO (no es de tipo bloqueo): se enciende a propósito para quien
     # corresponda. Ver "mant_ot_responsable" en PERMS_KEYS.
     base["mant_ot_responsable"] = bool(man.get("ot_responsable"))
+    # 😊 2026-11-06 (REGLA #68): «Satisfacción de las OT». Nace APAGADO (no es de tipo bloqueo). Ver "mant_ot_encuesta" en PERMS_KEYS.
+    base["mant_ot_encuesta"] = bool(man.get("ot_encuesta"))
     # 📊 2026-11-04: «Descargar Excel de Incidencias». Nace APAGADO (no es de tipo bloqueo). Ver "mant_inc_excel" en PERMS_KEYS.
     base["mant_inc_excel"] = bool(man.get("inc_excel"))
     # 🔔 2026-10-23: «Recibe avisos de autorizaciones de OT». Tipo BLOQUEO (ausencia de fila = concedido), como mant_taller.
@@ -14536,6 +14543,8 @@ PERMISSIONS_MATRIX = {
                                    "ot2_tecnico", "taller",
                                    # 🙋 2026-10-21 (REGLA #36): quién puede ser el responsable de una OT. Nace apagado.
                                    "ot_responsable",
+                                   # 😊 2026-11-06 (REGLA #68): quién ve la «Satisfacción» de las OT. Nace apagado; el superadmin siempre.
+                                   "ot_encuesta",
                                    # 📊 2026-11-04: quién puede descargar el Excel de Incidencias (nace apagado).
                                    "inc_excel",
                                    # 🔔 2026-10-23: quién recibe los avisos de «Autorización pendiente» (bloqueo: nace concedido).
@@ -14653,6 +14662,11 @@ PERMISSIONS_META = {
         # se enciende solo para Víctor, Aarón y Juan Pablo (por persona en «Permisos individuales», o por rol aquí).
         "ot_responsable": {"label": "Responsable de OT (lleva las órdenes de trabajo y recibe sus avisos)",
                          "tipo": "submodulo", "icon": "bi-person-check"},
+        # 😊 2026-11-06 (Daniel: «eso debería estar solo para el superadmin en órdenes de trabajo y controlable por los usuarios y roles»).
+        # Quien lo tiene ve la «Satisfacción» de las OT: botón del panel, pantalla de resultados y respuestas en la ficha. Nace apagado
+        # para todos; el superadmin lo ve siempre; un técnico nunca, aunque se encienda.
+        "ot_encuesta": {"label": "Satisfacción de las OT (resultados de la encuesta a los clientes)",
+                         "tipo": "submodulo", "icon": "bi-emoji-smile"},
         # 📊 2026-11-04 (Daniel: «Víctor me pide ver el botón de Excel» de Incidencias). Quien lo tiene ve «Descargar Excel» en la bodega de
         # Incidencias. Nace apagado para todos; se enciende por persona en «Permisos individuales» o por rol aquí. Admin y superadmin lo
         # tienen siempre; un técnico nunca, aunque se encienda.
@@ -144353,6 +144367,17 @@ def _ot_encuesta_html(vid, cierre_clave, demo=False):
         return ""
 
 
+def _ot_encuesta_puede_ver():
+    """¿Este usuario ve la «Satisfacción» de las OT (botón del panel, /ot/encuestas y la tarjeta de la ficha)?
+
+    ÚNICA fuente de verdad (Daniel, 6-nov: «solo para el superadmin… y controlable por los usuarios y roles»): el superadmin siempre; los demás solo con
+    el permiso `mant_ot_encuesta` (por rol o por persona). La familia técnico nunca, aunque el permiso esté encendido (REGLAS #19 y #26)."""
+    perms = g.get("permissions") or {}
+    if _es_rol_tecnico():
+        return False
+    return bool(perms.get("superadmin") or perms.get("mant_ot_encuesta"))
+
+
 def _ot_encuesta_para_ficha(vid, cierre_clave):
     """Lo que la ficha de una OT CERRADA muestra de la encuesta (solo gestión: la llama `_ot_com_contexto_ficha`, que a un técnico no le arma nada):
     {activa, respondida, puntaje, estrellas, etiqueta, comentario, cuando, de_otro_cierre}. Nunca lanza."""
@@ -144960,7 +144985,8 @@ def _ot_com_contexto_ficha(vid, v):
                 " WHERE visita_id=%s ORDER BY id DESC LIMIT 30", (int(vid),)) or []
             ctx["franja"] = _ocom.franja_pendiente(filas, _ocom.cierre_clave(v.get("cerrada_at")))
             # 😊 REGLA #68: lo que respondió el cliente en «¿Cómo fue tu servicio?» (solo gestión, solo OT cerrada). Una falla aquí no toca lo demás.
-            ctx["encuesta"] = _ot_encuesta_para_ficha(vid, _ocom.cierre_clave(v.get("cerrada_at")))
+            if _ot_encuesta_puede_ver():
+                ctx["encuesta"] = _ot_encuesta_para_ficha(vid, _ocom.cierre_clave(v.get("cerrada_at")))
         if puede:
             r = mysql_fetchone(
                 "SELECT id, detalle_json, creado_por, creado_at FROM mant_ot_comunicaciones "
@@ -184813,7 +184839,7 @@ def _tickets_tpl_seed():
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">✅ Tu solicitud "
             "<strong>{{numero_ticket}}</strong> ya fue resuelta por nuestro equipo. Si el problema "
-            "persiste, responde este correo y retomamos tu caso.</div></div>"),
+            "persiste, crea un ticket de soporte con el botón de abajo y retomamos tu caso.</div></div>"),
         'cerrado': (
             "{{numero_ticket}} — Cerrado",
             "<p style=\"font-size:14px;color:#6b7280;margin:0 0 14px\">Hola {{cliente}},</p>"

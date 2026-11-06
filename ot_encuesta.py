@@ -302,7 +302,8 @@ def _entero(v, defecto, minimo, maximo):
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 def register_ot_encuesta_routes(app, ctx):
     """Registra la página pública y los resultados internos. `ctx` = `globals()` de app.py (o un diccionario equivalente en las pruebas)."""
-    from flask import make_response, render_template, request, url_for
+    from flask import abort, make_response, render_template, request, url_for
+    puede_ver = ctx.get("_ot_encuesta_puede_ver")       # superadmin o permiso `mant_ot_encuesta` (sin ella —pruebas sueltas— no se exige nada más)
     mysql_fetchone = ctx["mysql_fetchone"]
     mysql_fetchall = ctx["mysql_fetchall"]
     mysql_execute = ctx["mysql_execute"]
@@ -421,7 +422,10 @@ def register_ot_encuesta_routes(app, ctx):
     @_mant_required
     @_no_tecnico
     def ot_encuestas_pagina():
-        """«Satisfacción» de las órdenes de trabajo: promedio, cuántas respuestas, barras de 1 a 5 y los últimos comentarios con su OT y su cliente."""
+        """«Satisfacción» de las órdenes de trabajo: promedio, cuántas respuestas, barras de 1 a 5 y los últimos comentarios con su OT y su cliente.
+        Solo el superadmin o quien tenga el permiso «Satisfacción de las OT» (`mant_ot_encuesta`, por rol o por persona): Daniel, 6-nov-2026."""
+        if puede_ver and not puede_ver():
+            abort(403)
         per_page = _entero(request.args.get("per_page"), 10, 1, 100)
         if per_page not in POR_PAGINA:
             per_page = 10

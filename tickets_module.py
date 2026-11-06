@@ -13657,8 +13657,8 @@ def register_tickets_routes(app, ctx):
             '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;'
             'padding:12px 16px;margin:20px 0 8px;text-align:center">'
             '<p style="font-size:13px;color:#166534;margin:0;font-weight:600">'
-            '💬 ¿Necesitas agregar algo? Simplemente <strong>responde a este correo</strong> '
-            '(sin cambiar el asunto) y tu mensaje quedará registrado en tu ticket.</p>'
+            '💬 ¿Necesitas agregar algo? <strong>Crea un ticket de soporte</strong> con el botón de abajo '
+            'y menciona el número de este ticket.</p>'
             '</div>'
         )
 
@@ -13687,7 +13687,7 @@ def register_tickets_routes(app, ctx):
         """Aterrizaje amable para links del portal viejo (correos previos al
         GIRO 2026-07-12 pudieron quedar guardados en bandejas de clientes
         reales). No valida token ni consulta el ticket -- no muestra ningun
-        dato, solo invita a responder el correo original. Reemplaza las 3
+        dato, solo invita a crear un ticket de soporte. Reemplaza las 3
         rutas CRUD del portal (tk_portal_ver + tk_portal_datos +
         tk_portal_responder), jubiladas 2026-07-18 con autorizacion de
         Daniel; datos historicos del portal viejo se conservan intactos."""
