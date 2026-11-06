@@ -40,6 +40,7 @@ import jinja2
 import comm_correos_registro as R
 import ot_comunicacion as C
 import ot_correos_tecnicos as OTC
+import ot_encuesta as ENC
 import ot_eventos as EVT
 from tests import _fuente_codigo as FC
 from tests import _mundo_correos as MC
@@ -603,6 +604,8 @@ FUNCS_OT = (
     "ot2_api_com_destinatarios", "_ot_com_puede_enviar", "_ot_com_candidatos_manual", "_ot_com_anteriores", "ot2_api_com_enviar_datos",
     "ot2_api_com_vista_previa", "ot2_api_com_enviar", "_ot_com_contexto_ficha", "_ot_com_tecnicos_de_usuarios", "_ot_com_plan_creacion",
     "ot2_api_com_creacion_previa", "_ot_com_creacion_resultado", "_ensure_ot_comunicacion_tablas", "_ensure_comm_template_ot_comunicacion",
+    # 6-nov-2026 (REGLA #68): la encuesta corta «¿Cómo fue tu servicio?» que llevan los correos al cliente y la tarjeta de la ficha
+    "_ensure_ot_encuesta_tabla", "_ot_encuesta_html", "_ot_encuesta_para_ficha",
 )
 CONSTS_OT = ("_TIPO_OT_LABEL",)
 
@@ -718,7 +721,7 @@ class MundoOT:
         self._orig_uno, self._orig_varios = a["mysql_fetchone"], a["mysql_fetchall"]
         FC.extraer(a, "app.py", FUNCS_OT, CONSTS_OT)
         a.update({
-            "_ocom": C, "_evt": EVT, "AUTH_TABLE": "app_users", "os": os,
+            "_ocom": C, "_evt": EVT, "AUTH_TABLE": "app_users", "os": os, "_oenc": ENC, "app": types.SimpleNamespace(secret_key="clave-de-prueba"),
             "mysql_fetchone": self._uno, "mysql_fetchall": self._varios, "mysql_execute": self._ejecutar,
             "mysql_execute_returning_rowcount": self._reservar,
             "_ot_tec_filas": lambda vids: {int(v): {"id": int(v), "numero_ot": self.fila.get("numero_ot"), "cliente": self.fila.get("cli_razon"),

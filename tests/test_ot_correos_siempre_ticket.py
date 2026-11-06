@@ -78,7 +78,8 @@ class TestLasVersionesAnterioresSeConservan(unittest.TestCase):
             self.assertIsNotNone(_RESPONDER.search(_t(v3[1])), slug)
             self.assertNotEqual(v3[1], C.SEMILLAS[slug][1], slug)
             # lo único que cambia entre la v3 y la v4 es el pie (el resto del correo —recorrido, firma, tablas— es idéntico)
-            sin_pie = lambda s: re.sub(r'<p style="margin:18px 0 0;font-size:12px;color:#888;line-height:1.5">.*?</p>', "<pie/>", s, flags=re.S)
+            # (6-nov, REGLA #68: la vigente de «OT terminada» suma la variable `{{encuesta_html}}`; tampoco cuenta para esta comparación)
+            sin_pie = lambda s: re.sub(r'<p style="margin:18px 0 0;font-size:12px;color:#888;line-height:1.5">.*?</p>', "<pie/>", s, flags=re.S).replace("{{encuesta_html}}", "")
             self.assertEqual(sin_pie(v3[1]), sin_pie(C.SEMILLAS[slug][1]), slug)
 
     def test_la_v2_de_ot_creada_decia_responde_y_esta_en_la_cadena_extra(self):

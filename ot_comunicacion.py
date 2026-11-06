@@ -593,6 +593,7 @@ VARIABLES_DOC = (
     ("aprobado_por", "Quién aprobó el cierre"),
     ("cerrada_en", "Cuándo se aprobó el cierre (hora Chile)"),
     ("resumen_envio_html", "Qué se envió y a quién (solo el aviso al equipo)"),
+    ("encuesta_html", "Bloque «¿Cómo fue tu servicio?» con los números del 1 al 5 (solo correos al cliente; viaja únicamente con la encuesta activa)"),
     ("dias_vigencia", "Días que dura el enlace al documento"),
     ("enviado_por", "Quién envió el correo (solo «Enviar OT por correo»)"),
 )
@@ -682,7 +683,7 @@ def firma_sstt_html():
 
 def variables_ot(ot, *, saludo="", nombre_destinatario="", link_ot_firmada="", link_ot="", mensaje="", aprobado_por="",
                  cerrada_en="", resumen_envio_html="", enviado_por="", dias=TOKEN_DIAS, tecnicos_nombres=None, dia="", horario="",
-                 recorrido=""):
+                 recorrido="", encuesta=""):
     """Las variables de los correos de la OT, TODAS ESCAPADAS para HTML (las escribe una persona: razón social, dirección…); los `*_html`
     ya vienen armados. `ot`: id, numero_ot, cliente, tipo_label, fecha_realizada, fecha, direccion, equipos (lista de nombres)."""
     numero = ot.get("numero_ot") or f"V-{int(ot.get('id') or 0):05d}"
@@ -712,6 +713,9 @@ def variables_ot(ot, *, saludo="", nombre_destinatario="", link_ot_firmada="", l
         "equipos_lista_html": "", "antes_de_salir_html": "",
         # «Tu servicio, paso a paso», la firma del equipo y la invitación de calendario (solo los correos al cliente las usan).
         "recorrido_html": recorrido or "", "firma_sstt_html": firma_sstt_html(), "invitacion_html": "",
+        # Encuesta corta «¿Cómo fue tu servicio?» (6-nov-2026, REGLA #68): solo la llena quien arma un correo AL CLIENTE y solo con la encuesta activa
+        # (`ot_encuesta.encuesta_activa()`); vacía en cualquier otro camino, y entonces el bloque no se dibuja.
+        "encuesta_html": encuesta or "",
     }
 
 
@@ -836,7 +840,9 @@ _RECORDATORIO_V2 = (
 # v3 (5-nov-2026, «aporte de valor» + recorrido + firma): TERMINADA y RECORDATORIO tal como salieron en #281, con «responde este correo» en el pie. Daniel (probó
 # un correo, 5-nov): «lo que sí o sí debe hacer es crear un ticket, siempre crear un ticket» → la v4 manda SIEMPRE al ticket. Las construye la misma función que
 # la vigente (`_cuerpo_terminada` / `_cuerpo_recordatorio`), con el pie de entonces: así la v3 es EXACTAMENTE lo que quedó sembrado y se puede comparar.
-def _cuerpo_terminada(pie):
+def _cuerpo_terminada(pie, encuesta=False):
+    # `encuesta=True` (6-nov-2026, REGLA #68): «¿Cómo fue tu servicio?» va DESPUÉS del botón del documento y del recorrido, y antes del pie y de la firma
+    # del equipo. Las versiones congeladas (V3 a V5) se arman con `encuesta=False`: son exactamente lo que salió sembrado entonces.
     return (_p("{{saludo}}")
             + _p("Terminamos el trabajo de la orden de trabajo <strong>{{ot}}</strong>. Aquí está el documento firmado, con lo que se hizo, "
                  "los equipos revisados y las fotos.")
@@ -844,8 +850,22 @@ def _cuerpo_terminada(pie):
             + _tabla("#16a34a", _FILAS)
             + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
             + "{{recorrido_html}}"
+            + ("{{encuesta_html}}" if encuesta else "")
             + _pie(pie)
             + "{{firma_sstt_html}}")
+
+
+def _cuerpo_manual(encuesta=False):
+    """«Enviar OT por correo». Con `encuesta=True` suma «¿Cómo fue tu servicio?» después del botón del documento (solo se dibuja para el CLIENTE y con la
+    encuesta activa: para cualquier otro destinatario la variable va vacía)."""
+    return (_p("{{saludo}}")
+            + "{{mensaje_html}}"
+            + _p("Te compartimos la orden de trabajo <strong>{{ot}}</strong>, ya terminada y firmada. Con el enlace de abajo puedes ver el "
+                 "documento completo: lo que se hizo, los equipos revisados y las fotos.")
+            + _tabla("#16a34a", _FILAS)
+            + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
+            + ("{{encuesta_html}}" if encuesta else "")
+            + _pie("El enlace se mantiene disponible por {{dias_vigencia}} días. Lo envió {{enviado_por}} desde ILUS Fitness."))
 
 
 def _cuerpo_recordatorio(pie):
@@ -887,6 +907,14 @@ _RECORDATORIO_V4 = (
     _cuerpo_recordatorio("¿Necesitas cambiar la fecha o el acceso? " + _COMO_CREAR_TICKET_V4[0].upper() + _COMO_CREAR_TICKET_V4[1:]
                          + " y lo coordinamos con tiempo: " + _PORQUE_TICKET_V4 + "."))
 
+# v5 de «OT terminada» (6-nov-2026, #290): la versión vigente ANTES de la encuesta corta, con el pie corto del ticket y sin `{{encuesta_html}}`. Si en la base una
+# plantilla sigue EXACTAMENTE igual a esta, nadie la editó y el arranque la pasa a la vigente (REGLA #68); si alguien la tocó en Comunicaciones, queda como la dejó.
+_PIE_TERMINADA = ("El enlace es personal y está disponible por {{dias_vigencia}} días. ¿Algo no calza? "
+                  + COMO_CREAR_TICKET[0].upper() + COMO_CREAR_TICKET[1:] + ".")
+_TERMINADA_V5 = (
+    "Tu orden de trabajo {{ot}} quedó terminada",
+    _cuerpo_terminada(_PIE_TERMINADA))
+
 
 def invitacion_html():
     """El aviso de la invitación de calendario adjunta (solo cuando el correo de verdad la lleva)."""
@@ -898,10 +926,10 @@ SEMILLAS = {
     # Al CLIENTE, al aprobar el cierre (se enciende y se apaga en Control de correos). v2 (5-nov-2026): con el «Resumen del trabajo»; v3: con el recorrido
     # «Tu servicio, paso a paso» (todo hecho) y la firma del equipo de Servicio Técnico.
     # v4 (5-nov-2026, Daniel: «siempre crear un ticket»): el pie manda al ticket, nunca a «responde este correo».
+    # v6 (6-nov-2026, Daniel: «agregar una encuesta con elegancia y sin aburrir»): suma «¿Cómo fue tu servicio?» (`{{encuesta_html}}`, vacío mientras la encuesta no esté activa).
     PLANTILLA_TERMINADA: (
         "Tu orden de trabajo {{ot}} quedó terminada",
-        _cuerpo_terminada("El enlace es personal y está disponible por {{dias_vigencia}} días. ¿Algo no calza? "
-                          + COMO_CREAR_TICKET[0].upper() + COMO_CREAR_TICKET[1:] + ".")),
+        _cuerpo_terminada(_PIE_TERMINADA, encuesta=True)),
     # Al equipo (quien creó la OT, el ejecutivo o el responsable): qué pasó y qué se envió.
     PLANTILLA_TERMINADA_INTERNO: (
         "{{ot}} terminada · {{cliente}}",
@@ -919,15 +947,10 @@ SEMILLAS = {
         + _tabla("#16a34a", _FILAS)
         + _boton("Ver la OT", "{{link_ot}}")),
     # El envío manual («Enviar OT por correo»): el mismo texto para todos, con el mensaje opcional de quien envía.
+    # v2 (6-nov-2026): con la encuesta corta (`{{encuesta_html}}`, que solo se llena para el cliente y con la encuesta activa).
     PLANTILLA_MANUAL: (
         "Orden de trabajo {{ot}} · {{cliente}}",
-        _p("{{saludo}}")
-        + "{{mensaje_html}}"
-        + _p("Te compartimos la orden de trabajo <strong>{{ot}}</strong>, ya terminada y firmada. Con el enlace de abajo puedes ver el "
-             "documento completo: lo que se hizo, los equipos revisados y las fotos.")
-        + _tabla("#16a34a", _FILAS)
-        + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
-        + _pie("El enlace se mantiene disponible por {{dias_vigencia}} días. Lo envió {{enviado_por}} desde ILUS Fitness.")),
+        _cuerpo_manual(encuesta=True)),
     # RECORDATORIO DE 24 HORAS (Daniel, 5-nov-2026). Al CLIENTE: sin enlace a la ficha interna (pide sesión); si algo cambia, responde el correo.
     # v2 (5-nov-2026): con «Qué va a pasar» (quién llega, a qué equipos, cómo cierra la visita) y «Para dejar todo listo» según el tipo de trabajo.
     # v4 (5-nov-2026, Daniel: «siempre crear un ticket»): cambiar la fecha o el acceso se pide con un ticket.
@@ -953,8 +976,13 @@ SEMILLAS = {
 }
 
 # slug → versiones anteriores sin editar que el arranque puede reemplazar por la vigente (ver `_ensure_comm_template_ot_comunicacion`).
+_MANUAL_V1 = (
+    "Orden de trabajo {{ot}} · {{cliente}}",
+    _cuerpo_manual())          # «Enviar OT por correo» tal como salió sembrado hasta el 6-nov-2026 (sin la encuesta)
+
 SEMILLAS_ANTERIORES = {
-    PLANTILLA_TERMINADA: (_TERMINADA_V1, _TERMINADA_V2, _TERMINADA_V3, _TERMINADA_V4),
+    PLANTILLA_TERMINADA: (_TERMINADA_V1, _TERMINADA_V2, _TERMINADA_V3, _TERMINADA_V4, _TERMINADA_V5),
+    PLANTILLA_MANUAL: (_MANUAL_V1,),
     PLANTILLA_RECORDATORIO: (_RECORDATORIO_V1, _RECORDATORIO_V2, _RECORDATORIO_V3, _RECORDATORIO_V4),
     PLANTILLA_RECORDATORIO_TECNICO: (_RECORDATORIO_TECNICO_V1,),
 }

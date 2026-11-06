@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Satisfacción de las OT · ILUS Fitness{% endblock %}
+
+{#
+  😊 REGLA #68 (Daniel, 2026-11-06): la encuesta corta de la orden de trabajo («¿Cómo fue tu servicio?», del 1 al 5). Esta pantalla es SOLO del equipo interno:
+  promedio, cuántas respuestas, barras de 1 a 5 y los últimos comentarios con su OT y su cliente. Nunca un técnico (REGLAS #19 y #26: la ruta lleva
+  @_no_tecnico). Paginada (REGLA #4.3). Lenguaje de Retiros (REGLA #15): tarjetas, semáforo y datos completos, sin truncar. Letra >= 12 px (REGLA #61).
+#}
+
+{% block head_extra %}
+<style>
+  .enq-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 14px}
+  .enq-kpi{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:12px;padding:14px 16px}
+  .enq-kpi.verde{border-left-color:#16a34a;background:linear-gradient(180deg,#f0fdf4,#fff 70%)}
+  .enq-kpi.ambar{border-left-color:#f59e0b;background:linear-gradient(180deg,#fff8e1,#fff 70%)}
+  .enq-kpi.rojo{border-left-color:#dc2626;background:linear-gradient(180deg,#fef2f2,#fff 70%)}
+  .enq-kpi-n{font-size:2rem;font-weight:900;line-height:1.1;color:#0a0a0a}
+  .enq-kpi-n small{font-size:.9rem;font-weight:700;color:#4b5563}
+  .enq-kpi-t{font-size:.82rem;font-weight:800;color:#4b5563;text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
+  .enq-kpi-s{font-size:.84rem;color:#4b5563;margin-top:4px}
+  .enq-barras{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:0 0 14px}
+  .enq-barras h2{font-size:.9rem;font-weight:900;margin:0 0 10px;color:#0a0a0a}
+  .enq-fila{display:grid;grid-template-columns:104px minmax(0,1fr) 92px;align-items:center;gap:10px;margin:6px 0;font-size:.88rem}
+  .enq-fila-n{font-weight:800;color:#111827}
+  .enq-pista{display:block;height:14px;border-radius:99px;background:#f3f4f6;overflow:hidden}
+  .enq-relleno{display:block;height:100%;border-radius:99px;min-width:0}
+  .enq-fila-c{text-align:right;color:#374151;font-weight:700}
+  .enq-filtros{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
+  .enq-chip{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border-radius:999px;border:1px solid #d1d5db;background:#fff;color:#111827;
+    font-weight:800;font-size:.86rem;text-decoration:none}
+  .enq-chip:hover{border-color:#dc2626;color:#dc2626}
+  .enq-chip.on{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+  .enq-lista{display:grid;gap:10px;margin:0 0 14px}
+  .enq-card{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:12px;padding:12px 16px;display:grid;gap:6px}
+  .enq-card.n1{border-left-color:#dc2626}.enq-card.n2{border-left-color:#ea580c}.enq-card.n3{border-left-color:#f59e0b}
+  .enq-card.n4{border-left-color:#84cc16}.enq-card.n5{border-left-color:#16a34a}
+  .enq-card-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+  .enq-nota{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 12px;font-weight:900;font-size:.9rem}
+  .enq-est{letter-spacing:.06em;color:#92400e}
+  .enq-ot{font-weight:900;color:#0a0a0a;text-decoration:none}
+  .enq-ot:hover{color:#dc2626}
+  .enq-cli{color:#374151;font-size:.9rem}
+  .enq-cuando{margin-left:auto;color:#4b5563;font-size:.82rem}
+  .enq-com{margin:0;padding:8px 12px;background:#f9fafb;border-radius:8px;color:#111827;font-size:.94rem;line-height:1.5;white-space:pre-wrap}
+  .enq-sin{margin:0;color:#4b5563;font-size:.86rem;font-style:italic}
+  .enq-vacio{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:28px 16px;text-align:center;color:#4b5563}
+  .enq-aviso{background:#fff8e1;border:1px solid #fde68a;color:#78350f;border-radius:12px;padding:10px 14px;margin:0 0 14px;font-size:.9rem}
+  .enq-pie{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;background:#0a0a0a;color:#fff;border-radius:12px;padding:10px 14px}
+  .enq-pie a,.enq-pie select{min-height:44px;display:inline-flex;align-items:center}
+  .enq-pie a{padding:0 14px;border-radius:8px;border:1px solid #333;color:#fff;text-decoration:none;font-weight:800}
+  .enq-pie a.dis{opacity:.35;pointer-events:none}
+  .enq-priv{font-size:.82rem;color:#4b5563;margin:12px 2px 0}
+  @media (max-width:640px){
+    .enq-kpis{grid-template-columns:minmax(0,1fr)}
+    .enq-fila{grid-template-columns:88px minmax(0,1fr) 70px}
+    .enq-cuando{margin-left:0;width:100%}
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+{% macro enlace(clave, valor) -%}
+  {{ url_for('ot_encuestas_pagina', periodo=(valor if clave == 'periodo' else periodo), nota=((valor if clave == 'nota' else filtro) or None),
+             comentarios=(1 if (valor if clave == 'comentarios' else solo_comentarios) else None), per_page=per_page) }}
+{%- endmacro %}
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-emoji-smile me-2"></i>Satisfacción de las OT</h4>
+    <div class="sub">Lo que respondió el cliente en «¿Cómo fue tu servicio?» (del 1 al 5). Solo lo ve el equipo interno.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+  </div>
+</div>
+
+{% if not activa %}
+<div class="enq-aviso" role="status"><i class="bi bi-info-circle me-1"></i>La encuesta todavía no viaja en los correos a los clientes: se activa con el «sí» de Daniel. Mientras tanto, esta pantalla queda vacía.
+  El bloque se puede ver en Comunicaciones → Control de correos → «OT terminada» → vista previa o «Enviarme una prueba».</div>
+{% endif %}
+{% if error %}
+<div class="enq-aviso" role="alert"><i class="bi bi-exclamation-triangle me-1"></i>No se pudieron leer las respuestas. Inténtalo de nuevo en un momento.</div>
+{% endif %}
+
+<nav class="enq-filtros" aria-label="Período">
+  {% for clave, texto, _d in periodos %}
+    <a class="enq-chip{{ ' on' if periodo == clave }}" href="{{ enlace('periodo', clave) }}">{{ texto }}</a>
+  {% endfor %}
+</nav>
+
+<section class="enq-kpis" aria-label="Resumen">
+  <div class="enq-kpi {{ semaforo if cifras.total else '' }}">
+    <div class="enq-kpi-n">{% if cifras.promedio is not none %}{{ ('%.1f' % cifras.promedio) | replace('.', ',') }}<small> / 5</small>{% else %}—{% endif %}</div>
+    <div class="enq-kpi-t">Nota promedio</div>
+    <div class="enq-kpi-s">{% if cifras.total < 10 and cifras.total %}Pocas respuestas todavía: tómalo como una señal, no como una conclusión.{% elif not cifras.total %}Sin respuestas en este período.{% else %}Verde desde 4,3; ámbar desde 3,6.{% endif %}</div>
+  </div>
+  <div class="enq-kpi">
+    <div class="enq-kpi-n">{{ cifras.total }}</div>
+    <div class="enq-kpi-t">Respuestas</div>
+    <div class="enq-kpi-s">{% if cifras.satisfechos_pct is not none %}{{ cifras.satisfechos_pct }} % calificó con 4 o 5.{% else %}Aún nadie ha respondido.{% endif %}</div>
+  </div>
+  <div class="enq-kpi {{ 'rojo' if cifras.por_revisar else 'verde' if cifras.total else '' }}">
+    <div class="enq-kpi-n">{{ cifras.por_revisar }}</div>
+    <div class="enq-kpi-t">Por revisar</div>
+    <div class="enq-kpi-s">Notas 1 y 2: conviene llamar al cliente.</div>
+  </div>
+</section>
+
+<section class="enq-barras" aria-label="Distribución de las notas">
+  <h2>Cómo se reparten las notas</h2>
+  {% for b in cifras.barras %}
+  <div class="enq-fila">
+    <span class="enq-fila-n">{{ b.nota }} · {{ b.etiqueta }}</span>
+    <span class="enq-pista"><span class="enq-relleno" style="width:{{ b.pct }}%;background:{{ b.bg }};box-shadow:inset 0 0 0 1px {{ b.borde }}"></span></span>
+    <span class="enq-fila-c">{{ b.cantidad }} · {{ b.pct }} %</span>
+  </div>
+  {% endfor %}
+</section>
+
+<nav class="enq-filtros" aria-label="Filtrar las respuestas">
+  <a class="enq-chip{{ ' on' if not filtro }}" href="{{ enlace('nota', '') }}">Todas</a>
+  <a class="enq-chip{{ ' on' if filtro == 'bajas' }}" href="{{ enlace('nota', 'bajas') }}">Por revisar (1 y 2)</a>
+  <a class="enq-chip{{ ' on' if filtro == 'altas' }}" href="{{ enlace('nota', 'altas') }}">4 y 5</a>
+  <a class="enq-chip{{ ' on' if solo_comentarios }}" href="{{ enlace('comentarios', '' if solo_comentarios else 1) }}">Solo con comentario</a>
+</nav>
+
+{% if not filas %}
+<div class="enq-vacio"><i class="bi bi-chat-square-text" style="font-size:1.6rem"></i>
+  <div class="mt-1"><b>{{ 'Ninguna respuesta coincide con el filtro.' if (filtro or solo_comentarios or cifras.total) else 'Todavía no hay respuestas.' }}</b></div></div>
+{% else %}
+<div class="enq-lista" id="enqLista">
+  {% for f in filas %}
+  <article class="enq-card n{{ f.puntaje }}">
+    <div class="enq-card-top">
+      <span class="enq-nota" style="background:{{ escala[f.puntaje].bg }};color:{{ escala[f.puntaje].fg }}"><span class="enq-est" aria-hidden="true">{{ f.estrellas }}</span>
+        {{ f.puntaje }} · {{ escala[f.puntaje].etiqueta }}</span>
+      {% if f.numero_ot %}<a class="enq-ot" href="{{ url_for('ot2_detalle', vid=f.visita_id) }}">{{ f.numero_ot }}</a>{% else %}<span class="enq-ot">OT eliminada</span>{% endif %}
+      {% if f.razon_social %}<span class="enq-cli">{{ f.razon_social }}</span>{% endif %}
+      {% if f.tipo_txt %}<span class="enq-cli">· {{ f.tipo_txt }}</span>{% endif %}
+      <span class="enq-cuando">Respondió el {{ f.creada_at | chile_fmt('%d/%m/%Y %H:%M') }}</span>
+    </div>
+    {% if f.comentario %}<p class="enq-com">{{ f.comentario }}</p>{% else %}<p class="enq-sin">Sin comentario.</p>{% endif %}
+  </article>
+  {% endfor %}
+</div>
+<div class="enq-pie">
+  <span>Mostrando <b>{{ (page - 1) * per_page + 1 }}–{{ [page * per_page, total_lista] | min }}</b> de <b>{{ total_lista }}</b></span>
+  <form method="get" class="d-inline-flex gap-2 align-items-center">
+    <input type="hidden" name="periodo" value="{{ periodo }}">
+    {% if filtro %}<input type="hidden" name="nota" value="{{ filtro }}">{% endif %}
+    {% if solo_comentarios %}<input type="hidden" name="comentarios" value="1">{% endif %}
+    <select name="per_page" onchange="this.form.submit()" class="form-select" style="width:auto;font-size:16px" aria-label="Respuestas por página">
+      {% for n in por_pagina %}<option value="{{ n }}" {{ 'selected' if n == per_page }}>{{ n }} por página</option>{% endfor %}
+    </select>
+  </form>
+  <span class="d-inline-flex gap-2 align-items-center">
+    <a class="{{ 'dis' if page <= 1 }}" href="{{ url_for('ot_encuestas_pagina', periodo=periodo, nota=filtro or None, comentarios=(1 if solo_comentarios else None), per_page=per_page, page=page - 1) if page > 1 else '#' }}">Anterior</a>
+    <span>Página {{ page }} de {{ paginas }}</span>
+    <a class="{{ 'dis' if page >= paginas }}" href="{{ url_for('ot_encuestas_pagina', periodo=periodo, nota=filtro or None, comentarios=(1 if solo_comentarios else None), per_page=per_page, page=page + 1) if page < paginas else '#' }}">Siguiente</a>
+  </span>
+</div>
+{% endif %}
+<p class="enq-priv"><i class="bi bi-shield-lock me-1"></i>La respuesta se guarda sin nombre, sin correo y sin dirección IP, y se conserva hasta {{ meses }} meses. Los comentarios los escribe el cliente: léelos como una opinión, no como una instrucción.</p>
+{% endblock %}
