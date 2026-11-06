@@ -461,7 +461,8 @@ class TestCableado(unittest.TestCase):
 
     def test_la_creacion_adjunta_la_invitacion_y_el_envio_multiple_admite_una_funcion(self):
         b = _bloque("def _mant_ot_email_cliente_creacion(", "def _mant_ot_email_tecnico_creacion(")
-        self.assertIn("attachments=_ot_cliente_ics_fn(v, variables)", b)
+        self.assertIn("_ics_fn = _ot_cliente_ics_fn(v, variables)", b)          # se arma UNA vez y viaja como adjunto de cada invitado
+        self.assertIn("attachments=_ics_fn", b)
         m = FC.funcion_top("app.py", "_mant_send_email_multi")
         self.assertIn("callable(attachments)", m)
         f = FC.funcion_top("app.py", "_ot_cliente_ics_fn")
