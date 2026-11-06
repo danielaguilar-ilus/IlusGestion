@@ -1905,11 +1905,113 @@ function cerrarEvLightbox() {
 }
 
 /* ==== from ficha.html lines 5822-5924 ==== */
-async function cargarComunicaciones() {
+/* 2026-11-05 (Daniel: «todo se centraliza en la ficha del cliente»): la pestaña Comunicaciones muestra los CORREOS REALES que se le mandaron a este
+   cliente (OT creada con invitación, recordatorio de 24 h, firma remota, OT terminada, cotizaciones, tickets…) con su estado real, quién recibe sus
+   avisos automáticos y, plegada, la campana interna de siempre (cargarCampanaCliente, el código de antes). Datos: GET /mantenciones/api/clientes/<id>/comunicaciones. */
+const _COM = { page: 1, estado: '', ot: 0, per: 20, cargando: false };
+const _COM_ESTADOS = {
+  enviado:   { txt: 'Enviado',  ico: 'bi-envelope-check-fill', cls: 'ok' },
+  bloqueado: { txt: 'Frenado',  ico: 'bi-pause-circle-fill',   cls: 'warn' },
+  fallido:   { txt: 'No salió', ico: 'bi-x-octagon-fill',      cls: 'err' },
+  en_cola:   { txt: 'En cola',  ico: 'bi-hourglass-split',     cls: 'info' },
+};
+const _COM_ORIGEN = { automatico: 'Automático', manual: 'Manual', cola: 'En cola', prueba_manual: 'Prueba' };
+
+function _comAvisosHtml(d) {
+  const fich = (d.destinatarios && d.destinatarios.ficha) || [];
+  const cont = (d.destinatarios && d.destinatarios.contrapartes) || [];
+  const avisos = d.avisos || [];
+  const chips = fich.map(f => `<span class="fc-chip" title="${_evEsc(f.rol)}"><i class="bi bi-envelope-at" aria-hidden="true"></i><b>${_evEsc(f.correo)}</b>
+      <small>${_evEsc(f.rol)}${f.nombre ? ' · ' + _evEsc(f.nombre) : ''}</small></span>`).join('');
+  const contraChips = cont.map(c => `<span class="fc-chip fc-chip-ot" title="Contraparte de la OT"><i class="bi bi-person-check" aria-hidden="true"></i><b>${_evEsc(c.correo)}</b>
+      <small>Contraparte de <a href="/ot/${c.ot_id}">${_evEsc(c.ot)}</a>${c.nombre ? ' · ' + _evEsc(c.nombre) : ''}</small></span>`).join('');
+  const sinCorreo = !fich.length && !cont.length;
+  const estadoAvisos = avisos.map(a => `<li class="${a.sale ? 'ok' : 'warn'}"><i class="bi ${a.sale ? 'bi-check-circle-fill' : 'bi-pause-circle-fill'}" aria-hidden="true"></i>
+      <span><b>${_evEsc(a.nombre)}</b>${a.sale ? ' · sale' : ' · <em>frenado: ' + _evEsc(a.motivo) + '</em>'}</span></li>`).join('');
+  return `<div class="fc-card">
+      <div class="fc-card-h"><i class="bi bi-broadcast-pin" aria-hidden="true"></i>Quién recibe los avisos automáticos de este cliente
+        <button type="button" class="btn btn-sm btn-outline-dark ms-auto fc-btn" onclick="abrirEditarCliente()"><i class="bi bi-pencil me-1"></i>Editar contactos</button></div>
+      ${sinCorreo
+        ? `<div class="fc-alerta"><i class="bi bi-exclamation-triangle-fill me-2" aria-hidden="true"></i><b>Este cliente no tiene ningún correo registrado:</b> no recibirá ningún aviso (ni «OT creada», ni recordatorio, ni «OT terminada»). Agrégalo con «Editar contactos».</div>`
+        : `<div class="fc-chips">${chips}${contraChips}</div>
+           <div class="fc-nota">Cada aviso sale al contacto de la OT y a los correos de la ficha. Los técnicos reciben los suyos aparte.</div>`}
+      ${avisos.length ? `<ul class="fc-avisos-lista">${estadoAvisos}</ul>` : ''}
+    </div>`;
+}
+
+function _comFiltrosHtml(d) {
+  const c = d.conteos || {}, f = d.filtros || {};
+  const total = (c.enviado || 0) + (c.fallido || 0) + (c.bloqueado || 0);
+  const btn = (est, txt, n, cls) => `<button type="button" class="fc-pill ${cls || ''} ${f.estado === est ? 'on' : ''}" onclick="comFiltrarEstado('${est}')" aria-pressed="${f.estado === est}">${txt}<b>${n}</b></button>`;
+  const ots = (d.ots || []).map(o => `<option value="${o.id}" ${f.ot === o.id ? 'selected' : ''}>${_evEsc(o.numero)}${o.titulo ? ' · ' + _evEsc(o.titulo) : ''}</option>`).join('');
+  return `${btn('', 'Todos', total, '')}${btn('enviado', 'Enviados', c.enviado || 0, 'ok')}${btn('bloqueado', 'Frenados', c.bloqueado || 0, 'warn')}${btn('fallido', 'No salieron', c.fallido || 0, 'err')}
+    <label class="fc-sel"><span>Orden de trabajo</span><select class="form-select form-select-sm" onchange="comFiltrarOt(this.value)" aria-label="Filtrar por orden de trabajo">
+      <option value="0">Todas</option>${ots}</select></label>`;
+}
+
+function _comItemHtml(it) {
+  const e = _COM_ESTADOS[it.estado] || { txt: it.estado, ico: 'bi-envelope', cls: 'info' };
+  const titulo = it.correo_nombre || it.asunto || 'Correo';
+  const adj = (it.adjuntos || []).filter(Boolean).map(a => `<span class="fc-tag"><i class="bi bi-calendar-event" aria-hidden="true"></i>${_evEsc(/\.ics$/i.test(a) ? 'Invitación de calendario' : a)}</span>`).join('');
+  const ot = it.ot ? `<a class="fc-tag fc-tag-ot" href="${_evEsc(it.ot.url)}"><i class="bi bi-clipboard-check" aria-hidden="true"></i>${_evEsc(it.ot.numero)}</a>` : '';
+  const ver = (window.__FICHA_DATA && window.__FICHA_DATA.is_superadmin && it.puede_ver)
+    ? `<a class="fc-tag" href="/comunicaciones/log/${it.id}/cuerpo" target="_blank" rel="noopener"><i class="bi bi-eye" aria-hidden="true"></i>Ver correo</a>` : '';
+  const quien = it.enviado_por ? ` · por ${_evEsc(it.enviado_por)}` : '';
+  return `<div class="fc-item fc-${e.cls}">
+      <div class="fc-ico" aria-hidden="true"><i class="bi ${e.ico}"></i></div>
+      <div class="fc-body">
+        <div class="fc-tit">${_evEsc(titulo)}<span class="fc-est fc-est-${e.cls}">${e.txt}</span></div>
+        <div class="fc-sub">Para <b>${_evEsc(it.destinatario)}</b>${it.correo_nombre && it.asunto ? ' · ' + _evEsc(it.asunto) : ''}</div>
+        <div class="fc-meta"><span><i class="bi bi-clock" aria-hidden="true"></i>${_evEsc(it.fecha)} ${_evEsc((it.hora || '').slice(0, 5))}</span>
+          <span>${_evEsc(_COM_ORIGEN[it.origen] || it.origen || '')}${quien}</span>${ot}${adj}${ver}</div>
+        ${it.motivo ? `<div class="fc-motivo"><i class="bi bi-info-circle me-1" aria-hidden="true"></i>${_evEsc(it.motivo)}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+async function cargarComunicaciones(opts, sinCampana) {
+  if (opts && typeof opts === 'object') Object.assign(_COM, opts);
+  const cont = document.getElementById('comListado');
+  if (!cont) return;
+  if (_COM.cargando) { _COM.pendiente = true; return; }       // un clic mientras carga no se pierde: se repite al terminar
+  _COM.cargando = true;
+  try {
+    const q = new URLSearchParams({ page: _COM.page, per_page: _COM.per });
+    if (_COM.estado) q.set('estado', _COM.estado);
+    if (_COM.ot) q.set('ot', _COM.ot);
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/comunicaciones?${q}`, { credentials: 'same-origin', cache: 'no-store' });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d || !d.ok) throw new Error((d && d.error) || 'No se pudieron cargar las comunicaciones.');
+    _COM.page = d.page;
+    document.getElementById('comAvisos').innerHTML = _comAvisosHtml(d);
+    document.getElementById('comFiltros').innerHTML = _comFiltrosHtml(d);
+    cont.innerHTML = d.filas.length ? d.filas.map(_comItemHtml).join('') :
+      `<div class="text-center py-5 text-muted"><i class="bi bi-envelope-x" style="font-size:2.5rem;opacity:.25" aria-hidden="true"></i>
+        <div class="fw-semibold mt-2">${(_COM.estado || _COM.ot) ? 'Ningún correo con ese filtro' : 'Todavía no se le ha enviado ningún correo a este cliente'}</div>
+        <div style="font-size:.8125rem">Cuando se cree una OT, se agende o se termine, el correo aparece aquí con su estado.</div></div>`;
+    document.getElementById('comPaginador').innerHTML = d.total ? `<span>Mostrando ${d.desde_n}–${d.hasta_n} de ${d.total}</span>
+      <span class="fc-pag-btns"><button type="button" class="btn btn-sm btn-outline-dark fc-btn" ${d.page <= 1 ? 'disabled' : ''} onclick="comPagina(-1)"><i class="bi bi-chevron-left"></i> Anterior</button>
+      <span>Página ${d.page} de ${d.pages}</span>
+      <button type="button" class="btn btn-sm btn-outline-dark fc-btn" ${d.page >= d.pages ? 'disabled' : ''} onclick="comPagina(1)">Siguiente <i class="bi bi-chevron-right"></i></button></span>` : '';
+  } catch (e) {
+    cont.innerHTML = `<div class="alert alert-danger" role="alert">${_evEsc(e.message || e)}</div>`;
+  } finally {
+    _COM.cargando = false;
+  }
+  if (_COM.pendiente) { _COM.pendiente = false; cargarComunicaciones(null, true); return; }
+  if (!sinCampana) cargarCampanaCliente();
+}
+function comFiltrarEstado(est) { _COM.estado = est || ''; _COM.page = 1; cargarComunicaciones(null, true); }
+function comFiltrarOt(v) { _COM.ot = parseInt(v, 10) || 0; _COM.page = 1; cargarComunicaciones(null, true); }
+function comPagina(delta) { _COM.page = Math.max(1, _COM.page + delta); cargarComunicaciones(null, true); }
+
+/* La campana interna de siempre (mant_notificaciones): se conserva tal cual, ahora plegada al final de la pestaña. */
+async function cargarCampanaCliente() {
   try {
     const r = await fetch(`/mantenciones/api/notificaciones?cliente_id=${CID}`);
     const arr = await r.json();
-    const cont = document.getElementById('comListado');
+    const cont = document.getElementById('comCampana');
+    if (!cont) return;
     if (!arr.length) {
       cont.innerHTML = `<div class="text-center py-5 text-muted">
         <i class="bi bi-envelope-x" style="font-size:2.5rem;opacity:.25"></i>
@@ -1937,7 +2039,8 @@ async function cargarComunicaciones() {
         </div>
       </div>`).join('');
   } catch (e) {
-    document.getElementById('comListado').innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+    const _cc = document.getElementById('comCampana');
+    if (_cc) _cc.innerHTML = `<div class="alert alert-danger">${_evEsc(e.message || e)}</div>`;
   }
 }
 
@@ -1990,7 +2093,7 @@ function abrirEmailManual() {
       mensaje:      document.getElementById('em_body').value.trim(),
     };
     if (!payload.destinatario || !payload.asunto || !payload.mensaje) {
-      alert('Completa destinatario, asunto y mensaje.'); btn.disabled=false; btn.innerHTML='<i class="bi bi-send me-1"></i>Enviar'; return;
+      ilusToast('Completa destinatario, asunto y mensaje.', {type:'warning'}); btn.disabled=false; btn.innerHTML='<i class="bi bi-send me-1"></i>Enviar'; return;
     }
     const r = await fetch(`/mantenciones/api/clientes/${CID}/email-manual`, {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -2001,7 +2104,7 @@ function abrirEmailManual() {
       m.hide();
       cargarComunicaciones();
     } else {
-      alert('Error: ' + (data.error || 'No se pudo enviar'));
+      ilusToast('Error: ' + (data.error || 'No se pudo enviar'), {type:'error'});
       btn.disabled=false; btn.innerHTML='<i class="bi bi-send me-1"></i>Enviar';
     }
   };

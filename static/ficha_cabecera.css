@@ -1,0 +1,60 @@
+/* Cabecera «enchulada» de la ficha del cliente (5-nov-2026, Daniel: «ese módulo es viejo, quisiera enchularlo»).
+   Semáforo + KPIs + motivos + acciones, dentro del .cli-header oscuro de siempre (mantenciones_ficha.css).
+   REGLA #61: letra ≥ 12 px, objetivos táctiles ≥ 44 px, nada de scroll horizontal. REGLA #15: datos completos, sin truncar.
+   Sin plata en ningún KPI (REGLAS #19 y #26). */
+
+/* ── Semáforo ── */
+.fcb-sem { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-size: .8125rem; font-weight: 800; line-height: 1.3; }
+.fcb-sem i { font-size: .9em; }
+.fcb-sem-ok     { background: #dcfce7; color: #166534; }
+.fcb-sem-aviso  { background: #fef3c7; color: #92400e; }
+.fcb-sem-alerta { background: #fee2e2; color: #991b1b; }
+
+/* ── Acciones ── */
+.fcb-acciones { align-items: stretch; max-width: 100%; }      /* sin el tope, cuando las acciones quedan solas en su fila no se parten y se salen de la cabecera */
+.fcb-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 14px; font-size: .8125rem; font-weight: 700; border-radius: 10px; white-space: nowrap; }
+.fcb-btn-primario { background: linear-gradient(135deg, #7c2d12, #dc2626); color: #fff; border: 0; }
+.fcb-btn-primario:hover, .fcb-btn-primario:focus-visible { color: #fff; filter: brightness(1.12); }
+.fcb-btn-sec { color: #cbd5e1; border: 1px solid #334155; background: rgba(255, 255, 255, .04); }
+.fcb-btn-sec:hover, .fcb-btn-sec:focus-visible { color: #fff; background: rgba(255, 255, 255, .12); border-color: #475569; }
+.fcb-acciones .btn-ilus.fcb-btn { border-radius: 10px; }
+.fcb-acciones .dropdown > .btn { min-height: 44px; min-width: 44px; border-radius: 10px; }      /* el menú ⋮ (eliminar cliente, solo superadmin) */
+
+/* ── KPIs ── */
+.fcb-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 18px; position: relative; z-index: 1; }
+.fcb-kpi { background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .1); border-left: 4px solid #64748b; border-radius: 12px; min-width: 0; }
+.fcb-kpi.fcb-t-ok     { border-left-color: #22c55e; }
+.fcb-kpi.fcb-t-aviso  { border-left-color: #f59e0b; }
+.fcb-kpi.fcb-t-alerta { border-left-color: #ef4444; }
+.fcb-kpi.fcb-t-info   { border-left-color: #60a5fa; }
+.fcb-kpi-btn { display: block; width: 100%; min-height: 44px; padding: 10px 14px; text-align: left; background: none; border: 0; color: inherit; border-radius: 10px; cursor: pointer; }
+.fcb-kpi-btn:hover { background: rgba(255, 255, 255, .06); }
+.fcb-kpi-btn:focus-visible, .fcb-chip:focus-visible, .fcb-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.fcb-kpi-l { display: block; font-size: .75rem; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: #94a3b8; }
+.fcb-kpi-v { display: block; margin: 2px 0; font-size: 1.3rem; font-weight: 800; line-height: 1.15; color: #fff; overflow-wrap: anywhere; }
+.fcb-kpi-d { display: block; font-size: .8125rem; color: #cbd5e1; line-height: 1.35; }
+
+/* ── Motivos del semáforo ── */
+.fcb-motivos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; position: relative; z-index: 1; }
+.fcb-chip { display: inline-flex; align-items: flex-start; gap: 7px; min-height: 44px; padding: 8px 12px; border-radius: 12px; border: 1px solid transparent; font-size: .8125rem; font-weight: 600; line-height: 1.35; text-align: left; white-space: normal; cursor: pointer; }
+.fcb-chip i { margin-top: 2px; flex: 0 0 auto; }
+.fcb-chip-alerta { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+.fcb-chip-aviso  { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.fcb-chip-info   { background: rgba(255, 255, 255, .08); color: #cbd5e1; border-color: rgba(255, 255, 255, .14); }
+.fcb-chip-alerta:hover, .fcb-chip-aviso:hover { filter: brightness(.96); }
+.fcb-chip-info:hover { background: rgba(255, 255, 255, .14); color: #fff; }
+
+/* ── Celular y tableta ── */
+@media (max-width: 1099.98px) {
+  .fcb-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 767.98px) {
+  .cli-header { padding: 18px 16px !important; }
+  .fcb-acciones { width: 100%; display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px !important; }
+  .fcb-acciones .fcb-btn { white-space: normal; text-align: center; }
+  .fcb-acciones .fcb-btn-primario { grid-column: 1 / -1; }
+  .fcb-acciones .dropdown > .btn { width: 100%; min-height: 44px; }      /* el menú ⋮ (solo superadmin) comparte la última fila con «Editar cliente» */
+  .fcb-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fcb-kpi:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .fcb-chip { width: 100%; }
+}

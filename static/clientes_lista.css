@@ -1,0 +1,93 @@
+/* Lista de clientes (/clientes) — repaso del 5-nov-2026 (Daniel: «ese módulo es viejo, quisiera enchularlo y ahorrar pestañas»).
+   Se carga DESPUÉS de los estilos de la página y solo ajusta: nada se quita, ningún botón ni acción cambia (Excel, asistente de cliente nuevo,
+   duplicados, plan de mantención, filtros, KPIs, tarjetas, paginado).
+
+   REGLA #61 — letra ≥ 12 px, objetivos táctiles ≥ 44 px, sin scroll de lado a 390 / 820 / 1280 / 1366 / 1440.
+   REGLA #15 — los datos se ven completos: antes el valor de cada KPI, el correo y el contacto de la tarjeta se cortaban con «…» (nowrap + ellipsis).
+   Hallazgos medidos en producción (404 clientes, 1920 px): 405 textos < 12 px (9,6 px en 243), 49 de 49 botones < 44 px, tarjeta de 657 px de alto
+   y dos avisos apilados que empujaban la lista casi una pantalla hacia abajo. */
+
+/* ── Los dos avisos (Salud del proceso + clientes de instalación) comparten fila ── */
+.cl-avisos { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 0 12px; align-items: stretch; }
+.cl-avisos > .sal-aviso, .cl-avisos > .inst-alerta { margin-bottom: 12px; }
+.cl-avisos > .sal-aviso[hidden] { display: none; }
+.cl-avisos .sal-aviso b, .cl-avisos .inst-alerta b { font-size: .9rem; }
+.cl-avisos .sal-aviso span, .cl-avisos .inst-alerta span { font-size: .8125rem; }
+.cl-avisos .sal-aviso .btn, .cl-avisos .inst-alerta .btn { min-height: 44px; }
+@media (max-width: 575.98px) { .cl-avisos { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── Cabecera: botones de 44 px; en celular se reparten en 2 columnas ── */
+.mod-hero .btn { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.mod-hero .mod-sub { font-size: .8125rem !important; }
+@media (max-width: 767.98px) {
+  .mod-hero { flex-direction: column; align-items: stretch !important; }
+  .mod-hero > .d-flex { display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px !important; width: 100%; }
+  .mod-hero > .d-flex > .btn { white-space: normal; }
+  .mod-hero > .d-flex > .btn:last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
+
+/* ── Tarjetas de resumen (KPI) ── */
+.kpi-lbl { font-size: .75rem; line-height: 1.2; letter-spacing: .04em; }
+.kpi-card { min-height: 52px; }
+.kpi-card .kpi-lbl[style] { font-size: .75rem; }
+@media (min-width: 992px) { .kpi-strip { grid-template-columns: repeat(5, 1fr); } }      /* son 9 tarjetas: con 8 columnas la novena quedaba sola en una segunda fila */
+
+/* ── Filtros: chips de 44 px y contadores legibles ── */
+.flt-pill { min-height: 44px; font-size: .8125rem; }
+.flt-count { font-size: .75rem; }
+.flt-row-lbl { font-size: .75rem; }
+.filter-bar .form-control, .filter-bar .form-select { min-height: 44px; font-size: .875rem; }
+
+/* ── Tarjeta de cliente: letra legible, datos completos, más compacta ── */
+.cc2-badge { font-size: .75rem; padding: 3px 10px; }
+.cc2-kpi-lbl { font-size: .75rem; line-height: 1.15; }
+.cc2-contact-lbl { font-size: .75rem; line-height: 1.1; }
+.cc2-contact-info { font-size: .8125rem; }
+.cc2-ci-row { align-items: flex-start; }
+.cc2-ci-row i { margin-top: 2px; }
+.cc2-ci-row span, .cc2-kpi-val, .cc2-contact-name { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+.cc2-kpi-val { font-size: .875rem; line-height: 1.25; }
+.cc2-kpi-val span[style*="font-size"] { font-size: .75rem !important; }
+.cc2-contact-name { font-size: .875rem; }
+.cc2-alert { font-size: .8125rem; }
+.client-card-v2 .small, .client-card-v2 small { font-size: .75rem; }
+.client-card-v2 .cc2-prosp-acts .pa { min-height: 44px; font-size: .8125rem; }
+.client-card-v2 .ptmini .pm { font-size: .75rem; width: 24px; height: 24px; }
+.client-card-v2 .ptmini .pt { font-size: .8125rem; }
+
+/* Escritorio: los 8 datos de contrato caben en la tarjeta sin crecer más de la cuenta */
+.cc2-kpi-row { padding: 9px 18px; }
+
+/* ── Paginado fijo de abajo: botones de 44 px ── */
+.cli-footer .page-link { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; font-size: .875rem; }
+.cli-footer-info { font-size: .8125rem; }
+.cli-footer-perpage select, #perPage { min-height: 44px; font-size: .875rem; }
+.cli-footer-perpage .small { font-size: .8125rem; }
+#clientGrid { margin-bottom: 104px; }
+
+/* ── Celular: tarjeta compacta ── */
+@media (max-width: 575.98px) {
+  .cc2-banner { display: none; }                                   /* es solo un degradado decorativo: no lleva ningún dato */
+  .cc2-header { padding: 10px 12px 4px; }
+  .cc2-icon-box { width: 36px; height: 36px; }
+  .cc2-name { font-size: 1rem; }
+  .cc2-contact-info { padding: 0 12px 8px; flex-direction: row; flex-wrap: wrap; gap: 4px 14px; }
+  .cc2-kpi-row { padding: 8px 12px; gap: 8px 12px; }
+  .cc2-alert { margin: 0 12px 8px; padding: 8px 10px; }
+  .cc2-footer { padding: 8px 12px 10px; }
+  .cli-footer { padding: 8px 12px; }
+  .cli-footer .pagination { flex-wrap: wrap; justify-content: center; }
+  #clientGrid { margin-bottom: 150px; }
+}
+/* mobile.css pasa estos dos a UNA sola columna bajo 430 px (!important): la tarjeta quedaba con 8 filas de datos apiladas y las 9 tarjetas
+   de resumen ocupaban dos pantallas. Con la letra ya legible caben de a dos sin apretar nada. */
+@media (max-width: 430px) {
+  .cc2-kpi-row, .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .kpi-strip .kpi-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .kpi-card { padding: 8px 10px; gap: 8px; }
+  .kpi-icon { width: 30px; height: 30px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .client-card-v2, .kpi-card, .flt-pill { transition: none; }
+  .client-card-v2:hover, .kpi-card:hover, .flt-pill:hover { transform: none; }
+}

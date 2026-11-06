@@ -82,6 +82,7 @@ import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién pued
 import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
 import ot_firma_vigencia as _ofv      # 2026-11-05: el enlace de firma remota del cliente vence en 48 HORAS HÁBILES (módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
+import ficha_cliente_cabecera as _fcc  # 2026-11-05: semáforo, motivos y KPIs de la cabecera de la ficha del cliente (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
 import maquina_historia as _mh    # 2026-10-21: Historia del equipo (hoja de vida unificada: línea de tiempo sin duplicados, por rol): reglas puras con pruebas
@@ -74568,6 +74569,36 @@ def _mant_ficha_impl(cid):
     except Exception as _e_pr:
         print(f"[ficha-cli] prospecto cid={cid}: {_e_pr}", flush=True)
 
+    # 🧭 2026-11-05 (Daniel: «ese módulo es viejo, quisiera enchularlo»): semáforo + KPIs de la cabecera. Todo sale de lo que la ficha ya calculó más UN
+    # conteo de OT abiertas (cliente_id está indexado). Sin plata (REGLAS #19 y #26). Si algo falla, la ficha se ve igual sin la franja de KPIs.
+    _cli_cab = None
+    try:
+        try:
+            _hoy_cab = _now_chile().date()          # el día de Chile: con la fecha del servidor (UTC), a las 21:00 una OT de «hoy» saldría atrasada
+        except Exception:
+            _hoy_cab = hoy
+        _ot_ab = _ot_at = None
+        try:
+            _r_ot = mysql_fetchone(
+                "SELECT COUNT(*) AS n, "
+                "       COALESCE(SUM(CASE WHEN estado IN ('programada','en_curso','reagendada') "
+                "                          AND fecha_programada < %s AND fecha_programada < '2099-01-01' THEN 1 ELSE 0 END),0) AS atrasadas "
+                "  FROM mant_visitas WHERE cliente_id=%s AND estado NOT IN ('cerrada','cancelada','anulada')", (_hoy_cab, cid)) or {}
+            _ot_ab, _ot_at = int(_r_ot.get("n") or 0), int(_r_ot.get("atrasadas") or 0)
+        except Exception as _e_cab_ot:
+            print(f"[ficha-cli] cabecera OT cid={cid}: {type(_e_cab_ot).__name__}", flush=True)
+        _eq_prob = sum(1 for _m in maquinas
+                       if (_m.get("estado") or "activo") != "baja"
+                       and ((_m.get("estado_capturado") or "") in ("fuera_servicio", "advertencia", "en_reparacion") or (_m.get("rep_pend") or 0) > 0))
+        _cli_cab = _fcc.armar(
+            hoy=_hoy_cab, cliente=cliente, contratos=contratos, ot_abiertas=_ot_ab, ot_atrasadas=_ot_at,
+            equipos_activos=int((historial.get("equipos") or {}).get("n_activos") or 0),
+            equipos_total=int((historial.get("equipos") or {}).get("n") or 0), equipos_con_problema=_eq_prob,
+            ult_visita=stats.get("ult_visita_fecha"), prox_visita=stats.get("prox_visita_fecha"),
+            tiene_correo=any(_ocom.correo_valido(cliente.get(_k)) for _k in ("contacto_email", "contacto2_email", "email_empresa")))
+    except Exception as _e_cab:
+        print(f"[ficha-cli] cabecera cid={cid}: {type(_e_cab).__name__}: {str(_e_cab)[:160]}", flush=True)
+
     return render_template("mantenciones/ficha.html",
         prospecto = _prospecto,
         cliente   = dict(cliente),
@@ -74580,6 +74611,8 @@ def _mant_ficha_impl(cid):
         sucursales = sucursales,
         # 2026-09-02 — resumen de "todo lo que le hemos hecho a este cliente".
         historial = historial,
+        # 2026-11-05 — semáforo y KPIs de la cabecera (None si no se pudo armar: la plantilla lo omite).
+        cli_cab   = _cli_cab,
     )
 
 
@@ -161678,6 +161711,190 @@ def mant_notif_list():
         d["created_at"] = str(d["created_at"])[:16] if d.get("created_at") else ""
         return d
     return jsonify([_fmt(r) for r in rows])
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  COMUNICACIONES DEL CLIENTE, CENTRALIZADAS EN SU FICHA (Daniel, 5-nov-2026: «todo se centraliza en la ficha del cliente»)
+#
+#  La pestaña «Comunicaciones» de la ficha solo mostraba la campana interna (mant_notificaciones) y NO los correos reales. Este endpoint junta, de
+#  `email_log` (el registro único de lo que sale por `_send_ilus_email`), TODO lo que se le mandó a este cliente:
+#    · lo ligado a SUS órdenes de trabajo (ref_tipo='OT': «OT creada» con invitación de calendario, recordatorio de 24 horas, firma remota, OT terminada,
+#      envío manual…) y
+#    · lo enviado a SUS correos (contacto principal, segundo contacto, correo de la empresa y la contraparte de cada OT): cotizaciones, tickets, manuales.
+#  Con el estado REAL de cada correo (enviado · frenado por una llave o un interruptor · falló · en cola), fecha y hora de Chile (REGLA #6), la OT
+#  enlazada y quién lo disparó; filtro por estado y por OT; paginado (REGLA #4.3). Además dice QUIÉN RECIBE los avisos automáticos de este cliente y si
+#  cada aviso está saliendo hoy. SOLO LEE: ninguna escritura ni migración (REGLA #18). Los correos de prueba («prueba_*») no cuentan como comunicación.
+#  Lo ve quien ve la ficha (nunca un técnico: REGLA #26); el cuerpo del correo lo sigue viendo solo el superadmin (/comunicaciones/log/<id>/cuerpo).
+# ══════════════════════════════════════════════════════════════════════
+_CLI_COM_PER_PAGE = (10, 20, 50)
+_CLI_COM_ESTADOS = ("enviado", "fallido", "bloqueado")
+_CLI_COM_AVISOS = (        # los avisos AUTOMÁTICOS al cliente de una orden de trabajo (clave del registro de correos)
+    "ot_creada_cliente", "ot_recordatorio_cliente", "ot_terminada_cliente", "ot_firma_remota",
+)
+
+
+def _cli_com_ots(cid, limite=80):
+    """Las OT del cliente (las más nuevas primero), para el filtro y para saber quién es la contraparte de cada una."""
+    try:
+        return mysql_fetchall(
+            "SELECT id, numero_ot, titulo, estado, fecha_programada, contacto_nombre, contacto_email "
+            "  FROM mant_visitas WHERE cliente_id=%s ORDER BY id DESC LIMIT %s", (int(cid), int(limite))) or []
+    except Exception as e:
+        print(f"[cli-com] ots cid={cid}: {type(e).__name__}", flush=True)
+        return []
+
+
+def _cli_com_destinatarios(cid, ots):
+    """Quién recibe los avisos automáticos: los correos de la ficha (en el orden en que los usan los avisos) y la contraparte de cada OT abierta."""
+    fichas, vistos = [], set()
+    try:
+        c = mysql_fetchone(
+            "SELECT contacto_nombre, contacto_email, contacto2_nombre, contacto2_email, email_empresa "
+            "  FROM mant_clientes WHERE id=%s", (int(cid),)) or {}
+    except Exception:
+        try:
+            c = mysql_fetchone("SELECT contacto_nombre, contacto_email FROM mant_clientes WHERE id=%s", (int(cid),)) or {}
+        except Exception:
+            c = {}
+    for campo, rol, nombre_campo in (("contacto_email", "Contacto principal", "contacto_nombre"),
+                                     ("contacto2_email", "Segundo contacto", "contacto2_nombre"),
+                                     ("email_empresa", "Correo de la empresa", None)):
+        correo = _ocom.normalizar_correo(c.get(campo))
+        if _ocom.correo_valido(correo) and correo not in vistos:
+            vistos.add(correo)
+            fichas.append({"correo": correo, "rol": rol, "nombre": (c.get(nombre_campo) or "").strip() if nombre_campo else ""})
+    contrapartes = []
+    for o in ots:
+        if str(o.get("estado") or "").strip().lower() in ("cerrada", "completada", "cancelada", "anulada"):
+            continue
+        correo = _ocom.normalizar_correo(o.get("contacto_email"))
+        if _ocom.correo_valido(correo):
+            contrapartes.append({"correo": correo, "nombre": (o.get("contacto_nombre") or "").strip(), "ot_id": int(o["id"]),
+                                 "ot": o.get("numero_ot") or f"V-{int(o['id']):05d}", "tambien_en_ficha": correo in vistos})
+    return fichas, contrapartes[:12]
+
+
+def _cli_com_estado_avisos():
+    """Si cada aviso automático al cliente está saliendo HOY, con el motivo en claro (el mismo orden de revisión de la puerta única de envío)."""
+    out = []
+    for clave in _CLI_COM_AVISOS:
+        c = _ccr.por_clave(clave)
+        if not c:
+            continue
+        bloqueo = None
+        try:
+            bloqueo = _correo_bloqueo_previo(c["llave"], clave)
+        except Exception:
+            bloqueo = None
+        motivo = ""
+        if bloqueo:
+            motivo = _email_motivo_bloqueo_txt(bloqueo, c["llave"], clave)
+        elif clave in ("ot_terminada_cliente", "ot_recordatorio_cliente") and not _ocom.cliente_activo():
+            bloqueo, motivo = "freno", "freno de emergencia del servidor (OT_TERMINADA_CLIENTE_ACTIVA=0)"
+        out.append({"clave": clave, "nombre": c["nombre"], "sale": not bloqueo, "motivo": motivo})
+    return out
+
+
+def _cli_com_ramas(cid, correos, estado, ot_id):
+    """Las dos ramas del WHERE sobre email_log (por OT y por destinatario): cada una usa su propio índice (idx_ref / idx_dest). Solo %s."""
+    base, base_p = ["COALESCE(e.evento,'') NOT LIKE %s"], ["prueba\\_%"]
+    if estado:
+        base.append("e.estado=%s"); base_p.append(estado)
+    ramas = []
+    w = ["e.ref_tipo='OT'", "e.ref_id IN (SELECT id FROM mant_visitas WHERE cliente_id=%s)"] + base
+    p = [int(cid)] + base_p
+    if ot_id:
+        w.append("e.ref_id=%s"); p.append(int(ot_id))
+    ramas.append((w, p))
+    if correos and not ot_id:
+        w2 = ["e.destinatario IN (" + ",".join(["%s"] * len(correos)) + ")"] + base
+        ramas.append((w2, list(correos) + base_p))
+    return ramas
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/comunicaciones", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_cliente_comunicaciones(cid):
+    """La línea de tiempo de TODAS las comunicaciones por correo de un cliente + quién recibe sus avisos automáticos. Query: page, per_page (10|20|50),
+    estado (enviado|fallido|bloqueado), ot (id de una OT del cliente). Ver el bloque de comentarios de arriba."""
+    cli = mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado."}), 404
+
+    def _ent(v, defecto):
+        try:
+            return int(str(v).strip())
+        except (TypeError, ValueError):
+            return defecto
+    page = max(1, _ent(request.args.get("page"), 1))
+    per_page = _ent(request.args.get("per_page"), 20)
+    if per_page not in _CLI_COM_PER_PAGE:
+        per_page = 20
+    estado = str(request.args.get("estado") or "").strip().lower()
+    if estado not in _CLI_COM_ESTADOS:
+        estado = ""
+    ots = _cli_com_ots(cid)
+    ot_ids = {int(o["id"]) for o in ots}
+    ot_id = _ent(request.args.get("ot"), 0)
+    if ot_id and ot_id not in ot_ids:
+        ot_id = 0                                          # una OT que no es de este cliente no filtra nada ajeno
+    fichas, contrapartes = _cli_com_destinatarios(cid, ots)
+    correos = sorted({f["correo"] for f in fichas} | {c["correo"] for c in contrapartes}
+                     | {_ocom.normalizar_correo(o.get("contacto_email")) for o in ots if _ocom.correo_valido(o.get("contacto_email"))})[:60]
+    try:
+        # 1) los conteos por estado (no dependen del filtro de estado: alimentan los botones de arriba)
+        conteos = {k: 0 for k in _CLI_COM_ESTADOS}
+        partes_c, params_c = [], []
+        for w, p in _cli_com_ramas(cid, correos, "", ot_id):
+            partes_c.append("SELECT e.id AS id, e.estado AS estado FROM email_log e WHERE " + " AND ".join(w))
+            params_c += p
+        for r in mysql_fetchall("SELECT t.estado AS estado, COUNT(*) AS n FROM (" + " UNION ".join(partes_c) + ") t GROUP BY t.estado",
+                                tuple(params_c)) or []:
+            est = str(r.get("estado") or "").lower()
+            if est in conteos:
+                conteos[est] += int(r.get("n") or 0)
+        total = conteos[estado] if estado else sum(conteos.values())
+        pages = max(1, -(-total // per_page))
+        page = min(page, pages)
+        offset = (page - 1) * per_page
+        # 2) la página: cada rama aporta como máximo offset+per_page filas (ya ordenadas) y el UNION se ordena y corta
+        filas = []
+        if total:
+            sel = _comm_hist_proyecciones()["email_log"][1]
+            partes, params = [], []
+            for w, p in _cli_com_ramas(cid, correos, estado, ot_id):
+                partes.append("(" + sel + " WHERE " + " AND ".join(w) + " ORDER BY e.created_at DESC, e.id DESC LIMIT %s)")
+                params += list(p) + [offset + per_page]
+            filas = mysql_fetchall("SELECT * FROM (" + " UNION ".join(partes) + ") u ORDER BY u.created_at DESC, u.id DESC LIMIT %s OFFSET %s",
+                                   tuple(params) + (per_page, offset)) or []
+        items = _comm_hist_serializar(filas)
+    except Exception as e:
+        print(f"[cli-com] cid={cid}: {type(e).__name__}: {str(e)[:200]}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudieron cargar las comunicaciones. Intenta de nuevo en unos segundos."}), 500
+    num_ot = {int(o["id"]): (o.get("numero_ot") or f"V-{int(o['id']):05d}") for o in ots}
+    out = []
+    for it in items:
+        ref = it.get("ref") or {}
+        out.append({
+            "id": it["id"], "fecha": it["fecha"], "hora": it["hora"], "estado": it["estado"], "motivo": it["motivo"],
+            "correo_nombre": it.get("correo_nombre") or "", "asunto": it["asunto"], "destinatario": it["destinatario"],
+            "origen": it["origen"], "enviado_por": it["enviado_por"], "via": it["via"],
+            "ot": ({"id": ref.get("id"), "numero": num_ot.get(int(ref["id"]), ref.get("codigo") or ""), "url": f"/ot/{int(ref['id'])}"}
+                   if ref.get("tipo") == "OT" and ref.get("id") else None),
+            "adjuntos": [str(a.get("nombre") or "") if isinstance(a, dict) else str(a or "") for a in (it.get("adjuntos") or [])][:4],
+            "puede_ver": bool(it.get("cuerpo") == "disponible" and (g.permissions or {}).get("superadmin")),
+        })
+    resp = jsonify({
+        "ok": True, "filas": out, "total": total, "page": page, "pages": pages, "per_page": per_page,
+        "desde_n": (offset + 1) if total else 0, "hasta_n": offset + len(out), "conteos": conteos,
+        "filtros": {"estado": estado, "ot": ot_id},
+        "ots": [{"id": int(o["id"]), "numero": o.get("numero_ot") or f"V-{int(o['id']):05d}", "titulo": (o.get("titulo") or "")[:80]} for o in ots],
+        "destinatarios": {"ficha": fichas, "contrapartes": contrapartes},
+        "avisos": _cli_com_estado_avisos(),
+    })
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
 
 
 @app.route("/mantenciones/api/notificaciones", methods=["POST"])
