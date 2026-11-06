@@ -480,6 +480,61 @@
 .o2m-eq-plan-btn:hover{transform:scale(1.08);border-color:#c7cbd1}
 .o2m-eq-plan-btn.on{background:#f0fdf4;border-color:#86efac;color:#16a34a}
 
+/* 2026-11-05 · FILAS DE EQUIPOS (REGLA #63): encabezado por producto, interruptor de conteo, chips «Faltan N» y buscador de checklist. */
+.o2m-eqg.cerrado tr.o2m-eqrow{display:none}
+.o2m-eq-tablewrap.con-grupos{max-height:60vh}
+.o2m-gh-tr td{padding:0 !important;background:#f8fafc;border-top:2px solid #e2e8f0;border-bottom:1px solid #e2e8f0}
+.o2m-gh{padding:12px 12px 10px;display:flex;flex-direction:column;gap:10px}
+.o2m-gh-top{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-start;justify-content:space-between}
+.o2m-gh-nm{flex:1 1 260px;min-width:0}
+.o2m-gh-nm b{display:block;font-size:1.02rem;line-height:1.3;white-space:normal;overflow-wrap:anywhere}
+.o2m-gh-nm .sku{display:inline-block;font-size:.85rem;color:#6b7280;margin-right:8px}
+.o2m-gh-segbox{flex:0 1 auto;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.o2m-seg-wrap{display:inline-flex;border:1.5px solid #d1d5db;border-radius:10px;overflow:hidden;background:#fff}
+.o2m-seg{min-height:44px;padding:6px 14px;border:0;background:#fff;color:#374151;font-weight:700;font-size:.92rem;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.2;transition:background .15s,color .15s}
+.o2m-seg + .o2m-seg{border-left:1.5px solid #d1d5db}
+.o2m-seg:hover:not(:disabled):not(.on){background:#fef2f2;color:var(--ilus-red,#dc2626)}
+.o2m-seg.on{background:#0a0a0a;color:#fff;cursor:default}
+.o2m-seg:disabled:not(.on){opacity:.5;cursor:not-allowed}
+.o2m-seg-sug{font-size:.75rem;font-weight:800;color:#16a34a;letter-spacing:.02em}
+.o2m-seg.on .o2m-seg-sug{color:#86efac}
+.o2m-gh-why{font-size:.85rem;color:#6b7280;max-width:520px;text-align:right}
+.o2m-gh-chk,.o2m-eq-bulk{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center}
+.o2m-eq-bulk{padding:10px 12px;border-bottom:1px solid #f1f5f9;background:#fafbfc}
+.o2m-gh-lbl{font-size:.85rem;font-weight:800;color:#0f172a}
+.o2m-gh-combo{flex:1 1 260px;max-width:460px;min-width:200px}
+.o2m-gh-combo .o2m-combo-input{width:100%;min-height:44px}
+.o2m-gh-btn{min-height:44px}
+.o2m-gh-dyn{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.o2m-gh-origen{font-size:.85rem;color:#6b7280}
+.o2m-chip{display:inline-flex;align-items:center;gap:5px;font-size:.8rem;font-weight:800;border-radius:50px;padding:3px 10px;
+  background:#f1f5f9;color:#475569;border:1px solid #e2e8f0}
+.o2m-chip.falta{background:#fff8e1;color:#b45309;border-color:#fde68a}
+.o2m-chip.ok{background:#dcfce7;color:#15803d;border-color:#86efac}
+.o2m-recordar{display:inline-flex;align-items:center;gap:7px;font-size:.85rem;color:#374151;cursor:pointer;min-height:36px;margin:2px 0 0}
+.o2m-recordar input{width:18px;height:18px;accent-color:var(--ilus-red,#dc2626);cursor:pointer;flex-shrink:0}
+.o2m-link{background:none;border:0;padding:0 2px;color:#6b7280;font-size:.82rem;text-decoration:underline;cursor:pointer;min-height:32px}
+.o2m-link:hover{color:var(--ilus-red,#dc2626)}
+.o2m-eq-table .o2m-combo-input{min-height:40px}
+.o2m-combo-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;min-height:40px;font-size:.97rem}
+.o2m-combo-item.act{background:#fef2f2;color:var(--ilus-red,#dc2626)}
+.o2m-combo-item.quitar{color:#6b7280;border-bottom:1px solid #f1f5f9}
+.o2m-combo-nm{min-width:0;overflow-wrap:anywhere}
+.o2m-combo-item mark{background:#fde68a;color:inherit;padding:0;border-radius:2px}
+.o2m-combo-tag{flex-shrink:0;font-size:.75rem;font-weight:800;color:#15803d;background:#dcfce7;border-radius:50px;padding:1px 8px;white-space:nowrap}
+.o2m-combo-sec{position:sticky;top:0;background:#f8fafc;color:#6b7280;font-size:.75rem;font-weight:800;letter-spacing:.05em;
+  text-transform:uppercase;padding:6px 12px;border-bottom:1px solid #eef0f3}
+@media (max-width:640px){
+  .o2m-gh{position:sticky;left:0;width:calc(100vw - 64px)}
+  .o2m-gh-segbox{width:100%;align-items:stretch}
+  .o2m-seg-wrap{display:flex;width:100%}
+  .o2m-seg{flex:1}
+  .o2m-gh-why{text-align:left;max-width:none}
+  .o2m-gh-combo{max-width:none;flex-basis:100%}
+}
+@media (pointer:coarse){ .o2m-combo-item{min-height:44px} .o2m-recordar{min-height:44px} .o2m-link{min-height:44px} }
+
 /* 2026-08-29: toggle con ícono para "Acceso al lugar" (ascensor / */
 /* estacionamiento) -- reemplaza el <select> plano por algo mas vivo. */
 .o2m-acc-toggle{display:flex;gap:8px}
@@ -1963,6 +2018,7 @@ window.OT2C = (function(){
     _o2mStepCompleteTracked = {};
     preseleccionEqCliente = null;
     altaAutoFaltantesCtx = null;
+    try { _oefReiniciar(); } catch (e) {}   // 2026-11-05: pistas y estado de las filas de equipos
   }
 
   function esInterno(){ return S.origen === 'interno' ||
@@ -5780,7 +5836,622 @@ window.OT2C = (function(){
       : '<i class="bi bi-check2-square me-1"></i>Marcar todos';
     var barra = document.getElementById('o2mEqBarraPlan');
     if (barra) barra.innerHTML = _o2mBarraPlan();
+    _oefRefrescarCabeceras();      // 2026-11-05: «Faltan N», marcadas por grupo
   }
+
+  /* ═══ FILAS DE EQUIPOS · INICIO (REGLA #63) ═══════════════════════════════════════════════════════════════════
+     2026-11-05 (Daniel, viendo el Paso 8 «Equipos y su checklist» con la línea de 10 unidades de la VD 11117 partida en 10 filas, cada una con su
+     checklist por buscar): «quisiera tener la opción de revertir si es que lo colocaste con línea… dame la opción de multiplicar la fila o dejarlo con
+     una fila con 18. Además me cuesta mucho seleccionar el checklist, esto parte tiene que ser inteligente. Y también guardarla en los catálogos si lo
+     seleccionan de allí.»
+
+     Tres cosas, siempre con la REGLA #32 (el sistema SUGIERE con su origen a la vista; la persona DECIDE; nada se agrega por detrás):
+       1. CONTAR: cada producto de varias unidades trae un interruptor reversible «Una fila con cantidad N» ↔ «Una fila por unidad (N filas)». Juntar
+          y separar lo hace el servidor (/ot/api/equipos/agrupar y /separar): solo filas recién creadas que ninguna OT usa; las que se juntan quedan en
+          «baja» (no se borran) y separar devuelve las MISMAS con sus series. Aquí solo se pinta y se reajusta la selección.
+       2. ELEGIR EL CHECKLIST UNA VEZ: encabezado por producto con su checklist para todas las unidades, barra «para todos los marcados», contador
+          «Faltan N» y un buscador que ordena y resalta (sin tildes, varias palabras, teclado).
+       3. RECORDARLO: elegir a mano deja el checklist guardado en el catálogo para ese producto (con quién y cuándo) y la próxima OT lo trae puesto. */
+  var OEF_MAX_UNIDADES_SEPARAR = 100, OEF_DIAS_ELEGIBLE = 7, OEF_ABRIR_HASTA = 3, OEF_SUGERIDA_TTL_MS = 60000, OEF_MAX_PISTAS = 80;
+  var _oefPistas = {}, _oefPistasPidiendo = {}, _oefGids = {}, _oefGidSeq = 0;
+  var _oefGrupoDeMid = {}, _oefGrupoPorGid = {}, _oefAbierto = {}, _oefRecordar = {}, _oefOcupado = {};
+  var _oefSugMemo = {}, _oefRecordando = {};
+  /* Cada vez que se abre el asistente se empieza de cero (las pistas pueden haber cambiado: otra persona pudo guardar un checklist). La preferencia de
+     «Recordar para este producto» NO se reinicia: es de quien usa la pantalla. */
+  function _oefReiniciar(){
+    _oefPistas = {}; _oefPistasPidiendo = {}; _oefSugMemo = {}; _oefAbierto = {}; _oefOcupado = {}; _oefRecordando = {};
+    _oefGrupoDeMid = {}; _oefGrupoPorGid = {};
+  }
+
+  function _oefInt(v){ var n = parseInt(v, 10); return (isFinite(n) && n > 0) ? n : 1; }
+  function _oefSel(mid){ return S.equipos.find(function(e){ return e.maquina_id === mid; }) || null; }
+  function _oefPlural(n, uno, varios){ return n === 1 ? uno : varios; }
+  /* Juntar/separar filas, las pistas y recordar en el catálogo son del equipo interno (las rutas son `@_no_tecnico`): a un técnico no se le ofrecen. */
+  function _oefEsTecnico(){ return (typeof O2M_ES_TECNICO !== 'undefined') && !!O2M_ES_TECNICO; }
+  /* La clave de un grupo: el MISMO producto del MISMO documento (igual que el servidor al juntar). Sin SKU no hay grupo. */
+  function _oefClave(m){
+    var sku = _o2mSkuNorm(m && m.sku);
+    return sku ? sku + '|' + _o2mDocOrigenNorm(m.doc_origen) : '';
+  }
+  function _oefGidDe(clave){
+    if (!_oefGids[clave]) _oefGids[clave] = String(++_oefGidSeq);
+    return _oefGids[clave];
+  }
+  /* Agrupa la vista: 'unidades' (2 o más filas de una unidad), 'cantidad' (una fila con cantidad ≥ 2) o 'simple' (todo lo demás, se pinta como siempre).
+     Guarda en _oefGrupoDeMid / _oefGrupoPorGid a qué grupo pertenece cada fila, para que la fila y las cabeceras se encuentren. */
+  function _oefGrupos(vista){
+    var porClave = {}, orden = [], lista = [];
+    _oefGrupoDeMid = {}; _oefGrupoPorGid = {};
+    (vista || []).forEach(function(m){
+      var k = _oefClave(m);
+      if (!k){ orden.push({solo: m}); return; }
+      if (!porClave[k]){ porClave[k] = {clave: k, filas: []}; orden.push({grupo: porClave[k]}); }
+      porClave[k].filas.push(m);
+    });
+    orden.forEach(function(o){
+      if (o.solo){ lista.push({tipo: 'simple', filas: [o.solo]}); return; }
+      var g = o.grupo, n = g.filas.length;
+      var total = g.filas.reduce(function(a, m){ return a + _oefInt(m.cantidad); }, 0);
+      var todasUna = g.filas.every(function(m){ return _oefInt(m.cantidad) === 1; });
+      var tipo = (n >= 2 && todasUna) ? 'unidades' : ((n === 1 && total >= 2) ? 'cantidad' : 'simple');
+      if (tipo === 'simple'){ g.filas.forEach(function(m){ lista.push({tipo: 'simple', filas: [m]}); }); return; }
+      var gr = {tipo: tipo, gid: _oefGidDe(g.clave), clave: g.clave, filas: g.filas, total: total, sku: g.filas[0].sku,
+                nombre: g.filas[0].nombre || g.filas[0].sku, doc: g.filas[0].doc_origen || ''};
+      lista.push(gr);
+      _oefGrupoPorGid[gr.gid] = gr;
+      g.filas.forEach(function(m){ _oefGrupoDeMid[m.id] = gr; });
+    });
+    return lista;
+  }
+  /* ¿Se pueden juntar/separar estas filas? Solo las recién creadas (≤ 7 días) que ninguna OT usó. El servidor lo vuelve a comprobar (y mira también
+     mant_visita_equipos); aquí solo se evita ofrecer un botón que va a fallar. */
+  function _oefEditable(g){
+    var ahora = Date.now(), limite = OEF_DIAS_ELEGIBLE * 86400000;
+    return g.filas.every(function(m){
+      if ((S._equiposAutoCreados || []).indexOf(m.id) >= 0) return true;     // las acaba de crear este asistente
+      if (m.origen_visita_id) return false;
+      var t = m.created_at ? Date.parse(m.created_at) : NaN;
+      return isNaN(t) ? true : (ahora - t) <= limite;
+    });
+  }
+  function _oefEstaAbierto(g){
+    return _oefAbierto[g.gid] !== undefined ? !!_oefAbierto[g.gid] : g.filas.length <= OEF_ABRIR_HASTA;
+  }
+
+  /* ── Pistas del servidor (cómo contar y qué checklist está guardado), una consulta por todos los productos ─ */
+  function _oefPistaDe(sku){
+    var k = _o2mSkuNorm(sku);
+    if (!k) return null;
+    return _oefPistas[k + '|' + (S.tipo || '')] || _oefPistas[k + '|'] || null;
+  }
+  function _oefPistaGuardar(sku, parche){
+    var k = _o2mSkuNorm(sku) + '|' + (S.tipo || '');
+    _oefPistas[k] = Object.assign({}, _oefPistas[k] || {}, parche);
+  }
+  function _oefPistasPara(items){
+    if (_oefEsTecnico()) return Promise.resolve();
+    var tipo = S.tipo || '', pedir = [], vistos = {};
+    (items || []).forEach(function(it){
+      var k = _o2mSkuNorm(it && it.sku);
+      if (!k || vistos[k]) return;
+      vistos[k] = 1;
+      if (_oefPistas[k + '|' + tipo] || _oefPistasPidiendo[k + '|' + tipo]) return;
+      pedir.push({sku: it.sku, nombre: it.nombre || '', cantidad: it.cantidad || 1});
+    });
+    pedir = pedir.slice(0, OEF_MAX_PISTAS);
+    if (!pedir.length) return Promise.resolve();
+    var liberar = function(){ pedir.forEach(function(it){ delete _oefPistasPidiendo[_o2mSkuNorm(it.sku) + '|' + tipo]; }); };
+    pedir.forEach(function(it){ _oefPistasPidiendo[_o2mSkuNorm(it.sku) + '|' + tipo] = true; });
+    return fetch('/ot/api/equipos/pistas', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                                           body: JSON.stringify({tipo: tipo, items: pedir})})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        liberar();
+        if (!j || !j.ok || !j.skus) return;
+        Object.keys(j.skus).forEach(function(k){ _oefPistas[_o2mSkuNorm(k) + '|' + tipo] = j.skus[k]; });
+      })
+      .catch(function(){ liberar(); });          // sin pistas todo sigue igual que antes: se elige a mano
+  }
+  function _oefCargarPistas(lista){
+    var items = [];
+    (lista || []).forEach(function(g){ if (g.gid) items.push({sku: g.sku, nombre: g.nombre, cantidad: g.total}); });
+    if (!items.length) return;
+    _oefPistasPara(items).then(function(){ _oefRefrescarCabeceras(); });
+  }
+  /* ¿La pista de este producto dice «por cantidad»? Para decidir cómo dar de alta una línea (piso/accesorio → una fila con cantidad). */
+  function _oefSugiereCantidad(l){
+    var p = _oefPistaDe(l && l.sku);
+    return !!(p && p.conteo && p.conteo.valor === 'cantidad' && _oefInt(l.qty) > 1);
+  }
+
+  /* ── Sugerencia de checklist de UN producto: una consulta por SKU, no una por fila ──────────────────────────── */
+  function _oefSugerida(sku){
+    var k = _o2mSkuNorm(sku) + '|' + (S.tipo || ''), ahora = Date.now(), c = _oefSugMemo[k];
+    if (c && (ahora - c.t) < OEF_SUGERIDA_TTL_MS) return c.p;
+    var p = fetch('/mantenciones/api/plantillas/sugerida-por-sku?sku=' + encodeURIComponent(sku) + '&tipo_ot=' + encodeURIComponent(S.tipo),
+                  {credentials: 'same-origin'})
+      .then(function(r){ return r.json(); })
+      .catch(function(){ delete _oefSugMemo[k]; return null; });
+    _oefSugMemo[k] = {t: ahora, p: p};
+    return p;
+  }
+
+  /* ── Textos con el ORIGEN a la vista (REGLA #32) ─────────────────────────────────────────────────────────── */
+  function _oefOrigenHtml(e){
+    if (!e || !e.plantilla_id) return '';
+    var o = e.plantilla_origen, ico, txt;
+    if (o === 'producto'){ ico = 'bookmark-check'; txt = 'Guardada para este producto.'; }
+    else if (o === 'manual'){ ico = 'hand-index'; txt = 'Elegida a mano.'; }
+    else if (o === 'clase' || e.plantilla_sugerida){ ico = 'magic'; txt = 'Sugerida automáticamente según su clase.'; }
+    else return '';
+    return '<small class="o2m-eq-sug"><i class="bi bi-' + ico + ' me-1"></i>' + txt + '</small>';
+  }
+  function _oefGuardadaTxt(sku){
+    var p = _oefPistaDe(sku), g = p && p.guardada;
+    if (!g) return '';
+    var quien = g.por === 'ti' ? 'tú' : g.por;
+    return ' (' + (quien ? 'la dejó ' + quien : 'guardada') + (g.cuando ? ', ' + g.cuando : '') + ')';
+  }
+  function _oefRecordarHtml(sku, clase){
+    var k = _o2mSkuNorm(sku);
+    if (!k || !S.tipo || _oefEsTecnico()) return '';
+    return '<label class="o2m-recordar' + (clase ? ' ' + clase : '') + '"><input type="checkbox" class="o2m-recordar-chk" data-sku="' + esc(k) + '"' +
+      (_oefRecordar[k] === false ? '' : ' checked') + ' onchange="OT2C.eqRecordar(this)"> Recordar para este producto</label>';
+  }
+  /* Debajo del buscador de cada fila suelta: «Recordar para este producto» (por defecto SÍ). En una fila de un grupo de unidades lo pone el encabezado. */
+  function _oefRecordarFilaHtml(m){
+    var gr = _oefGrupoDeMid[m.id];
+    if (!m || !m.sku || (gr && gr.tipo === 'unidades')) return '';
+    return _oefRecordarHtml(m.sku, '');
+  }
+
+  /* ── Encabezado de cada producto con varias unidades ───────────────────────────────────────────────────── */
+  function _oefColspan(){ return 5 + (_o2mPlanAplica() ? 1 : 0); }
+  function _oefSegHtml(g){
+    if (_oefEsTecnico()) return '';
+    var actual = g.tipo === 'cantidad' ? 'cantidad' : 'unidad';
+    var p = _oefPistaDe(g.sku), sug = (p && p.conteo) ? p.conteo.valor : '';
+    var ed = _oefEditable(g), oc = !!_oefOcupado[g.gid];
+    var muchas = g.total > OEF_MAX_UNIDADES_SEPARAR;
+    function btn(valor, txt){
+      var on = actual === valor, tit = '';
+      var off = oc || (!on && (!ed || (valor === 'unidad' && muchas)));
+      if (!on && !ed) tit = 'Estas filas tienen más de ' + OEF_DIAS_ELEGIBLE + ' días o ya se usaron en una OT: aquí no se juntan ni se separan.';
+      else if (!on && valor === 'unidad' && muchas) tit = 'Son más de ' + OEF_MAX_UNIDADES_SEPARAR + ' unidades: no se separan desde el asistente.';
+      return '<button type="button" class="o2m-seg' + (on ? ' on' : '') + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + (off ? ' disabled' : '') +
+        (tit ? ' title="' + esc(tit) + '"' : '') + ' onclick="OT2C.eqGrupoModo(\'' + g.gid + '\',\'' + valor + '\')">' + txt +
+        (sug === valor ? '<small class="o2m-seg-sug"><i class="bi bi-magic"></i> sugerido</small>' : '') + '</button>';
+    }
+    var nota = '';
+    if (oc) nota = '<div class="o2m-gh-why"><span class="spinner-border spinner-border-sm me-1"></span>Cambiando las filas…</div>';
+    else if (!ed) nota = '<div class="o2m-gh-why"><i class="bi bi-lock me-1"></i>Estas filas tienen más de ' + OEF_DIAS_ELEGIBLE +
+      ' días o ya se usaron en una OT: aquí no se juntan ni se separan.</div>';
+    else if (p && p.conteo && p.conteo.motivo) nota = '<div class="o2m-gh-why"><i class="bi bi-magic me-1"></i>' + esc(p.conteo.motivo) + '</div>';
+    return '<div class="o2m-seg-wrap" role="group" aria-label="Cómo contar ' + esc(g.nombre) + '">' +
+      btn('cantidad', 'Una fila con cantidad ' + g.total) + btn('unidad', 'Una fila por unidad (' + g.total + ' filas)') + '</div>' + nota;
+  }
+  function _oefNombreComun(g){
+    var pid = null;
+    for (var i = 0; i < g.filas.length; i++){
+      var e = _oefSel(g.filas[i].id);
+      if (!e || !e.plantilla_id) continue;
+      if (pid === null) pid = e.plantilla_id;
+      else if (pid !== e.plantilla_id) return '';
+    }
+    return pid === null ? '' : _o2mPlantNombre(pid);
+  }
+  function _oefDinHtml(g){
+    var marc = g.filas.filter(function(m){ return !!_oefSel(m.id); });
+    var sin = marc.filter(function(m){ return !_oefSel(m.id).plantilla_id; }).length;
+    var h = '<span class="o2m-chip">' + marc.length + ' de ' + g.filas.length + ' ' + _oefPlural(g.filas.length, 'marcada', 'marcadas') + '</span>';
+    if (marc.length){
+      h += sin
+        ? '<span class="o2m-chip falta"><i class="bi bi-exclamation-circle"></i> Faltan ' + sin + ' ' + _oefPlural(sin, 'checklist', 'checklists') + '</span>'
+        : '<span class="o2m-chip ok"><i class="bi bi-check-circle-fill"></i> Todas con checklist</span>';
+    }
+    var con = marc.map(function(m){ return _oefSel(m.id); }).filter(function(e){ return !!e.plantilla_id; });
+    if (con.length){
+      var mezcla = con.some(function(e){ return e.plantilla_id !== con[0].plantilla_id; });
+      if (mezcla) h += '<small class="o2m-gh-origen"><i class="bi bi-shuffle me-1"></i>Hay más de un checklist en este grupo.</small>';
+      else {
+        var o = con[0].plantilla_origen, txt = 'Sugerida automáticamente según su clase', ico = 'magic';
+        if (o === 'producto'){ txt = 'Guardada para este producto' + _oefGuardadaTxt(g.sku); ico = 'bookmark-check'; }
+        else if (o === 'manual'){ txt = 'Elegida a mano'; ico = 'hand-index'; }
+        h += '<small class="o2m-gh-origen"><i class="bi bi-' + ico + ' me-1"></i>' + esc(_o2mPlantNombre(con[0].plantilla_id)) + ' · ' + txt + '.</small>';
+      }
+    }
+    var p = _oefPistaDe(g.sku);
+    if (p && p.guardada && S.tipo){
+      h += '<button type="button" class="o2m-link" data-sku="' + esc(_o2mSkuNorm(g.sku)) + '" onclick="OT2C.eqOlvidar(this)" ' +
+        'title="Deja de traerlo puesto en las próximas OT">Olvidar el checklist guardado</button>';
+    }
+    return h;
+  }
+  function _oefMarcarTxt(g){
+    var todas = g.filas.length > 0 && g.filas.every(function(m){ return !!_oefSel(m.id); });
+    return todas ? '<i class="bi bi-square me-1"></i>Desmarcar las ' + g.filas.length : '<i class="bi bi-check2-square me-1"></i>Marcar las ' + g.filas.length;
+  }
+  function _oefCabeceraHtml(g){
+    var esU = g.tipo === 'unidades', n = g.filas.length;
+    var h = '<tr class="o2m-gh-tr"><td colspan="' + _oefColspan() + '"><div class="o2m-gh" id="o2mGh-' + g.gid + '">' +
+      '<div class="o2m-gh-top"><div class="o2m-gh-nm"><b>' + esc(g.nombre) + '</b><span class="sku">SKU ' + esc(g.sku) + '</span>' +
+      (g.doc ? '<span class="o2m-eq-doc">' + esc(g.doc) + '</span>' : '') + '</div>' +
+      '<div class="o2m-gh-segbox" id="o2mGhSeg-' + g.gid + '">' + _oefSegHtml(g) + '</div></div>';
+    if (esU){
+      h += '<div class="o2m-gh-chk"><span class="o2m-gh-lbl">Checklist para las ' + n + ' unidades</span>' +
+        '<div class="o2m-combo o2m-gh-combo"><input type="text" class="form-control o2m-combo-input" id="o2mComboInpG-' + g.gid + '" value="' + esc(_oefNombreComun(g)) + '" ' +
+          'placeholder="Buscar y elegir una vez para todas…" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" ' +
+          'aria-label="Checklist para las ' + n + ' unidades de ' + esc(g.nombre) + '" onfocus="OT2C.comboAbrirX(\'g' + g.gid + '\')" ' +
+          'oninput="OT2C.comboFiltrarX(\'g' + g.gid + '\',this.value)" onkeydown="OT2C.comboTecla(event,\'g' + g.gid + '\')"></div>' +
+        '<button type="button" class="btn btn-sm btn-outline-dark o2m-gh-btn" id="o2mGhMarcar-' + g.gid + '" onclick="OT2C.eqGrupoMarcar(\'' + g.gid + '\')">' +
+          _oefMarcarTxt(g) + '</button>' +
+        _oefRecordarHtml(g.sku, 'o2m-gh-rec') +
+        '<button type="button" class="btn btn-sm btn-outline-secondary o2m-gh-btn o2m-gh-ver" id="o2mGhVer-' + g.gid + '" onclick="OT2C.eqGrupoAbrir(\'' + g.gid + '\')">' +
+          (_oefEstaAbierto(g) ? '<i class="bi bi-chevron-up me-1"></i>Ocultar las ' + n + ' unidades' : '<i class="bi bi-chevron-down me-1"></i>Ver las ' + n + ' unidades') + '</button>' +
+        '</div>';
+    }
+    h += '<div class="o2m-gh-dyn" id="o2mGhDyn-' + g.gid + '">' + _oefDinHtml(g) + '</div></div></td></tr>';
+    return h;
+  }
+  /* Todas las filas de la vista, en tbody por grupo (las sueltas van juntas, como siempre). */
+  function _oefCuerpoHtml(lista){
+    var out = '', plano = '';
+    lista.forEach(function(g){
+      if (g.tipo === 'simple'){ plano += _o2mFilaEquipoHTML(g.filas[0]); return; }
+      if (plano){ out += '<tbody>' + plano + '</tbody>'; plano = ''; }
+      out += '<tbody class="o2m-eqg o2m-eqg-' + g.tipo + (g.tipo === 'unidades' && !_oefEstaAbierto(g) ? ' cerrado' : '') + '" id="o2mEqG-' + g.gid + '">' +
+        _oefCabeceraHtml(g) + g.filas.map(_o2mFilaEquipoHTML).join('') + '</tbody>';
+    });
+    if (plano) out += '<tbody>' + plano + '</tbody>';
+    return out;
+  }
+  /* Barra «Checklist para todos los marcados» (elige una vez; aplica a lo marcado). */
+  function _oefBulkHtml(){
+    return '<div class="o2m-eq-bulk" id="o2mEqBulk"><span class="o2m-gh-lbl"><i class="bi bi-ui-checks me-1"></i>Checklist para todos los marcados</span>' +
+      '<div class="o2m-combo o2m-gh-combo"><input type="text" class="form-control o2m-combo-input" id="o2mComboInpB" value="" placeholder="Elegir uno para todos los marcados…" ' +
+        'autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-label="Checklist para todos los equipos marcados" ' +
+        'onfocus="OT2C.comboAbrirX(\'b\')" oninput="OT2C.comboFiltrarX(\'b\',this.value)" onkeydown="OT2C.comboTecla(event,\'b\')"></div>' +
+      '<span id="o2mEqBulkChip"></span></div>';
+  }
+  function _oefRefrescarBulk(){
+    var chip = document.getElementById('o2mEqBulkChip'), inp = document.getElementById('o2mComboInpB');
+    if (!chip && !inp) return;
+    var marc = _o2mEquiposVista().filter(function(m){ return !!_oefSel(m.id); });
+    var sin = marc.filter(function(m){ return !_oefSel(m.id).plantilla_id; }).length;
+    if (chip) chip.innerHTML = !marc.length
+      ? '<span class="o2m-chip">Marca equipos para elegirles checklist</span>'
+      : (sin
+          ? '<span class="o2m-chip falta"><i class="bi bi-exclamation-circle"></i> Faltan ' + sin + ' ' + _oefPlural(sin, 'checklist', 'checklists') + '</span>'
+          : '<span class="o2m-chip ok"><i class="bi bi-check-circle-fill"></i> Todos con checklist</span>');
+    if (inp) inp.disabled = !marc.length;
+  }
+  /* Actualiza lo que cambia de cada encabezado SIN reemplazar el buscador (si lo reemplazara, se perdería el foco al elegir). */
+  function _oefRefrescarCabeceras(){
+    Object.keys(_oefGrupoPorGid).forEach(function(gid){
+      var g = _oefGrupoPorGid[gid];
+      var seg = document.getElementById('o2mGhSeg-' + gid); if (seg) seg.innerHTML = _oefSegHtml(g);
+      var din = document.getElementById('o2mGhDyn-' + gid); if (din) din.innerHTML = _oefDinHtml(g);
+      var bt = document.getElementById('o2mGhMarcar-' + gid); if (bt) bt.innerHTML = _oefMarcarTxt(g);
+      var inp = document.getElementById('o2mComboInpG-' + gid);
+      if (inp && _comboCtx !== 'g' + gid) inp.value = _oefNombreComun(g);
+    });
+    _oefRefrescarBulk();
+  }
+
+  /* ── Marcar/abrir un grupo ────────────────────────────────────────────────────────────────────────────── */
+  function eqGrupoMarcar(gid){
+    var g = _oefGrupoPorGid[gid]; if (!g) return;
+    var todas = g.filas.every(function(m){ return !!_oefSel(m.id); });
+    if (todas){
+      g.filas.forEach(function(m){
+        var i = S.equipos.findIndex(function(e){ return e.maquina_id === m.id; });
+        if (i >= 0) S.equipos.splice(i, 1);
+      });
+    } else {
+      g.filas.forEach(function(m){
+        if (!_oefSel(m.id)){ S.equipos.push({maquina_id: m.id, plantilla_id: null, plantilla_sugerida: false}); sugerirPlantillaEquipo(m.id); }
+      });
+    }
+    g.filas.forEach(function(m){ _o2mRefrescarFilaEquipo(m.id); });
+    _o2mRefrescarBarraEq(); refrescarAnclas(); _o2mFinEstimar();
+  }
+  function eqGrupoAbrir(gid){
+    var g = _oefGrupoPorGid[gid]; if (!g) return;
+    _oefAbierto[gid] = !_oefEstaAbierto(g);
+    var tb = document.getElementById('o2mEqG-' + gid);
+    if (tb && tb.classList) tb.classList.toggle('cerrado', !_oefAbierto[gid]);
+    var bt = document.getElementById('o2mGhVer-' + gid), n = g.filas.length;
+    if (bt) bt.innerHTML = _oefAbierto[gid] ? '<i class="bi bi-chevron-up me-1"></i>Ocultar las ' + n + ' unidades' : '<i class="bi bi-chevron-down me-1"></i>Ver las ' + n + ' unidades';
+  }
+
+  /* ── Juntar / separar (el servidor hace el trabajo; aquí se reajusta lo que la pantalla sabe) ─────────── */
+  function _oefQuitarSel(mid){
+    var i = S.equipos.findIndex(function(e){ return e.maquina_id === mid; });
+    if (i >= 0) S.equipos.splice(i, 1);
+  }
+  function _oefAplicarAgrupado(g, r){
+    var principal = r.principal && r.principal.id, bajas = r.bajas || [], total = r.total;
+    var marcadas = g.filas.filter(function(m){ return !!_oefSel(m.id); });
+    var conChk = marcadas.map(function(m){ return _oefSel(m.id); }).filter(function(e){ return e && e.plantilla_id; });
+    var pe = _oefSel(principal), fuente = (pe && pe.plantilla_id) ? pe : (conChk[0] || null);
+    var yaEnAuto = g.filas.some(function(m){ return (S._equiposAutoCreados || []).indexOf(m.id) >= 0; });
+    bajas.forEach(function(id){ _oefQuitarSel(id); });
+    cacheEquipos = cacheEquipos.filter(function(m){ return bajas.indexOf(m.id) < 0; });
+    var fila = cacheEquipos.find(function(m){ return m.id === principal; });
+    if (fila){ fila.cantidad = total; }
+    var datos = {plantilla_id: fuente ? fuente.plantilla_id : null, plantilla_sugerida: !!(fuente && fuente.plantilla_sugerida),
+                 plantilla_origen: fuente ? (fuente.plantilla_origen || null) : null};
+    if (marcadas.length && !pe) S.equipos.push(Object.assign({maquina_id: principal}, datos));
+    else if (pe && !pe.plantilla_id && fuente) Object.assign(pe, datos);            // la fila que quedó hereda el checklist de las que se juntaron
+    S._equiposAutoCreados = (S._equiposAutoCreados || []).filter(function(id){ return bajas.indexOf(id) < 0; });
+    if (yaEnAuto && S._equiposAutoCreados.indexOf(principal) < 0) S._equiposAutoCreados.push(principal);
+  }
+  function _oefAplicarSeparado(g, r){
+    var pid = r.principal_id, nuevas = r.nuevas || [], rest = r.restauradas || [];
+    var base = cacheEquipos.find(function(m){ return m.id === pid; }) || g.filas[0];
+    var principalSel = _oefSel(pid), yaEnAuto = (S._equiposAutoCreados || []).indexOf(pid) >= 0;
+    (r.filas || []).forEach(function(f){
+      var m = cacheEquipos.find(function(x){ return x.id === f.id; });
+      if (!m){
+        m = {id: f.id, nombre: f.nombre, sku: f.sku, serie: f.serie, estado_op: base && base.estado_op, doc_origen: f.doc_origen,
+             cantidad: f.cantidad, aplica_mantencion: base ? base.aplica_mantencion : 1, created_at: base && base.created_at, origen_visita_id: null};
+        cacheEquipos.push(m);
+      } else { m.serie = f.serie; m.cantidad = f.cantidad; m.doc_origen = f.doc_origen || m.doc_origen; }
+    });
+    var otras = nuevas.concat(rest);
+    if (principalSel){
+      otras.forEach(function(id){
+        if (_oefSel(id)) return;
+        S.equipos.push({maquina_id: id, plantilla_id: principalSel.plantilla_id, plantilla_sugerida: !!principalSel.plantilla_sugerida,
+                        plantilla_origen: principalSel.plantilla_origen || null});
+      });
+    }
+    if (yaEnAuto) nuevas.forEach(function(id){ if (S._equiposAutoCreados.indexOf(id) < 0) S._equiposAutoCreados.push(id); });
+    cacheEquipos.sort(function(a, b){ return String(a.nombre || '').localeCompare(String(b.nombre || '')) || (a.id - b.id); });
+  }
+  async function eqGrupoModo(gid, modo){
+    var g = _oefGrupoPorGid[gid];
+    if (!g || _oefOcupado[gid]) return;
+    var actual = g.tipo === 'cantidad' ? 'cantidad' : 'unidad';
+    if (modo === actual) return;
+    var cid = S.cliente && S.cliente.id;
+    if (!cid) return;
+    var nom = g.nombre, ok;
+    if (modo === 'cantidad'){
+      ok = await ilusConfirm({title: 'Juntar en una sola fila',
+        message: 'Las ' + g.filas.length + ' filas de «' + nom + '» pasan a ser UNA fila con cantidad ' + g.total + '.',
+        sub: 'No se borra nada: las otras filas quedan guardadas (en baja) con sus series, y puedes volver a separarlas cuando quieras.',
+        okLabel: 'Juntar en una fila', cancelLabel: 'Mejor no'});
+    } else {
+      ok = await ilusConfirm({title: 'Separar por unidad',
+        message: 'La fila de «' + nom + '» con cantidad ' + g.total + ' pasa a ser ' + g.total + ' filas de una unidad.',
+        sub: 'Cada unidad lleva su propia serie y su propio checklist. Si antes las habías juntado, vuelven las mismas filas.',
+        okLabel: 'Separar en ' + g.total + ' filas', cancelLabel: 'Mejor no'});
+    }
+    if (!ok) return;
+    _oefOcupado[gid] = true; _oefRefrescarCabeceras();
+    var url = modo === 'cantidad' ? '/ot/api/equipos/agrupar' : '/ot/api/equipos/separar';
+    var body = modo === 'cantidad' ? {cliente_id: cid, ids: g.filas.map(function(m){ return m.id; })} : {cliente_id: cid, id: g.filas[0].id};
+    var r = await fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+      .then(function(x){ return x.json(); }).catch(function(){ return null; });
+    delete _oefOcupado[gid];
+    if (!r || !r.ok){
+      _oefRefrescarCabeceras();
+      var txt = (r && r.error) ? r.error : 'No se pudo cambiar las filas. No se cambió nada; reintenta en un momento.';
+      if (window.ilusAlert) ilusAlert({title: 'No se pudo cambiar las filas', message: txt, type: 'warning'});
+      return;
+    }
+    if (modo === 'cantidad') _oefAplicarAgrupado(g, r); else _oefAplicarSeparado(g, r);
+    pintarListaEquipos(); refrescarAnclas(); _o2mFinEstimar();
+    if (window.ilusToast) ilusToast('✓ ' + (r.mensaje || 'Filas actualizadas.'), {type: 'success'});
+  }
+
+  /* ── Buscador de checklists: sin tildes, varias palabras, ordenado por relevancia y con lo coincidente resaltado ─ */
+  function _oefNorm(s){
+    var t = String(s == null ? '' : s);
+    try { t = t.normalize('NFD').replace(/[̀-ͯ]/g, ''); } catch (_) {}
+    return t.toLowerCase().trim();
+  }
+  function _oefNormLargo(s){          // misma longitud que el original (para poder resaltar por posición)
+    var out = '', t = String(s == null ? '' : s);
+    for (var i = 0; i < t.length; i++){
+      var c = t.charAt(i), n = c;
+      try { n = c.normalize('NFD').replace(/[̀-ͯ]/g, ''); } catch (_) {}
+      out += (n.length === 1 ? n : c).toLowerCase();
+    }
+    return out;
+  }
+  function _oefBuscar(lista, filtro){
+    var f = _oefNorm(filtro);
+    if (!f) return (lista || []).slice();
+    var tokens = f.split(/\s+/).filter(function(x){ return !!x; });
+    var res = [];
+    (lista || []).forEach(function(p){
+      var nom = _oefNorm(p.nombre);
+      if (!tokens.every(function(t){ return nom.indexOf(t) >= 0; })) return;
+      var score = nom.indexOf(f) === 0 ? 0 : (nom.indexOf(' ' + tokens[0]) >= 0 ? 1 : 2 + nom.indexOf(tokens[0]));
+      res.push({p: p, score: score, largo: nom.length});
+    });
+    res.sort(function(a, b){ return (a.score - b.score) || (a.largo - b.largo) || String(a.p.nombre).localeCompare(String(b.p.nombre)); });
+    return res.map(function(x){ return x.p; });
+  }
+  function _oefResaltar(nombre, filtro){
+    var txt = String(nombre == null ? '' : nombre), f = _oefNorm(filtro);
+    if (!f) return esc(txt);
+    var tokens = f.split(/\s+/).filter(function(x){ return !!x; }), n = _oefNormLargo(txt), marca = [], i;
+    for (i = 0; i < txt.length; i++) marca.push(false);
+    tokens.forEach(function(t){
+      var desde = 0, pos;
+      while ((pos = n.indexOf(t, desde)) >= 0){ for (i = pos; i < pos + t.length; i++) marca[i] = true; desde = pos + t.length; }
+    });
+    var out = '', abierto = false;
+    for (i = 0; i < txt.length; i++){
+      if (marca[i] && !abierto){ out += '<mark>'; abierto = true; }
+      if (!marca[i] && abierto){ out += '</mark>'; abierto = false; }
+      out += esc(txt.charAt(i));
+    }
+    return out + (abierto ? '</mark>' : '');
+  }
+  /* El producto al que se le está eligiendo checklist (para sugerirle lo suyo primero). */
+  function _oefSkuDeCtx(ctx){
+    var t = String(ctx || '').charAt(0), r = String(ctx || '').slice(1);
+    if (t === 'm'){ var m = cacheEquipos.find(function(x){ return x.id === parseInt(r, 10); }); return m ? m.sku : ''; }
+    if (t === 'g'){ var g = _oefGrupoPorGid[r]; return g ? g.sku : ''; }
+    return '';
+  }
+  /* Opciones del buscador. Sin texto: secciones (sugeridas para el producto · ya usadas en esta OT · todas). Con texto: lo que coincide, por relevancia. */
+  function _oefComboOpciones(ctx, filtro){
+    var f = _oefNorm(filtro), plantillas = cachePlant || [];
+    var porId = {}; plantillas.forEach(function(p){ porId[p.id] = p; });
+    var tt = String(ctx || '').charAt(0), actual = null;
+    if (tt === 'm'){ var e0 = _oefSel(parseInt(String(ctx).slice(1), 10)); actual = e0 ? e0.plantilla_id : null; }
+    if (f){
+      return _oefBuscar(plantillas, f).map(function(p){ return {tipo: 'op', pid: p.id, nombre: p.nombre, resaltar: f}; });
+    }
+    var out = [], vistos = {}, sku = _oefSkuDeCtx(ctx), pista = sku ? _oefPistaDe(sku) : null;
+    function agregar(pid, tag){
+      if (!pid || vistos[pid] || !porId[pid]) return false;
+      vistos[pid] = true; out.push({tipo: 'op', pid: pid, nombre: porId[pid].nombre, tag: tag || ''}); return true;
+    }
+    if (actual) out.push({tipo: 'op', pid: 0, nombre: 'Quitar el checklist de este equipo', quitar: true});
+    var sug = [];
+    if (pista && pista.guardada) sug.push([pista.guardada.plantilla_id, 'Guardada para este producto']);
+    if (pista && pista.de_clase) sug.push([pista.de_clase.plantilla_id, 'Sugerida según su clase']);
+    var seccion = out.length;
+    out.push({tipo: 'sec', txt: 'Sugeridas para este producto'});
+    var hubo = false; sug.forEach(function(s){ if (agregar(s[0], s[1])) hubo = true; });
+    if (!hubo) out.splice(seccion, 1);
+    var usadas = [], visto2 = {};
+    S.equipos.forEach(function(e){ if (e.plantilla_id && !vistos[e.plantilla_id] && !visto2[e.plantilla_id] && porId[e.plantilla_id]){ visto2[e.plantilla_id] = 1; usadas.push(e.plantilla_id); } });
+    if (usadas.length){
+      out.push({tipo: 'sec', txt: 'Ya elegidas en esta OT'});
+      usadas.forEach(function(pid){ agregar(pid, ''); });
+    }
+    var resto = plantillas.filter(function(p){ return !vistos[p.id]; });
+    if (resto.length){
+      if (out.some(function(o){ return o.tipo === 'sec'; })) out.push({tipo: 'sec', txt: 'Todas (' + resto.length + ')'});
+      resto.forEach(function(p){ agregar(p.id, ''); });
+    }
+    return out;
+  }
+
+  /* ── Elegir con el buscador: una fila, todo un grupo o todos los marcados ─────────────────────────────── */
+  function _oefNombreProducto(m){ return (m && (m.nombre || m.sku)) || 'el producto'; }
+  async function _oefAplicarGrupo(gid, pid){
+    var g = _oefGrupoPorGid[gid]; if (!g || !pid) return;
+    var marc = g.filas.filter(function(m){ return !!_oefSel(m.id); });
+    var recienMarcadas = 0;
+    if (!marc.length){
+      g.filas.forEach(function(m){ S.equipos.push({maquina_id: m.id, plantilla_id: null, plantilla_sugerida: false}); recienMarcadas++; });
+      marc = g.filas.slice();
+    }
+    marc.forEach(function(m){
+      var e = _oefSel(m.id);
+      e.plantilla_id = pid; e.plantilla_sugerida = false; e.plantilla_origen = 'manual';
+    });
+    g.filas.forEach(function(m){ _o2mRefrescarFilaEquipo(m.id); });
+    _o2mRefrescarBarraEq(); refrescarAnclas(); _o2mFinEstimar();
+    if (window.ilusToast){
+      ilusToast('Checklist «' + _o2mPlantNombre(pid) + '» puesto en ' + marc.length + ' ' + _oefPlural(marc.length, 'unidad', 'unidades') +
+                (recienMarcadas ? ' (las marqué para esta OT)' : '') + '.', {type: 'success'});
+    }
+    _o2mAprenderClasificacion(g.filas[0].id, pid);
+    _oefRecordarProducto(g.filas[0], pid);
+  }
+  async function _oefAplicarMarcados(pid){
+    if (!pid) return;
+    var marc = _o2mEquiposVista().filter(function(m){ return !!_oefSel(m.id); });
+    if (!marc.length) return;
+    var conOtro = marc.filter(function(m){ var e = _oefSel(m.id); return e.plantilla_id && e.plantilla_id !== pid; });
+    var cambiarTodos = true;
+    if (conOtro.length){
+      cambiarTodos = await ilusConfirm({title: 'Otros checklists ya elegidos',
+        message: conOtro.length + ' de los ' + marc.length + ' equipos marcados ya tienen otro checklist.',
+        sub: '¿Cambiar también esos por «' + _o2mPlantNombre(pid) + '»? Con «Solo los que faltan» quedan como están.',
+        okLabel: 'Cambiar todos', cancelLabel: 'Solo los que faltan'});
+    }
+    var puestos = 0;
+    marc.forEach(function(m){
+      var e = _oefSel(m.id); if (!e) return;
+      if (e.plantilla_id && e.plantilla_id !== pid && !cambiarTodos) return;
+      e.plantilla_id = pid; e.plantilla_sugerida = false; e.plantilla_origen = 'manual'; puestos++;
+    });
+    marc.forEach(function(m){ _o2mRefrescarFilaEquipo(m.id); });
+    _o2mRefrescarBarraEq(); refrescarAnclas();
+    var inp = document.getElementById('o2mComboInpB'); if (inp) inp.value = '';
+    if (window.ilusToast){
+      ilusToast('Checklist «' + _o2mPlantNombre(pid) + '» puesto en ' + puestos + ' ' + _oefPlural(puestos, 'equipo', 'equipos') +
+                '. Para que un producto lo recuerde, elígelo en su propia fila.', {type: 'success', duration: 6000});
+    }
+  }
+
+  /* ── Recordar el checklist en el catálogo, para ese producto (con quién y cuándo) ─────────────────────── */
+  function eqRecordar(el){
+    var k = (el && el.getAttribute) ? el.getAttribute('data-sku') : '';
+    if (!k) return;
+    _oefRecordar[k] = !!el.checked;
+    var todos = document.querySelectorAll ? document.querySelectorAll('input.o2m-recordar-chk') : [];
+    for (var i = 0; i < todos.length; i++){ if (todos[i].getAttribute('data-sku') === k) todos[i].checked = !!el.checked; }
+  }
+  async function _oefRecordarProducto(m, pid, reemplazar){
+    if (!m || !m.sku || !S.tipo || !pid || _oefEsTecnico()) return;
+    var k = _o2mSkuNorm(m.sku);
+    if (_oefRecordar[k] === false) return;
+    var p = _oefPistaDe(m.sku);
+    if (!reemplazar && p && p.guardada && p.guardada.plantilla_id === pid) return;      // ya está guardada tal cual
+    if (_oefRecordando[k]) return;
+    _oefRecordando[k] = true;
+    var r = await fetch('/ot/api/producto/checklist', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify({sku: m.sku, tipo: S.tipo, nombre: m.nombre || '', plantilla_id: pid, reemplazar: !!reemplazar})})
+      .then(function(x){ return x.json(); }).catch(function(){ return null; });
+    delete _oefRecordando[k];
+    var prod = _oefNombreProducto(m);
+    if (!r || !r.ok){
+      if (window.ilusToast) ilusToast('No se pudo dejar guardado el checklist de «' + prod + '» en el catálogo. La OT sigue igual.', {type: 'warning'});
+      return;
+    }
+    if (r.guardado){
+      var nom = (r.plantilla && r.plantilla.nombre) || _o2mPlantNombre(pid);
+      _oefPistaGuardar(m.sku, {guardada: {plantilla_id: pid, nombre: nom, por: 'ti', cuando: 'ahora'}});
+      delete _oefSugMemo[k + '|' + (S.tipo || '')];
+      if (window.ilusToast && !r.sin_cambio) ilusToast('«' + prod + '» queda con el checklist «' + nom + '» en el catálogo. La próxima OT lo trae puesto.', {type: 'success', duration: 6000});
+      _oefRefrescarCabeceras();
+      return;
+    }
+    if (r.motivo === 'ya_guardada' && r.actual){
+      var a = r.actual;
+      var ok = await ilusConfirm({title: 'Ya hay otro checklist guardado',
+        message: '«' + prod + '» ya tiene guardado «' + a.nombre + '»' + (a.por ? ' (lo dejó ' + a.por + (a.cuando ? ', ' + a.cuando : '') + ')' : '') + '.',
+        sub: '¿Cambiarlo por «' + _o2mPlantNombre(pid) + '»? Para esta OT se usa el que elegiste de todas formas.',
+        okLabel: 'Cambiar el guardado', cancelLabel: 'Dejar el que estaba'});
+      if (ok) return _oefRecordarProducto(m, pid, true);
+      _oefPistaGuardar(m.sku, {guardada: a});
+      if (window.ilusToast) ilusToast('Para esta OT va «' + _o2mPlantNombre(pid) + '»; en el catálogo sigue «' + a.nombre + '».', {type: 'info', duration: 6000});
+      _oefRefrescarCabeceras();
+    }
+  }
+  async function eqOlvidar(el){
+    var k = (el && el.getAttribute) ? el.getAttribute('data-sku') : '';
+    if (!k || !S.tipo) return;
+    var m = cacheEquipos.find(function(x){ return _o2mSkuNorm(x.sku) === k; });
+    var prod = _oefNombreProducto(m);
+    var ok = await ilusConfirm({title: 'Olvidar el checklist guardado',
+      message: '«' + prod + '» dejará de traer su checklist puesto en las próximas OT.',
+      sub: 'Esta OT no cambia. Puedes volver a guardarlo cuando elijas un checklist.', okLabel: 'Olvidarlo', cancelLabel: 'Mejor no'});
+    if (!ok) return;
+    var r = await fetch('/ot/api/producto/checklist', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify({sku: (m && m.sku) || k, tipo: S.tipo, nombre: (m && m.nombre) || '', plantilla_id: 0})})
+      .then(function(x){ return x.json(); }).catch(function(){ return null; });
+    if (!r || !r.ok){
+      if (window.ilusToast) ilusToast('No se pudo olvidar el checklist guardado. Reintenta.', {type: 'warning'});
+      return;
+    }
+    _oefPistaGuardar(k, {guardada: null});
+    delete _oefSugMemo[k + '|' + (S.tipo || '')];
+    if (window.ilusToast) ilusToast('Listo: «' + prod + '» ya no trae un checklist guardado.', {type: 'success'});
+    _oefRefrescarCabeceras();
+  }
+  /* ═══ FILAS DE EQUIPOS · FIN ═══════════════════════════════════════════════════════════════════════════════ */
 
   /* HTML de UNA fila de la tabla de equipos. Vive aparte para que
      marcar un equipo o elegir un checklist puedan actualizar SOLO su
@@ -5824,7 +6495,10 @@ window.OT2C = (function(){
           // dado de alta con cantidad=8 muestra 8, no "—").
           var _cantDoc = _lin ? _o2mQtyDeSku(m.sku) : 0;
           var _cant = _cantDoc > 0 ? _cantDoc : ((parseInt(m.cantidad, 10) || 1) > 1 ? parseInt(m.cantidad, 10) : '');
-          return '<tr id="o2mEqRow-'+m.id+'" class="'+cls+'">'+
+          // 2026-11-05: en un grupo de «una fila por unidad» cada fila ES una unidad; la cantidad de la línea del documento (la suma) va en el encabezado.
+          var _grFila = _oefGrupoDeMid[m.id];
+          if (_grFila && _grFila.tipo === 'unidades') _cant = 1;
+          return '<tr id="o2mEqRow-'+m.id+'" class="o2m-eqrow '+cls+'">'+
             '<td class="chk"><span class="o2m-chk'+(sel?' on':'')+'" style="cursor:pointer" onclick="OT2C.eqTog('+m.id+')">'+
               (sel?'<i class="bi bi-check-lg" style="color:#fff"></i>':'')+'</span></td>'+
             // Documento de origen: la trazabilidad que Daniel pide en los
@@ -5865,14 +6539,16 @@ window.OT2C = (function(){
                 '<div class="o2m-combo">'+
                   '<input type="text" class="form-control form-control-sm o2m-combo-input" '+
                   'id="o2mComboInp-'+m.id+'" value="'+esc(_o2mPlantNombre(sel.plantilla_id))+'" '+
-                  'placeholder="Buscar checklist…" autocomplete="off" '+
-                  'onfocus="OT2C.comboAbrir('+m.id+')" oninput="OT2C.comboFiltrar('+m.id+',this.value)">'+
+                  'placeholder="Buscar checklist…" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" '+
+                  'aria-label="Checklist de '+esc(m.nombre || m.modelo || ('equipo '+m.id))+'" '+
+                  'onfocus="OT2C.comboAbrir('+m.id+')" oninput="OT2C.comboFiltrar('+m.id+',this.value)" onkeydown="OT2C.comboTecla(event,\'m'+m.id+'\')">'+
                 '</div>'+
                 // 28-08-2026: badge de "sugerida sola" -- ver sugerirPlantillaEquipo.
                 // Solo se muestra mientras el valor elegido sigue siendo el que
                 // llegó por sugerencia (eqPlant apaga la bandera al elegir a mano).
-                (sel.plantilla_sugerida ? '<small class="o2m-eq-sug">'+
-                  '<i class="bi bi-magic me-1"></i>Sugerida automáticamente.</small>' : '')+
+                // 2026-11-05: el ORIGEN siempre a la vista (sugerida según su clase · guardada para este producto · elegida a mano) y, debajo,
+                // «Recordar para este producto» (por defecto SÍ) para que elegir aquí quede en el catálogo.
+                _oefOrigenHtml(sel)+_oefRecordarFilaHtml(m)+
                 // 2026-10-25 (Daniel: «cuando escojo el checklist de instalación y el de desinstalación, en el paso 7… no me ofrece la opción de
                 // escoger»): con «Instalación con desinstalación», cada equipo elige AQUÍ las dos plantillas, la de entrada y la de salida.
                 (_o2mDiTieneHija() ? '<div class="o2m-eq-sal-wrap" id="o2mEqSal-'+m.id+'">'+_o2mEqSalidaHtml(m.id)+'</div>' : '')
@@ -5904,6 +6580,8 @@ window.OT2C = (function(){
     }).length;
     var todosMarcados = totalMarcados > 0 && totalMarcados === equiposVista.length;
     var rutTxt = (S.cliente && S.cliente.rut) ? esc(S.cliente.rut) : '';
+    // 2026-11-05: productos de varias unidades agrupados (interruptor de conteo + checklist para todas las unidades).
+    var _oefLista = _oefGrupos(equiposVista);
 
     c.innerHTML =
       '<div class="o2m-eq-card">'+
@@ -5926,16 +6604,17 @@ window.OT2C = (function(){
               'title="Marca o desmarca todos los equipos que se retiran en la desinstalación"><i class="bi bi-box-arrow-up me-1"></i>Retirar todos / ninguno</button>' : '')+
           '<span id="o2mEqBarraPlan">'+_o2mBarraPlan()+'</span>'+
         '</div>'+
-        '<div class="o2m-eq-tablewrap"><table class="o2m-eq-table"><thead><tr>'+
+        (equiposVista.length >= 2 ? _oefBulkHtml() : '')+
+        '<div class="o2m-eq-tablewrap'+(_oefLista.some(function(g){ return !!g.gid; }) ? ' con-grupos' : '')+'"><table class="o2m-eq-table"><thead><tr>'+
           '<th class="chk"></th><th class="doc">Documento</th>'+
           '<th>Producto</th><th class="cant">Cant.</th>'+
           (_o2mPlanAplica() ? '<th class="plan">Plan</th>' : '')+
           '<th>'+(_o2mDiTieneHija() ? 'Checklist de entrada y de salida' : 'Plantillas extra')+
             (cachePlantCategoria ? ' <span class="o2m-eq-cat">'+esc(_O2M_CATEGORIA_LABEL[cachePlantCategoria]||cachePlantCategoria)+'</span>' : '')+
           '</th>'+
-        '</tr></thead><tbody>'+
-        equiposVista.map(_o2mFilaEquipoHTML).join('')+
-        '</tbody></table></div>'+
+        '</tr></thead>'+
+        _oefCuerpoHtml(_oefLista)+
+        '</table></div>'+
         // 2026-09-06 (Daniel: "eso aparece en las instalaciones, donde no
         // existe plan; lo puedes sacar solo al elegir instalación"). El
         // aviso explica el escudo del plan, así que solo tiene sentido
@@ -5957,6 +6636,7 @@ window.OT2C = (function(){
         if (sels[i].getAttribute('onchange').indexOf('('+e.maquina_id+',')>=0) sels[i].value = e.plantilla_id;
       }
     });
+    _oefCargarPistas(_oefLista); _oefRefrescarCabeceras();
     // Devolver la lista a donde estaba: repintar no es motivo para
     // hacerle perder de vista el equipo que estaba mirando.
     if (_scrollPrev){
@@ -6051,8 +6731,14 @@ window.OT2C = (function(){
       ilusToast('Hay ' + _multi.length + ' producto' + (_multi.length === 1 ? '' : 's') +
                 ' con más de una unidad (' + _tot + ' en total). Cada máquina real se agrega como ' +
                 'una fila propia con su propia serie; los pisos/accesorios clasificados en el ' +
-                'Catálogo se agrupan solos en una fila con su cantidad.', {type:'info', duration:6000});
+                'Catálogo se agrupan solos en una fila con su cantidad. En el paso Equipos puedes cambiar cualquiera con un clic.', {type:'info', duration:7000});
     }
+    // 2026-11-05: ¿piso/accesorio (una fila con cantidad) o máquinas (una fila por unidad)? Se pregunta UNA vez, por producto, y el servidor lo
+    // dice con su motivo. Con la duda, por unidad (cada máquina lleva su serie). En el paso Equipos se puede cambiar con un clic, en ambos sentidos.
+    try {
+      await _oefPistasPara(faltantes.filter(function(l){ return (parseInt(l.qty, 10) || 1) > 1; })
+        .map(function(l){ return {sku: l.sku, nombre: l.nombre || l.sku, cantidad: parseInt(l.qty, 10) || 1}; }));
+    } catch (_e) { /* sin pistas se parte por unidad, como siempre */ }
     var docOrigenTxt = S.doc_origen ? (S.doc_origen.tido + ' ' + S.doc_origen.nudo) : '';
     var creadosIds = [];
     var errores = 0;
@@ -6064,7 +6750,7 @@ window.OT2C = (function(){
         // piso/accesorio), nunca una respuesta humana compartida por lote.
         var body = {sku: l.sku, nombre: l.nombre || l.sku,
                     cantidad: (parseInt(l.qty, 10) || 1),
-                    split_to_rows: true,
+                    split_to_rows: !_oefSugiereCantidad(l),
                     respetar_clasificacion: true};
         // 2026-08-30 (Daniel, trazabilidad -- "CON QUÉ DOC entró eso a la
         // ficha"): CADA línea puede tener su propio documento ERP real
@@ -11781,59 +12467,145 @@ window.OT2C = (function(){
     var p = cachePlant.find(function(x){ return x.id === pid; });
     return p ? p.nombre : '';
   }
-  var _comboListEl = null, _comboMidActivo = null;
+  /* 2026-11-05 (Daniel: «me cuesta mucho seleccionar el checklist, esto parte tiene que ser inteligente»): el mismo buscador flotante, ahora con
+     secciones (sugeridas para el producto · ya elegidas en esta OT · todas), búsqueda sin tildes y por varias palabras ordenada por relevancia con lo
+     coincidente resaltado, teclado (↑ ↓ Enter Esc), roles ARIA y alto de toque de 44 px. Sirve a tres lugares: la fila de un equipo ('m<id>'), el
+     encabezado de un grupo de unidades ('g<n>') y la barra «para todos los marcados» ('b').
+     🔴 Causa de parte del problema: el listener de `scroll` (capture) cerraba la lista flotante apenas se desplazaba la PROPIA lista con la rueda o el
+     dedo; con decenas de checklists no se podía llegar al de abajo. Ahora desplazar la lista no la cierra. */
+  var _comboListEl = null, _comboMidActivo = null, _comboCtx = null, _comboAct = -1, _comboOpts = [];
   function _o2mComboEl(){
     if (_comboListEl) return _comboListEl;
     _comboListEl = document.createElement('div');
     _comboListEl.className = 'o2m-combo-list-float';
+    _comboListEl.id = 'o2mComboLista';
+    _comboListEl.setAttribute('role', 'listbox');
     document.body.appendChild(_comboListEl);
     return _comboListEl;
   }
-  function comboAbrir(mid){ _comboMidActivo = mid; _o2mComboRenderLista(mid, ''); }
-  function comboFiltrar(mid, texto){ _comboMidActivo = mid; _o2mComboRenderLista(mid, texto); }
-  function _o2mComboRenderLista(mid, filtro){
-    var inp = document.getElementById('o2mComboInp-'+mid);
-    if (!inp) return;
-    var el = _o2mComboEl();
-    var f = String(filtro||'').trim().toLowerCase();
-    var items = cachePlant.filter(function(p){ return !f || p.nombre.toLowerCase().indexOf(f) >= 0; });
-    el.innerHTML = items.length
-      ? items.map(function(p){
-          return '<div class="o2m-combo-item" onmousedown="event.preventDefault();'+
-            'OT2C.comboElegir('+mid+','+p.id+')">'+esc(p.nombre)+'</div>';
-        }).join('')
-      : '<div class="o2m-combo-empty">Sin resultados para "'+esc(filtro)+'".</div>';
-    var r = inp.getBoundingClientRect();
-    el.style.left = Math.round(r.left)+'px';
-    el.style.top = Math.round(r.bottom+3)+'px';
-    el.style.width = Math.max(Math.round(r.width), 220)+'px';
-    el.style.display = 'block';
+  function _oefComboInputId(ctx){
+    var t = String(ctx || '').charAt(0), r = String(ctx || '').slice(1);
+    return t === 'm' ? 'o2mComboInp-' + r : (t === 'g' ? 'o2mComboInpG-' + r : 'o2mComboInpB');
   }
-  function comboElegir(mid, pid){
+  function _oefComboFijar(ctx){
+    _comboCtx = ctx;
+    _comboMidActivo = (String(ctx).charAt(0) === 'm') ? parseInt(String(ctx).slice(1), 10) : null;
+  }
+  function comboAbrirX(ctx){ _oefComboFijar(ctx); _o2mComboRenderLista(ctx, ''); }
+  function comboFiltrarX(ctx, texto){ _oefComboFijar(ctx); _o2mComboRenderLista(ctx, texto); }
+  function comboAbrir(mid){ comboAbrirX('m' + mid); }
+  function comboFiltrar(mid, texto){ comboFiltrarX('m' + mid, texto); }
+  function _o2mComboRenderLista(ctx, filtro){
+    var inp = document.getElementById(_oefComboInputId(ctx));
+    if (!inp || inp.disabled) return;
+    var el = _o2mComboEl();
+    var ops = _oefComboOpciones(ctx, filtro), f = _oefNorm(filtro);
+    _comboOpts = ops.filter(function(o){ return o.tipo === 'op'; });
+    _comboAct = (f && _comboOpts.length) ? 0 : -1;
+    var i = -1, h = '';
+    ops.forEach(function(o){
+      if (o.tipo === 'sec'){ h += '<div class="o2m-combo-sec" role="presentation">' + esc(o.txt) + '</div>'; return; }
+      i++;
+      h += '<div class="o2m-combo-item' + (o.quitar ? ' quitar' : '') + (i === _comboAct ? ' act' : '') + '" role="option" id="o2mOpt-' + i + '" ' +
+        'aria-selected="' + (i === _comboAct ? 'true' : 'false') + '" onmousedown="event.preventDefault();OT2C.comboElegirX(\'' + ctx + '\',' + o.pid + ')" ' +
+        'onmousemove="OT2C.comboHover(' + i + ')"><span class="o2m-combo-nm">' + (o.quitar ? '<i class="bi bi-x-circle me-1"></i>' : '') +
+        (o.resaltar ? _oefResaltar(o.nombre, o.resaltar) : esc(o.nombre)) + '</span>' + (o.tag ? '<span class="o2m-combo-tag">' + esc(o.tag) + '</span>' : '') + '</div>';
+    });
+    el.innerHTML = _comboOpts.length ? h : '<div class="o2m-combo-empty">Sin resultados para «' + esc(filtro) + '». Prueba con menos palabras.</div>';
+    var r = inp.getBoundingClientRect(), vw = window.innerWidth || 360, vh = window.innerHeight || 640;
+    var ancho = Math.min(Math.max(Math.round(r.width), 260), vw - 16);
+    el.style.display = 'block';
+    el.style.left = Math.max(8, Math.min(Math.round(r.left), vw - ancho - 8)) + 'px';
+    el.style.width = ancho + 'px';
+    var tope = Math.min(Math.round(vh * 0.45), 340), abajo = Math.round(vh - r.bottom - 8), arriba = Math.round(r.top - 8);
+    if (abajo < Math.min(el.scrollHeight, 220) && arriba > abajo){          // no cabe abajo: se abre hacia arriba
+      el.style.top = 'auto'; el.style.bottom = Math.round(vh - r.top + 3) + 'px'; el.style.maxHeight = Math.min(tope, arriba) + 'px';
+    } else {
+      el.style.bottom = 'auto'; el.style.top = Math.round(r.bottom + 3) + 'px'; el.style.maxHeight = Math.min(tope, Math.max(140, abajo)) + 'px';
+    }
+    inp.setAttribute('aria-expanded', 'true'); inp.setAttribute('aria-controls', 'o2mComboLista');
+    if (_comboAct >= 0) inp.setAttribute('aria-activedescendant', 'o2mOpt-' + _comboAct); else inp.removeAttribute('aria-activedescendant');
+  }
+  function _oefComboMarcarActivo(nuevo){
+    var el = _comboListEl; if (!el || !_comboOpts.length) return;
+    _comboAct = (nuevo + _comboOpts.length) % _comboOpts.length;
+    var items = el.querySelectorAll('.o2m-combo-item');
+    for (var i = 0; i < items.length; i++){
+      var on = (i === _comboAct);
+      items[i].classList.toggle('act', on); items[i].setAttribute('aria-selected', on ? 'true' : 'false');
+      if (on && items[i].scrollIntoView) items[i].scrollIntoView({block: 'nearest'});
+    }
+    var inp = document.getElementById(_oefComboInputId(_comboCtx));
+    if (inp) inp.setAttribute('aria-activedescendant', 'o2mOpt-' + _comboAct);
+  }
+  function comboHover(i){ if (_comboCtx != null && i !== _comboAct) _oefComboMarcarActivo(i); }
+  function comboTecla(ev, ctx){
+    var k = ev && ev.key;
+    if (k === 'ArrowDown' || k === 'ArrowUp'){
+      ev.preventDefault();
+      if (_comboCtx !== ctx){ comboAbrirX(ctx); if (_comboAct < 0) _oefComboMarcarActivo(0); return; }
+      _oefComboMarcarActivo(_comboAct < 0 ? (k === 'ArrowDown' ? 0 : -1) : _comboAct + (k === 'ArrowDown' ? 1 : -1));
+    } else if (k === 'Enter'){
+      if (_comboCtx === ctx && _comboAct >= 0 && _comboOpts[_comboAct]){ ev.preventDefault(); comboElegirX(ctx, _comboOpts[_comboAct].pid); }
+    } else if (k === 'Escape'){
+      if (_comboCtx === ctx){ ev.preventDefault(); ev.stopPropagation(); _o2mComboCerrar(); }
+    } else if (k === 'Tab'){
+      _o2mComboCerrar();
+    }
+  }
+  function comboElegirX(ctx, pid){
     _o2mComboCerrar();
-    eqPlant(mid, pid);
+    var t = String(ctx).charAt(0), r = String(ctx).slice(1);
+    if (t === 'm') eqPlant(parseInt(r, 10), pid);
+    else if (t === 'g') _oefAplicarGrupo(r, pid);
+    else if (t === 'b') _oefAplicarMarcados(pid);
+  }
+  function comboElegir(mid, pid){ comboElegirX('m' + mid, pid); }
+  /* Lo que el campo debe mostrar cuando se cierra sin elegir nada (si no, quedaría el texto de la búsqueda a medias). */
+  function _oefComboRestaurar(ctx){
+    var inp = document.getElementById(_oefComboInputId(ctx));
+    if (!inp) return;
+    var t = String(ctx).charAt(0), r = String(ctx).slice(1);
+    if (t === 'm'){ var e = _oefSel(parseInt(r, 10)); inp.value = _o2mPlantNombre(e && e.plantilla_id); }
+    else if (t === 'g'){ var g = _oefGrupoPorGid[r]; inp.value = g ? _oefNombreComun(g) : ''; }
+    else inp.value = '';
+    inp.setAttribute('aria-expanded', 'false'); inp.removeAttribute('aria-activedescendant');
   }
   function _o2mComboCerrar(){
-    _comboMidActivo = null;
+    var previo = _comboCtx;
+    _comboMidActivo = null; _comboCtx = null; _comboAct = -1; _comboOpts = [];
     if (_comboListEl) _comboListEl.style.display = 'none';
+    if (previo) _oefComboRestaurar(previo);
   }
-  // Un solo listener global (no uno por fila): cierra la lista flotante si
-  // el clic fue fuera del input activo y de la lista misma. Capture:true
-  // en el scroll porque 'scroll' no burbujea -- más simple que reposicionar
-  // en vivo, y de todas formas el usuario puede volver a enfocar el campo.
+  // Un solo listener global (no uno por fila): cierra la lista flotante si el clic fue fuera del campo activo y de la lista misma.
   document.addEventListener('mousedown', function(e){
-    if (_comboMidActivo == null) return;
-    if (e.target.closest && (e.target.closest('.o2m-combo-list-float') || e.target.id === 'o2mComboInp-'+_comboMidActivo)) return;
+    if (_comboCtx == null) return;
+    if (e.target.closest && (e.target.closest('.o2m-combo-list-float') || e.target.id === _oefComboInputId(_comboCtx))) return;
     _o2mComboCerrar();
   });
-  document.addEventListener('scroll', function(){ if (_comboMidActivo != null) _o2mComboCerrar(); }, true);
+  // 'scroll' no burbujea, por eso capture:true. Desplazar la PROPIA lista (rueda, dedo) no la cierra; desplazar cualquier otra cosa sí.
+  document.addEventListener('scroll', function(e){
+    if (_comboCtx == null) return;
+    var t = e && e.target;
+    if (_comboListEl && t && (t === _comboListEl || (_comboListEl.contains && _comboListEl.contains(t)))) return;
+    _o2mComboCerrar();
+  }, true);
 
   function eqPlant(mid, pid){
-    var e = S.equipos.find(function(x){ return x.maquina_id===mid; });
-    if (e){ e.plantilla_id = pid ? parseInt(pid) : null; e.plantilla_sugerida = false; }
+    var e = S.equipos.find(function(x){ return x.maquina_id === mid; });
+    if (e){ e.plantilla_id = pid ? parseInt(pid) : null; e.plantilla_sugerida = false; e.plantilla_origen = pid ? 'manual' : null; }
     // Elegir el checklist tampoco mueve la lista: se actualiza su fila.
     _o2mRefrescarFilaEquipo(mid); _o2mRefrescarBarraEq(); refrescarAnclas();
-    if (pid) _o2mAprenderClasificacion(mid, parseInt(pid));
+    if (pid){
+      _o2mAprenderClasificacion(mid, parseInt(pid));
+      // 2026-11-05: además queda recordado en el catálogo para ESE producto (con quién y cuándo), salvo que la persona lo desmarque. En un grupo de
+      // unidades la decisión es del encabezado: un cambio suelto de una unidad no se convierte en el checklist del producto.
+      var gr = _oefGrupoDeMid[mid];
+      if (!(gr && gr.tipo === 'unidades')){
+        var m = cacheEquipos.find(function(x){ return x.id === mid; });
+        _oefRecordarProducto(m, parseInt(pid));
+      }
+    }
   }
 
   /* Elegir el checklist a mano ENSEÑA al catálogo (Daniel, 12-08-2026:
@@ -11912,12 +12684,9 @@ window.OT2C = (function(){
     var celda = inp.closest('td');
     if (!celda) return;
     var sug = celda.querySelector('.o2m-eq-sug');
-    if (e.plantilla_sugerida && !sug){
-      celda.insertAdjacentHTML('beforeend',
-        '<small class="o2m-eq-sug"><i class="bi bi-magic me-1"></i>Sugerida automáticamente.</small>');
-    } else if (!e.plantilla_sugerida && sug){
-      sug.remove();
-    }
+    if (sug) sug.remove();
+    var _oh = _oefOrigenHtml(e), _cb = celda.querySelector('.o2m-combo');
+    if (_oh && _cb) _cb.insertAdjacentHTML('afterend', _oh);       // 2026-11-05: el origen (clase · producto · a mano) siempre a la vista
     /* 🔴 2026-09-06 (Daniel: "está apareciendo como en rojo, no sé por
        qué"). Esta función actualizaba el checklist y su aviso pero NUNCA
        la clase de la fila. Rojo significa "marcado y todavía sin
@@ -11929,14 +12698,14 @@ window.OT2C = (function(){
       tr.classList.remove('ok', 'sel');
       tr.classList.add(e.plantilla_id ? 'ok' : 'sel');
     }
+    _oefRefrescarCabeceras();
   }
   function sugerirPlantillaEquipo(mid){
     var m = cacheEquipos.find(function(x){ return x.id===mid; });
     if (!m || !m.sku || !S.tipo) return;
-    fetch('/mantenciones/api/plantillas/sugerida-por-sku?sku='+encodeURIComponent(m.sku)+
-          '&tipo_ot='+encodeURIComponent(S.tipo), {credentials:'same-origin'})
-      .then(function(r){ return r.json(); })
-      .then(function(j){
+    // 2026-11-05: UNA consulta por producto (no una por fila: 10 unidades del mismo SKU eran 10 viajes) y con el ORIGEN: si el checklist está
+    // guardado para el producto (alguien lo dejó recordado) llega como 'producto'; si sale de su clase, como 'clase'.
+    _oefSugerida(m.sku).then(function(j){
         if (!j || !j.plantilla_id) return;
         var e = S.equipos.find(function(x){ return x.maquina_id===mid; });
         // El equipo pudo desmarcarse o el usuario ya eligió a mano mientras
@@ -11944,6 +12713,7 @@ window.OT2C = (function(){
         if (!e || e.plantilla_id) return;
         e.plantilla_id = j.plantilla_id;
         e.plantilla_sugerida = true;
+        e.plantilla_origen = (j.origen === 'producto') ? 'producto' : 'clase';
         _o2mActualizarSugerenciaFila(mid); refrescarAnclas();
       })
       .catch(function(){ /* sin sugerencia -- se elige a mano, como siempre */ });
@@ -13913,6 +14683,8 @@ window.OT2C = (function(){
           eqModo:eqModo,
           eqAgregarDoc:_o2mEqAgregarDocumento,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
+          comboAbrirX:comboAbrirX, comboFiltrarX:comboFiltrarX, comboElegirX:comboElegirX, comboTecla:comboTecla, comboHover:comboHover,   // 🧰 2026-11-05 (REGLA #63)
+          eqGrupoModo:eqGrupoModo, eqGrupoMarcar:eqGrupoMarcar, eqGrupoAbrir:eqGrupoAbrir, eqRecordar:eqRecordar, eqOlvidar:eqOlvidar,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
           setFinToma:setFinToma,
           setFinObsArgumento:setFinObsArgumento,

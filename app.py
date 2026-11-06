@@ -80,6 +80,7 @@ import anexo_lugar as _axl        # 2026-11-03: «Lugar del Servicio» del anexo
 import ot_intenciones as _oint   # 2026-10-25 (REGLA #47): intenciones del costeo (por qué, quién lo asume) y su validación: módulo puro con pruebas
 import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
 import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
+import ot_equipos_filas as _oef       # 2026-11-05: Paso «Equipos y su checklist»: una fila con cantidad ↔ una fila por unidad + checklist por producto (módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
@@ -92397,13 +92398,18 @@ def mant_cliente_maquinas_list(cid):
     # templates/ot2/_modal_crear.html. Aditivo: los consumidores que ya
     # usaban este endpoint (repuestos.html, Informe Post-Servicio) ignoran
     # el campo nuevo sin romperse.
-    rows = mysql_fetchall(
-        "SELECT id, nombre, sku, serie, estado_op, doc_origen, "
-        "       COALESCE(cantidad,1) AS cantidad, "
-        "       COALESCE(aplica_mantencion,1) AS aplica_mantencion "
-        "  FROM mant_maquinas WHERE cliente_id=%s AND COALESCE(estado,'activo') <> 'baja' "
-        " ORDER BY nombre", (cid,)
-    ) or []
+    # 2026-11-05 (Paso «Equipos» del asistente: juntar/separar filas): `created_at` y `origen_visita_id` viajan para que la pantalla sepa si una fila
+    # es reciente y todavía no se usó en una OT (las únicas que se pueden juntar o separar). Aditivo; el servidor sigue decidiendo.
+    _sql_base = ("SELECT id, nombre, sku, serie, estado_op, doc_origen, "
+                 "       COALESCE(cantidad,1) AS cantidad, "
+                 "       COALESCE(aplica_mantencion,1) AS aplica_mantencion%s "
+                 "  FROM mant_maquinas WHERE cliente_id=%%s AND COALESCE(estado,'activo') <> 'baja' "
+                 " ORDER BY nombre, id")
+    try:
+        rows = mysql_fetchall(_sql_base % ", created_at, origen_visita_id", (cid,)) or []
+    except Exception as _e_cols:      # una base sin esas columnas sigue dando la lista de siempre
+        print(f"[maquinas-list] sin created_at/origen_visita_id: {type(_e_cols).__name__}", flush=True)
+        rows = mysql_fetchall(_sql_base % "", (cid,)) or []
     # 🧹 2026-10-23 (Daniel, OT-2026-00348): una línea de servicio (ZZ…) o el descuento de la venta («DE») que quedó en la ficha como
     # «equipo» no se ofrece para una OT ni para pedir repuestos (no es una máquina). No se borra de la ficha: solo no se lista aquí.
     rows = [r for r in rows if not _sku_es_servicio(r.get("sku"), r.get("nombre"))]
@@ -97509,6 +97515,447 @@ def ot2_api_producto_clasificar():
         pass
     return jsonify({"ok": True, "guardado": True,
                     "clase": clase["nombre"], "slug": clase["slug"]})
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  FILAS DE EQUIPOS DEL ASISTENTE «Generar OT» (Paso «Equipos y su checklist») — Daniel, 5-nov-2026
+#
+#  «Quisiera tener la opción de REVERTIR… dame la opción de MULTIPLICAR LA FILA o dejarlo con UNA FILA CON 18. Además me cuesta mucho seleccionar el
+#  checklist, esto parte tiene que ser INTELIGENTE. Y también GUARDARLA EN LOS CATÁLOGOS si lo seleccionan de allí.»
+#
+#  · Las reglas PURAS (cómo se sugiere contar un producto, cuándo se pueden juntar o separar filas) viven en ot_equipos_filas.py, con pruebas.
+#  · PISTAS por producto (`/ot/api/equipos/pistas`): en UN viaje, para todos los SKU del paso, el conteo sugerido, el checklist GUARDADO para ese
+#    producto y el que sale de su clase (antes el asistente preguntaba fila por fila). Solo lee.
+#  · RECORDAR el checklist de un producto (`/ot/api/producto/checklist`): se guarda en `cat_producto_checklist` (producto + categoría de OT) con quién
+#    y cuándo; no pisa lo que dejó otra persona sin avisar. El checklist elegido sigue enseñándole la CLASE al producto sin clasificar
+#    (`/ot/api/producto/clasificar`, decisión del 12-ago).
+#  · JUNTAR / SEPARAR (`/ot/api/equipos/agrupar` y `/separar`): una línea de 10 unidades que el alta automática partió en 10 fichas vuelve a ser UNA con
+#    cantidad 10 (las otras 9 quedan en «baja», restaurables) y viceversa. SOLO filas recién creadas que ninguna OT usa; todo queda en
+#    `mant_maquinas_agrupacion` y en la bitácora. Nada se borra (REGLA #5).
+# ══════════════════════════════════════════════════════════════════════
+def _ensure_cat_producto_checklist():
+    """cat_producto_checklist — «este producto usa este checklist en este tipo de OT» (categoría: instalacion / mantencion / visitas). Un solo CREATE TABLE
+    IF NOT EXISTS, barato cuando ya está aplicado (REGLA #18)."""
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS cat_producto_checklist ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  sku VARCHAR(100) NOT NULL,"
+            "  categoria VARCHAR(30) NOT NULL,"
+            "  plantilla_id INT NOT NULL,"
+            "  actualizado_por VARCHAR(190) NULL,"
+            "  actualizado_en DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+            "  UNIQUE KEY uq_cat_prod_chk (sku, categoria),"
+            "  KEY ix_cat_prod_chk_plantilla (plantilla_id)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+    except Exception as e:
+        print(f"[ensure_cat_producto_checklist] {e}", flush=True)
+
+
+def _ensure_mant_maquinas_agrupacion():
+    """mant_maquinas_agrupacion — qué filas de la ficha se juntaron en cuál (para poder separarlas devolviendo EXACTAMENTE las mismas). Un solo CREATE
+    TABLE IF NOT EXISTS (REGLA #18)."""
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS mant_maquinas_agrupacion ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  cliente_id INT NOT NULL,"
+            "  principal_id INT NOT NULL,"
+            "  hermana_id INT NOT NULL,"
+            "  cantidad_hermana INT NOT NULL DEFAULT 1,"
+            "  creada_por VARCHAR(190) NULL,"
+            "  creada_en DATETIME DEFAULT CURRENT_TIMESTAMP,"
+            "  revertida_por VARCHAR(190) NULL,"
+            "  revertida_en DATETIME NULL,"
+            "  KEY ix_maq_agr_principal (principal_id, revertida_en),"
+            "  KEY ix_maq_agr_hermana (hermana_id)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+    except Exception as e:
+        print(f"[ensure_mant_maquinas_agrupacion] {e}", flush=True)
+
+
+_OEF_MAX_PISTAS = 80
+
+
+def _oef_int(v, defecto=0):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return defecto
+
+
+def _oef_plantillas_guardadas(skus, categoria):
+    """{SKU en mayúsculas: {plantilla_id, nombre, por, cuando}} del checklist que ya se GUARDÓ para cada producto en esa categoría de OT. Solo cuenta si el
+    checklist sigue activo y con ítems (uno desactivado o vacío no sirve de sugerencia). {} si no hay categoría, nada guardado o falla la lectura."""
+    skus = [s for s in dict.fromkeys((str(x or "").strip() for x in (skus or []))) if s]
+    if not skus or not categoria:
+        return {}
+    try:
+        ph = ",".join(["%s"] * len(skus))
+        rows = mysql_fetchall(
+            "SELECT g.sku, g.plantilla_id, g.actualizado_por, g.actualizado_en, p.nombre "
+            "  FROM cat_producto_checklist g "
+            "  JOIN mant_tarea_plantillas p ON p.id = g.plantilla_id AND COALESCE(p.activa, 1) = 1 "
+            f" WHERE g.categoria = %s AND g.sku IN ({ph}) "
+            "   AND EXISTS (SELECT 1 FROM mant_tarea_plantilla_items i WHERE i.plantilla_id = p.id)",
+            (categoria,) + tuple(skus)) or []
+    except Exception as e:
+        print(f"[oef_plantillas_guardadas] {type(e).__name__}: {e}", flush=True)
+        return {}
+    out = {}
+    for r in rows:
+        cuando = ""
+        try:
+            cuando = chile_fmt_filter(r.get("actualizado_en")) if r.get("actualizado_en") else ""
+        except Exception:
+            cuando = str(r.get("actualizado_en") or "")[:16]
+        out[(r.get("sku") or "").strip().upper()] = {
+            "plantilla_id": int(r["plantilla_id"]), "nombre": r.get("nombre") or "",
+            "por": r.get("actualizado_por") or "", "cuando": cuando}
+    return out
+
+
+def _oef_plantilla_de_clase(sku, tipo):
+    """{plantilla_id, nombre} del checklist que sale de la CLASE del producto (el puente de siempre SKU → clase → plantilla), o None."""
+    try:
+        pid = _plantilla_por_clasificacion_sku(sku, tipo)
+        if not pid:
+            return None
+        row = mysql_fetchone("SELECT nombre FROM mant_tarea_plantillas WHERE id=%s", (pid,))
+        return {"plantilla_id": int(pid), "nombre": (row or {}).get("nombre") or ""}
+    except Exception as e:
+        print(f"[oef_plantilla_de_clase] sku={sku!r}: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
+@app.route("/ot/api/equipos/pistas", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot2_api_equipos_pistas():
+    """Lo que el asistente necesita saber de cada producto del paso «Equipos» en UN solo viaje: cómo se sugiere contarlo (una fila con cantidad o una fila
+    por unidad), el checklist guardado para ese producto y el que sale de su clase. Solo LEE. Body: {tipo, items:[{sku, nombre, cantidad}]}. El sistema
+    SUGIERE con su origen a la vista; la persona decide (REGLA #32)."""
+    d = request.get_json(silent=True) or {}
+    tipo = (d.get("tipo") or "").strip().lower()[:40]
+    items = d.get("items") if isinstance(d.get("items"), list) else []
+    por_sku = {}
+    for it in items[: _OEF_MAX_PISTAS * 2]:
+        if not isinstance(it, dict):
+            continue
+        sku = (it.get("sku") or "").strip()[:100]
+        if not sku or _sku_es_servicio(sku, it.get("nombre")):
+            continue
+        k = sku.upper()
+        e = por_sku.setdefault(k, {"sku": sku, "nombre": (it.get("nombre") or "").strip()[:300], "cantidad": 0})
+        e["cantidad"] += max(1, _oef_int(it.get("cantidad"), 1))
+        if not e["nombre"]:
+            e["nombre"] = (it.get("nombre") or "").strip()[:300]
+        if len(por_sku) >= _OEF_MAX_PISTAS:
+            break
+    categoria = _categoria_admin_para_tipo(tipo) if tipo else None
+    skus = [e["sku"] for e in por_sku.values()]
+    clases = {(k or "").strip().upper(): v for k, v in (_inc_clasificacion_skus_batch(skus) or {}).items()}
+    guardadas = _oef_plantillas_guardadas(skus, categoria)
+    out = {}
+    for k, e in por_sku.items():
+        de_clase = _oef_plantilla_de_clase(e["sku"], tipo) if (tipo and categoria) else None
+        out[k] = _oef.armar_pista(e["sku"], e["nombre"], e["cantidad"], clases.get(k) or {}, guardadas.get(k), de_clase)
+    resp = jsonify({"ok": True, "tipo": tipo, "categoria": categoria, "skus": out})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/ot/api/producto/checklist", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot2_api_producto_checklist():
+    """«RECORDAR para este producto»: elegir un checklist en el asistente lo deja guardado EN EL CATÁLOGO para ese producto y esa categoría de OT (instalación,
+    mantención, visitas), con quién y cuándo, y la próxima OT lo trae puesto, con su origen a la vista. plantilla_id vacío = «dejar de recordar».
+
+    No pisa en silencio lo que dejó OTRA persona: si ya hay un checklist distinto guardado por alguien más, responde `ya_guardada` con el actual y el
+    asistente pregunta; con `reemplazar: true` se cambia. Un checklist inactivo, vacío o de otra categoría no se guarda. El producto que todavía no
+    está en el catálogo se da de alta (como lo hace Cotizaciones) para que quede donde se busca; el ERP no se toca (REGLA #4.1)."""
+    d = request.get_json(silent=True) or {}
+    sku = (d.get("sku") or "").strip()[:100]
+    tipo = (d.get("tipo") or "").strip().lower()[:40]
+    nombre_prod = (d.get("nombre") or "").strip()[:300]
+    pid = _oef_int(d.get("plantilla_id"))
+    reemplazar = bool(d.get("reemplazar"))
+    categoria = _categoria_admin_para_tipo(tipo) if tipo else None
+    if not sku or not categoria:
+        return jsonify({"ok": False, "error": "Falta el producto o el tipo de trabajo."}), 400
+    if _sku_es_servicio(sku, nombre_prod):
+        return jsonify({"ok": True, "guardado": False, "motivo": "es_servicio"})
+    quien = current_username() or "sistema"
+    try:
+        actual = mysql_fetchone(
+            "SELECT g.plantilla_id, g.actualizado_por, g.actualizado_en, p.nombre "
+            "  FROM cat_producto_checklist g LEFT JOIN mant_tarea_plantillas p ON p.id = g.plantilla_id "
+            " WHERE g.sku=%s AND g.categoria=%s LIMIT 1", (sku, categoria))
+    except Exception as e:
+        print(f"[ot2_producto_checklist] leer sku={sku!r}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo revisar lo que ya estaba guardado. Reintenta."}), 500
+    if not pid:                                               # «dejar de recordar»
+        if actual:
+            try:
+                mysql_execute("DELETE FROM cat_producto_checklist WHERE sku=%s AND categoria=%s", (sku, categoria))
+                _mant_log("catalogo", 0, "checklist_producto_olvidado",
+                          f"SKU {sku}: dejó de recordarse el checklist «{(actual or {}).get('nombre') or actual.get('plantilla_id')}» en «{categoria}» ({quien}).")
+            except Exception as e:
+                print(f"[ot2_producto_checklist] olvidar sku={sku!r}: {type(e).__name__}: {e}", flush=True)
+                return jsonify({"ok": False, "error": "No se pudo dejar de recordar."}), 500
+        return jsonify({"ok": True, "guardado": False, "olvidado": bool(actual)})
+    try:
+        valida = mysql_fetchone(
+            "SELECT p.id, p.nombre FROM mant_tarea_plantillas p "
+            " WHERE p.id=%s AND COALESCE(p.activa,1)=1 AND (p.categoria_admin=%s OR p.categoria_admin IS NULL) "
+            "   AND EXISTS (SELECT 1 FROM mant_tarea_plantilla_items i WHERE i.plantilla_id = p.id) LIMIT 1", (pid, categoria))
+    except Exception as e:
+        print(f"[ot2_producto_checklist] validar pid={pid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo revisar el checklist. Reintenta."}), 500
+    if not valida:
+        return jsonify({"ok": False, "error": "Ese checklist no sirve para este tipo de trabajo (está inactivo, vacío o es de otra categoría)."}), 400
+    if actual and int(actual.get("plantilla_id") or 0) == pid:
+        return jsonify({"ok": True, "guardado": True, "sin_cambio": True, "plantilla": {"id": pid, "nombre": valida.get("nombre") or ""}})
+    if actual and not reemplazar and (actual.get("actualizado_por") or "") not in ("", quien):
+        try:
+            cuando = chile_fmt_filter(actual.get("actualizado_en")) if actual.get("actualizado_en") else ""
+        except Exception:
+            cuando = ""
+        return jsonify({"ok": True, "guardado": False, "motivo": "ya_guardada",
+                        "actual": {"plantilla_id": int(actual.get("plantilla_id") or 0), "nombre": actual.get("nombre") or "",
+                                   "por": actual.get("actualizado_por") or "", "cuando": cuando}})
+    try:
+        mysql_execute(
+            "INSERT INTO cat_producto_checklist (sku, categoria, plantilla_id, actualizado_por) VALUES (%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE plantilla_id=VALUES(plantilla_id), actualizado_por=VALUES(actualizado_por)",
+            (sku, categoria, pid, quien))
+    except Exception as e:
+        print(f"[ot2_producto_checklist] guardar sku={sku!r} pid={pid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar. Reintenta."}), 500
+    producto_creado = False
+    try:       # que el producto exista en el catálogo (idempotente por SKU; no toca el ERP). Si falla, lo recordado igual quedó guardado por SKU.
+        _fn_cat = globals().get("_cat_crear_o_reusar_producto_desde_erp")
+        if _fn_cat:
+            r = _fn_cat(sku, nombre_prod, traer_foto=False) or {}
+            producto_creado = bool(r.get("creado"))
+    except Exception as e:
+        print(f"[ot2_producto_checklist] catálogo sku={sku!r}: {type(e).__name__}: {e}", flush=True)
+    try:
+        _mant_log("catalogo", 0, "checklist_producto",
+                  f"SKU {sku}: en «{categoria}» usará el checklist «{valida.get('nombre')}» ({quien})"
+                  + (f"; antes: «{actual.get('nombre')}» de {actual.get('actualizado_por') or '—'}" if actual else "")
+                  + ("; el producto se dio de alta en el catálogo" if producto_creado else "") + ".")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "guardado": True, "plantilla": {"id": pid, "nombre": valida.get("nombre") or ""},
+                    "producto_creado": producto_creado, "reemplazo": bool(actual)})
+
+
+def _maq_ids_en_uso(ids):
+    """ids de mant_maquinas que alguna OT ya usa (mant_visita_equipos o mant_visita_tareas). `None` si no se pudo verificar (quien llama NO sigue a ciegas)."""
+    ids = sorted({int(i) for i in (ids or [])})
+    if not ids:
+        return set()
+    ph = ",".join(["%s"] * len(ids))
+    usados = set()
+    for sql in (f"SELECT DISTINCT maquina_id AS m FROM mant_visita_equipos WHERE maquina_id IN ({ph})",
+                f"SELECT DISTINCT maquina_id AS m FROM mant_visita_tareas WHERE maquina_id IN ({ph})"):
+        try:
+            for r in (mysql_fetchall(sql, tuple(ids)) or []):
+                if r.get("m") is not None:
+                    usados.add(int(r["m"]))
+        except Exception as e:
+            print(f"[maq_ids_en_uso] {type(e).__name__}: {e}", flush=True)
+            return None
+    return usados
+
+
+def _oef_fila_json(f):
+    return {"id": int(f["id"]), "nombre": f.get("nombre") or "", "sku": f.get("sku") or "", "serie": f.get("serie") or "",
+            "cantidad": int(f.get("cantidad") or 1), "doc_origen": f.get("doc_origen") or ""}
+
+
+def _oef_rechazo(codigo, texto, http=409):
+    return jsonify({"ok": False, "error_codigo": codigo, "error": texto}), http
+
+
+_MAQ_COLS_SEL = ("id, cliente_id, sku, nombre, serie, doc_origen, COALESCE(cantidad,1) AS cantidad, "
+                 "COALESCE(estado,'activo') AS estado, origen_visita_id, created_at")
+
+
+@app.route("/ot/api/equipos/agrupar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot2_api_equipos_agrupar():
+    """JUNTAR N filas de la ficha (mismo producto, mismo documento) en UNA con cantidad N. Queda la de menor id; las demás pasan a «baja» —no se borran— y
+    se anotan en mant_maquinas_agrupacion para poder separarlas devolviendo las mismas. Solo filas recién creadas (≤ 7 días) que ninguna OT usa. Body:
+    {cliente_id, ids:[…]}."""
+    d = request.get_json(silent=True) or {}
+    cid = _oef_int(d.get("cliente_id"))
+    ids = sorted({int(x) for x in (d.get("ids") or []) if str(x).strip().isdigit()})
+    if not cid or len(ids) < 2:
+        return _oef_rechazo("POCAS", "Elige al menos dos filas del mismo producto.", 400)
+    if len(ids) > _oef.MAX_FILAS_AGRUPAR:
+        return _oef_rechazo("MUCHAS", "Son demasiadas filas para juntarlas de una vez.", 400)
+    en_uso = _maq_ids_en_uso(ids)
+    if en_uso is None:
+        return _oef_rechazo("SIN_VERIFICAR", "No se pudo comprobar si esas filas ya se usaron en una OT. Reintenta en un momento.", 503)
+    quien = current_username() or "sistema"
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {_MAQ_COLS_SEL} FROM mant_maquinas WHERE id IN ({','.join(['%s'] * len(ids))}) FOR UPDATE", tuple(ids))
+            filas = list(cur.fetchall() or [])
+            if len(filas) != len(ids):
+                conn.rollback()
+                return _oef_rechazo("NO_ENCONTRADA", "Alguna de las filas ya no existe.")
+            ok, codigo, texto, datos = _oef.validar_agrupar(filas, cid, ahora=datetime.utcnow(), en_uso=en_uso)
+            if not ok:
+                conn.rollback()
+                return _oef_rechazo(codigo, texto)
+            principal, bajas, total = datos["principal_id"], datos["bajas"], datos["total"]
+            por_id = {int(f["id"]): f for f in filas}
+            cur.execute("UPDATE mant_maquinas SET cantidad=%s, updated_by=%s WHERE id=%s", (total, quien, principal))
+            cur.execute(f"UPDATE mant_maquinas SET estado='baja', updated_by=%s WHERE id IN ({','.join(['%s'] * len(bajas))})", (quien, *bajas))
+            for b in bajas:
+                cur.execute(
+                    "INSERT INTO mant_maquinas_agrupacion (cliente_id, principal_id, hermana_id, cantidad_hermana, creada_por) VALUES (%s,%s,%s,%s,%s)",
+                    (cid, principal, b, int(por_id[b].get("cantidad") or 1), quien))
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[ot2_equipos_agrupar] cid={cid} ids={ids}: {type(e).__name__}: {e}", flush=True)
+        return _oef_rechazo("ERROR", "No se pudo juntar las filas. No se cambió nada; reintenta.", 500)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    p = por_id[principal]
+    detalle = (f"{p.get('nombre') or ''} (SKU {p.get('sku') or '—'}): {len(ids)} filas juntas en una con cantidad {total}; "
+               f"en baja (restaurables): {', '.join('#' + str(b) for b in bajas)} · por {quien}")
+    try:
+        _mant_log("maquina", principal, "agrupada", detalle)
+        _mant_log("cliente", cid, "equipos_agrupados", detalle)
+        for b in bajas:
+            _mant_log("maquina", b, "agrupada_en", f"Quedó en baja: se juntó en la fila #{principal} (cantidad {total}) · por {quien}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "principal": dict(_oef_fila_json(p), cantidad=total), "bajas": bajas, "total": total,
+                    "mensaje": _oef.resumen_agrupar(p.get("nombre") or p.get("sku") or "el producto", total)})
+
+
+@app.route("/ot/api/equipos/separar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot2_api_equipos_separar():
+    """SEPARAR una fila de cantidad N: si antes se juntaron filas en ella, las MISMAS vuelven (con sus series); si no, se crean N-1 fichas nuevas de cantidad 1
+    (cada una con su serie) y la fila queda en 1. Solo filas recién creadas (≤ 7 días) que ninguna OT usa; tope de 100 unidades. Body: {cliente_id, id}."""
+    d = request.get_json(silent=True) or {}
+    cid = _oef_int(d.get("cliente_id"))
+    mid = _oef_int(d.get("id"))
+    if not cid or not mid:
+        return _oef_rechazo("NO_ENCONTRADA", "Falta la fila que se quiere separar.", 400)
+    en_uso = _maq_ids_en_uso([mid])
+    if en_uso is None:
+        return _oef_rechazo("SIN_VERIFICAR", "No se pudo comprobar si esa fila ya se usó en una OT. Reintenta en un momento.", 503)
+    quien = current_username() or "sistema"
+    conn = get_mysql()
+    nuevas, restauradas = [], []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {_MAQ_COLS_SEL} FROM mant_maquinas WHERE id=%s AND cliente_id=%s FOR UPDATE", (mid, cid))
+            fila = cur.fetchone()
+            if not fila:
+                conn.rollback()
+                return _oef_rechazo("NO_ENCONTRADA", "No se encontró la fila.", 404)
+            cur.execute(
+                "SELECT a.hermana_id, a.cantidad_hermana, COALESCE(m.estado,'activo') AS estado_hermana "
+                "  FROM mant_maquinas_agrupacion a JOIN mant_maquinas m ON m.id = a.hermana_id "
+                " WHERE a.principal_id=%s AND a.revertida_en IS NULL ORDER BY a.hermana_id FOR UPDATE", (mid,))
+            agrupacion = list(cur.fetchall() or [])
+            ok, codigo, texto, datos = _oef.validar_separar(fila, cid, ahora=datetime.utcnow(), en_uso=en_uso, agrupacion=agrupacion)
+            if not ok:
+                conn.rollback()
+                return _oef_rechazo(codigo, texto)
+            if datos["modo"] == "revertir":
+                restauradas = datos["restaurar"]
+                cur.execute(f"UPDATE mant_maquinas SET estado='activo', updated_by=%s WHERE id IN ({','.join(['%s'] * len(restauradas))}) "
+                            "AND COALESCE(estado,'')='baja'", (quien, *restauradas))
+                cur.execute("UPDATE mant_maquinas SET cantidad=%s, updated_by=%s WHERE id=%s", (datos["cantidad_principal"], quien, mid))
+                cur.execute("UPDATE mant_maquinas_agrupacion SET revertida_por=%s, revertida_en=NOW() WHERE principal_id=%s AND revertida_en IS NULL",
+                            (quien, mid))
+            else:
+                n_nuevas = datos["crear"]
+                sku = (fila.get("sku") or "").strip()
+                evitar = {str(fila.get("serie") or "")}
+                serie_base = _generar_serie_ilus(cid, sku, evitar=evitar)
+                try:
+                    pref, suf = serie_base.rsplit("-", 1)
+                    seq = int(suf)
+                except (ValueError, AttributeError):
+                    pref, seq = serie_base, 1
+                for i in range(n_nuevas):
+                    serie, intento = f"{pref}-{seq + i}", 0
+                    while True:
+                        try:
+                            cur.execute(
+                                "INSERT INTO mant_maquinas (cliente_id, sku, nombre, serie, doc_origen, doc_fecha, cantidad, notas, ubicacion_cliente, "
+                                "estado_op, fecha_instalacion, tag_1, tag_2, justif_fecha_inst, justif_doc_mismatch, created_by, aplica_mantencion) "
+                                "SELECT cliente_id, sku, nombre, %s, doc_origen, doc_fecha, 1, notas, ubicacion_cliente, estado_op, fecha_instalacion, "
+                                "tag_1, tag_2, justif_fecha_inst, justif_doc_mismatch, %s, aplica_mantencion FROM mant_maquinas WHERE id=%s",
+                                (serie, quien, mid))
+                            nuevas.append({"id": int(cur.lastrowid), "serie": serie})
+                            evitar.add(serie)
+                            break
+                        except Exception as e_ins:
+                            if ("1062" in str(e_ins) or "Duplicate entry" in str(e_ins)) and intento < 5:
+                                intento += 1
+                                serie = _generar_serie_ilus(cid, sku, _intento=intento, evitar=evitar)
+                                continue
+                            raise
+                cur.execute("UPDATE mant_maquinas SET cantidad=1, updated_by=%s WHERE id=%s", (quien, mid))
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[ot2_equipos_separar] cid={cid} id={mid}: {type(e).__name__}: {e}", flush=True)
+        return _oef_rechazo("ERROR", "No se pudo separar la fila. No se cambió nada; reintenta.", 500)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    # Los datos extra de la ficha (marca, modelo, año, sala) viajan a las filas nuevas; si esas columnas no existen en esta base, se omiten sin ruido.
+    if nuevas:
+        for n in nuevas:
+            try:
+                mysql_execute(
+                    "UPDATE mant_maquinas n JOIN mant_maquinas p ON p.id=%s "
+                    "SET n.familia_equipo=p.familia_equipo, n.marca=p.marca, n.modelo=p.modelo, n.anio_fabricacion=p.anio_fabricacion, "
+                    "n.ubicacion_sala=p.ubicacion_sala WHERE n.id=%s", (mid, n["id"]))
+            except Exception:
+                break
+    filas = mysql_fetchall(f"SELECT {_MAQ_COLS_SEL} FROM mant_maquinas WHERE id IN ({','.join(['%s'] * (1 + len(nuevas) + len(restauradas)))}) ORDER BY id",
+                           tuple([mid] + [n["id"] for n in nuevas] + list(restauradas))) or []
+    modo = "revertir" if restauradas else "multiplicar"
+    detalle = (f"{fila.get('nombre') or ''} (SKU {fila.get('sku') or '—'}): " +
+               (f"se separaron las filas que se habían juntado: {', '.join('#' + str(r) for r in restauradas)}" if restauradas
+                else f"se separó en {1 + len(nuevas)} filas de una unidad: {', '.join('#' + str(n['id']) for n in nuevas)} (nuevas)") + f" · por {quien}")
+    try:
+        _mant_log("maquina", mid, "separada", detalle)
+        _mant_log("cliente", cid, "equipos_separados", detalle)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "modo": modo, "principal_id": mid, "nuevas": [n["id"] for n in nuevas], "restauradas": list(restauradas),
+                    "filas": [_oef_fila_json(f) for f in filas],
+                    "mensaje": _oef.resumen_separar(fila.get("nombre") or fila.get("sku") or "el producto", modo, len(filas))})
 
 
 # Etiquetas legibles de `mant_clientes.tipo_cliente`, para la bitácora.
@@ -162374,6 +162821,14 @@ def mant_plantilla_sugerida_por_sku():
     tipo_ot = (request.args.get("tipo_ot") or "").strip().lower()
     if not sku or not tipo_ot:
         return jsonify({"ok": True, "plantilla_id": None, "plantilla_nombre": None})
+    # 2026-11-05 (Daniel: «guardarla en los catálogos»): lo que se recordó PARA ESTE PRODUCTO manda sobre lo que sale de su clase. Aditivo: `origen`
+    # dice de dónde sale («producto» | «clase»); quien no lo lee se comporta como siempre.
+    try:
+        _g = _oef_plantillas_guardadas([sku], _categoria_admin_para_tipo(tipo_ot)).get(sku.upper())
+    except Exception:
+        _g = None
+    if _g:
+        return jsonify({"ok": True, "plantilla_id": _g["plantilla_id"], "plantilla_nombre": _g["nombre"], "origen": "producto"})
     try:
         pid = _plantilla_por_clasificacion_sku(sku, tipo_ot)
     except Exception as e:
@@ -162386,7 +162841,7 @@ def mant_plantilla_sugerida_por_sku():
             nombre = row.get("nombre") if row else None
         except Exception as e:
             print(f"[plantilla_sugerida_por_sku] leer nombre de plantilla {pid} falló: {e}", flush=True)
-    return jsonify({"ok": True, "plantilla_id": pid, "plantilla_nombre": nombre})
+    return jsonify({"ok": True, "plantilla_id": pid, "plantilla_nombre": nombre, "origen": ("clase" if pid else None)})
 
 
 def _familia_plantilla_para_tipo(tipo_ot):
@@ -185561,6 +186016,8 @@ try:
         _ensure_ot_comunicacion_tablas()
         _ensure_comm_template_ot_comunicacion()
         _ensure_ot_recordatorios_tabla()      # 2026-11-05: constancia del recordatorio de 24 horas (CREATE TABLE IF NOT EXISTS, barata)
+        _ensure_cat_producto_checklist()      # 2026-11-05: checklist que se recuerda por producto (Paso «Equipos y su checklist»; un solo CREATE TABLE IF NOT EXISTS)
+        _ensure_mant_maquinas_agrupacion()    # 2026-11-05: filas de la ficha juntadas/separadas desde el asistente (un solo CREATE TABLE IF NOT EXISTS)
 except Exception as _ensure_otcom_err:
     print(f"[ILUS][WARN] comunicación de la OT (tabla/plantillas): {_ensure_otcom_err}", flush=True)
 
