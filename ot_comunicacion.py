@@ -834,6 +834,49 @@ _RECORDATORIO_V2 = (
     + _pie("¿Necesitas cambiar la fecha o el acceso? Responde este correo o crea un ticket de soporte y lo coordinamos con tiempo."))
 
 
+# v3 (5-nov-2026, «aporte de valor» + recorrido + firma): TERMINADA y RECORDATORIO tal como salieron en #281, con «responde este correo» en el pie. Daniel (probó
+# un correo, 5-nov): «lo que sí o sí debe hacer es crear un ticket, siempre crear un ticket» → la v4 manda SIEMPRE al ticket. Las construye la misma función que
+# la vigente (`_cuerpo_terminada` / `_cuerpo_recordatorio`), con el pie de entonces: así la v3 es EXACTAMENTE lo que quedó sembrado y se puede comparar.
+def _cuerpo_terminada(pie):
+    return (_p("{{saludo}}")
+            + _p("Terminamos el trabajo de la orden de trabajo <strong>{{ot}}</strong>. Aquí está el documento firmado, con lo que se hizo, "
+                 "los equipos revisados y las fotos.")
+            + "{{resumen_trabajo_html}}"
+            + _tabla("#16a34a", _FILAS)
+            + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
+            + "{{recorrido_html}}"
+            + _pie(pie)
+            + "{{firma_sstt_html}}")
+
+
+def _cuerpo_recordatorio(pie):
+    return (_p("{{saludo}}")
+            + _p("Te recordamos que <strong>{{dia}}</strong> nuestro equipo técnico irá a realizar el trabajo de la orden de trabajo "
+                 "<strong>{{ot}}</strong>.")
+            + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Trabajo", "{{tipo_mantencion}}") + _f("Fecha", "{{fecha}}")
+                     + _f("Horario", "{{horario}}") + _f("Técnico(s)", "{{tecnicos}}") + _f("Equipos", "{{maquina}}")
+                     + _f("Dirección", "{{direccion}}"))
+            + "{{recorrido_html}}"
+            + "{{que_esperar_html}}"
+            + "{{preparacion_html}}"
+            + _pie(pie)
+            + "{{firma_sstt_html}}")
+
+
+_TERMINADA_V3 = (
+    "Tu orden de trabajo {{ot}} quedó terminada",
+    _cuerpo_terminada("El enlace es personal y se mantiene disponible por {{dias_vigencia}} días. Si algo no calza, responde este correo o crea "
+                      "un ticket de soporte."))
+_RECORDATORIO_V3 = (
+    "Recordatorio: tu visita técnica es {{dia}} ({{ot}})",
+    _cuerpo_recordatorio("¿Necesitas cambiar la fecha o el acceso? Responde este correo o crea un ticket de soporte y lo coordinamos con tiempo."))
+
+# REGLA #62 (5-nov-2026): al cliente SIEMPRE se le indica crear un ticket de soporte (el botón «Crear ticket de soporte» va al final de TODO correo de ILUS,
+# `_ilus_email_master`), nunca «responde este correo»: el ticket deja la solicitud registrada y la atiende el equipo. Una frase única para todas las plantillas.
+COMO_CREAR_TICKET = "crea un ticket de soporte con el botón «Crear ticket de soporte» que está al final de este correo"
+PORQUE_TICKET = "así tu solicitud queda registrada y la atiende nuestro equipo de Servicio Técnico"
+
+
 def invitacion_html():
     """El aviso de la invitación de calendario adjunta (solo cuando el correo de verdad la lleva)."""
     return _p("<strong>Agrégala a tu calendario:</strong> te adjuntamos la invitación (archivo .ics). Ábrela y acéptala para que la visita quede en tu agenda.")
@@ -843,18 +886,11 @@ def invitacion_html():
 SEMILLAS = {
     # Al CLIENTE, al aprobar el cierre (se enciende y se apaga en Control de correos). v2 (5-nov-2026): con el «Resumen del trabajo»; v3: con el recorrido
     # «Tu servicio, paso a paso» (todo hecho) y la firma del equipo de Servicio Técnico.
+    # v4 (5-nov-2026, Daniel: «siempre crear un ticket»): el pie manda al ticket, nunca a «responde este correo».
     PLANTILLA_TERMINADA: (
         "Tu orden de trabajo {{ot}} quedó terminada",
-        _p("{{saludo}}")
-        + _p("Terminamos el trabajo de la orden de trabajo <strong>{{ot}}</strong>. Aquí está el documento firmado, con lo que se hizo, "
-             "los equipos revisados y las fotos.")
-        + "{{resumen_trabajo_html}}"
-        + _tabla("#16a34a", _FILAS)
-        + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
-        + "{{recorrido_html}}"
-        + _pie("El enlace es personal y se mantiene disponible por {{dias_vigencia}} días. Si algo no calza, responde este correo o crea "
-               "un ticket de soporte.")
-        + "{{firma_sstt_html}}"),
+        _cuerpo_terminada("El enlace es personal y se mantiene disponible por {{dias_vigencia}} días. Si algo no calza o tienes una consulta, "
+                          + COMO_CREAR_TICKET + ": " + PORQUE_TICKET + ".")),
     # Al equipo (quien creó la OT, el ejecutivo o el responsable): qué pasó y qué se envió.
     PLANTILLA_TERMINADA_INTERNO: (
         "OT {{ot}} terminada · {{cliente}}",
@@ -883,19 +919,11 @@ SEMILLAS = {
         + _pie("El enlace se mantiene disponible por {{dias_vigencia}} días. Lo envió {{enviado_por}} desde ILUS Fitness.")),
     # RECORDATORIO DE 24 HORAS (Daniel, 5-nov-2026). Al CLIENTE: sin enlace a la ficha interna (pide sesión); si algo cambia, responde el correo.
     # v2 (5-nov-2026): con «Qué va a pasar» (quién llega, a qué equipos, cómo cierra la visita) y «Para dejar todo listo» según el tipo de trabajo.
+    # v4 (5-nov-2026, Daniel: «siempre crear un ticket»): cambiar la fecha o el acceso se pide con un ticket.
     PLANTILLA_RECORDATORIO: (
         "Recordatorio: tu visita técnica es {{dia}} ({{ot}})",
-        _p("{{saludo}}")
-        + _p("Te recordamos que <strong>{{dia}}</strong> nuestro equipo técnico irá a realizar el trabajo de la orden de trabajo "
-             "<strong>{{ot}}</strong>.")
-        + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Trabajo", "{{tipo_mantencion}}") + _f("Fecha", "{{fecha}}")
-                 + _f("Horario", "{{horario}}") + _f("Técnico(s)", "{{tecnicos}}") + _f("Equipos", "{{maquina}}")
-                 + _f("Dirección", "{{direccion}}"))
-        + "{{recorrido_html}}"
-        + "{{que_esperar_html}}"
-        + "{{preparacion_html}}"
-        + _pie("¿Necesitas cambiar la fecha o el acceso? Responde este correo o crea un ticket de soporte y lo coordinamos con tiempo.")
-        + "{{firma_sstt_html}}"),
+        _cuerpo_recordatorio("¿Necesitas cambiar la fecha o el acceso? " + COMO_CREAR_TICKET[0].upper() + COMO_CREAR_TICKET[1:]
+                             + " y lo coordinamos con tiempo: " + PORQUE_TICKET + ".")),
     # Al TÉCNICO (o a la empresa externa): su recordatorio, SIN montos ni proveedores. La dirección, el contacto y «qué hay que hacer» los reemplaza
     # el código mientras el Anexo no esté firmado. v2 (5-nov-2026): con «Cómo llegar», el contacto en terreno, lo que hay que hacer, la lista de
     # equipos y «Antes de salir».
@@ -916,8 +944,8 @@ SEMILLAS = {
 
 # slug → versiones anteriores sin editar que el arranque puede reemplazar por la vigente (ver `_ensure_comm_template_ot_comunicacion`).
 SEMILLAS_ANTERIORES = {
-    PLANTILLA_TERMINADA: (_TERMINADA_V1, _TERMINADA_V2),
-    PLANTILLA_RECORDATORIO: (_RECORDATORIO_V1, _RECORDATORIO_V2),
+    PLANTILLA_TERMINADA: (_TERMINADA_V1, _TERMINADA_V2, _TERMINADA_V3),
+    PLANTILLA_RECORDATORIO: (_RECORDATORIO_V1, _RECORDATORIO_V2, _RECORDATORIO_V3),
     PLANTILLA_RECORDATORIO_TECNICO: (_RECORDATORIO_TECNICO_V1,),
 }
 
@@ -927,19 +955,56 @@ SEMILLAS_ANTERIORES = {
 # los caminos que no las arman (el reemplazo borra lo que no se provee): `invitacion_html`, `recorrido_html`, `que_esperar_html`, `preparacion_html`,
 # `firma_sstt_html`.
 PLANTILLA_VISITA_AGENDADA = "visita_agendada"
+PLANTILLA_OT_COMPLETADA = "ot_completada"
+
+
+def _cuerpo_visita_agendada(pie):
+    return ('<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
+            + _p("Te confirmamos que <strong>agendamos la visita técnica</strong> de la orden <strong>{{ot}}</strong>.")
+            + "{{invitacion_html}}"
+            + _tabla("#dc2626", _f("N° Orden", "{{ot}}", True) + _f("Tipo", "{{tipo_mantencion}}") + _f("Fecha", "<strong>{{fecha}}</strong> · {{horario}}")
+                     + _f("Técnico(s)", "{{tecnico}}") + _f("Equipos", "{{maquina}}") + _f("Dirección", "{{direccion}}"))
+            + "{{recorrido_html}}"
+            + "{{que_esperar_html}}"
+            + "{{preparacion_html}}"
+            + _pie(pie)
+            + "{{firma_sstt_html}}")
+
+
+# «OT completada» (`ot_completada`): el correo del botón «Enviar email» de la ficha de la OT (con el informe adjunto). Es la plantilla más antigua de la OT y su
+# semilla original vive en `app.py` (`_mantenciones_tpl_seed`). Solo cambia su última frase: «responde este correo» → el ticket (Daniel, 5-nov-2026).
+def _cuerpo_ot_completada(cierre):
+    return ('<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
+            '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
+            'El servicio técnico se ha completado exitosamente. Encontrarás el detalle a continuación.</p>'
+            '<table cellpadding="0" cellspacing="0" width="100%" style="background:#dcfce7;border-left:4px solid #16a34a;'
+            'border-radius:4px;padding:14px 18px;margin:18px 0">'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">OT:</strong>&nbsp; '
+            '<span style="color:#16a34a;font-weight:700">{{ot}}</span></td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Tipo:</strong>&nbsp; {{tipo_mantencion}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Técnico:</strong>&nbsp; {{tecnico}}</td></tr>'
+            '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Equipo:</strong>&nbsp; {{maquina}}</td></tr>'
+            '</table>'
+            '<p style="margin:0;font-size:13px;color:#444;line-height:1.6">'
+            'Gracias por confiar en ILUS Fitness para el cuidado de tus equipos. ' + cierre + '</p>')
+
+
+# v2 de «OT creada» (#281, con la invitación y el recorrido): su pie decía «responde este correo o contacta a tu ejecutivo». La v3 manda siempre al ticket.
+_VISITA_AGENDADA_V2 = (
+    "Tu visita técnica está agendada — {{ot}} ({{fecha}})",
+    _cuerpo_visita_agendada("Si necesitas reagendar o cancelar, responde este correo o contacta a tu ejecutivo."))
+
 SEMILLAS_EXTRA = {
     PLANTILLA_VISITA_AGENDADA: (
         "Tu visita técnica está agendada — {{ot}} ({{fecha}})",
-        '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Estimado/a {{cliente}}</p>'
-        + _p("Te confirmamos que <strong>agendamos la visita técnica</strong> de la orden <strong>{{ot}}</strong>.")
-        + "{{invitacion_html}}"
-        + _tabla("#dc2626", _f("N° Orden", "{{ot}}", True) + _f("Tipo", "{{tipo_mantencion}}") + _f("Fecha", "<strong>{{fecha}}</strong> · {{horario}}")
-                 + _f("Técnico(s)", "{{tecnico}}") + _f("Equipos", "{{maquina}}") + _f("Dirección", "{{direccion}}"))
-        + "{{recorrido_html}}"
-        + "{{que_esperar_html}}"
-        + "{{preparacion_html}}"
-        + _pie("Si necesitas reagendar o cancelar, responde este correo o contacta a tu ejecutivo.")
-        + "{{firma_sstt_html}}"),
+        _cuerpo_visita_agendada("Si necesitas reagendar o cancelar, " + COMO_CREAR_TICKET + ": " + PORQUE_TICKET + ".")),
+    PLANTILLA_OT_COMPLETADA: (
+        "OT {{ot}} completada — Reporte adjunto",
+        _cuerpo_ot_completada("Si tienes alguna observación, " + COMO_CREAR_TICKET + " y te contactaremos a la brevedad.")),
+}
+# Versiones de SEMILLAS_EXTRA que ya estuvieron sembradas y que NO son la original de `app.py` (esa la agrega el arranque al principio de la cadena).
+SEMILLAS_EXTRA_ANTERIORES = {
+    PLANTILLA_VISITA_AGENDADA: (_VISITA_AGENDADA_V2,),
 }
 
 

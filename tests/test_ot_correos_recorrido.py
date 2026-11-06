@@ -111,12 +111,14 @@ class TestPlantillas(unittest.TestCase):
             self.assertLessEqual(usadas, armadas | extra, slug)
 
     def test_las_versiones_anteriores_se_conservan_para_poder_actualizar_solo_lo_que_nadie_edito(self):
-        self.assertEqual(len(C.SEMILLAS_ANTERIORES[C.PLANTILLA_TERMINADA]), 2)         # v1 y v2
-        self.assertEqual(len(C.SEMILLAS_ANTERIORES[C.PLANTILLA_RECORDATORIO]), 2)
+        self.assertEqual(len(C.SEMILLAS_ANTERIORES[C.PLANTILLA_TERMINADA]), 3)         # v1, v2 y v3 (la v3 decía «responde este correo»)
+        self.assertEqual(len(C.SEMILLAS_ANTERIORES[C.PLANTILLA_RECORDATORIO]), 3)
         for slug in (C.PLANTILLA_TERMINADA, C.PLANTILLA_RECORDATORIO):
             for ant in C.SEMILLAS_ANTERIORES[slug]:
                 self.assertNotEqual(ant[1], C.SEMILLAS[slug][1], slug)
-            self.assertNotIn("{{recorrido_html}}", "".join(a[1] for a in C.SEMILLAS_ANTERIORES[slug]))
+            # solo las v1 y v2 son anteriores al recorrido; la v3 ya lo traía (lo que cambió en la v4 es el pie: ticket en vez de «responde»)
+            self.assertNotIn("{{recorrido_html}}", "".join(a[1] for a in C.SEMILLAS_ANTERIORES[slug][:2]))
+            self.assertIn("{{recorrido_html}}", C.SEMILLAS_ANTERIORES[slug][2][1])
 
 
 class TestActualizacionDeLaPlantillaDeOtCreada(unittest.TestCase):
