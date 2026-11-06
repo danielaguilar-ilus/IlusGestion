@@ -181,6 +181,24 @@ class TestLaActualizacionAlArrancar(unittest.TestCase):
         self.assertIn("ILUS Fitness", nuevo)
         self.assertNotIn("Sport & Health", nuevo)
 
+    def test_la_ot_completada_original_de_produccion_servicio_de_mantencion_tambien_pasa_a_la_nueva(self):
+        """La fila REAL de producción (verificada en solo lectura) dice «servicio de mantención» e «ILUS Sport & Health»: la primera y la segunda versión de este
+        cambio no la reconocían y se quedaba en «responde este correo»."""
+        w = self._mundo()
+        self._poner(w, C.PLANTILLA_OT_COMPLETADA, *C._OT_COMPLETADA_ORIGINAL_DE_PRODUCCION)
+        self.assertIn("servicio de mantención se ha completado", C._OT_COMPLETADA_ORIGINAL_DE_PRODUCCION[1])
+        self.assertIn("ILUS Sport & Health", C._OT_COMPLETADA_ORIGINAL_DE_PRODUCCION[1])
+        w.f("_ensure_comm_template_ot_comunicacion")()
+        ups = self._ups(w)
+        self.assertEqual(len(ups), 1, ups)
+        self.assertEqual(ups[0][1][1], C.SEMILLAS_EXTRA[C.PLANTILLA_OT_COMPLETADA][1])
+
+    def test_la_original_de_produccion_mide_6_caracteres_mas_que_la_marca_antigua(self):
+        # el dato medido en la fila real: 1216 caracteres contra 1210 del texto «servicio técnico» (la diferencia son justo estas 6 letras)
+        n = lambda s: s.replace("\r\n", "\n").strip()
+        self.assertEqual(len(n(C._OT_COMPLETADA_ORIGINAL_DE_PRODUCCION[1])) - len(n(C._OT_COMPLETADA_MARCA_ANTIGUA[1])), 6)
+        self.assertEqual(len(n(C._OT_COMPLETADA_ORIGINAL_DE_PRODUCCION[1])), 1216)
+
     def test_la_marca_antigua_es_la_semilla_original_salvo_el_nombre(self):
         w = self._mundo()
         orig = w.amb["_mantenciones_tpl_seed"]()["ot_completada"]
