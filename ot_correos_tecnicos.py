@@ -417,6 +417,11 @@ def _fila_agenda(it, base):
     espera = ESTADOS_ESPERA.get(str(it.get("estado") or "").strip().lower())
     estado_html = f'<br><span style="color:#b45309;font-weight:700">Estado: {esc(espera)}</span>' if espera else ""
     direccion = OCULTO_ANEXO if it.get("oculta_detalle") else (it.get("direccion") or "—")
+    # 6-nov (Daniel: «sería bueno agregar el motivo a las OT de los técnicos», «en los correos»): el MOTIVO de la OT (lo que se escribe en «Motivo *» al crearla)
+    # también va en cada fila de la agenda, UNA línea corta y sin plata ni proveedores (`limpiar_texto_tecnico`). Con el Anexo sin firmar no se muestra
+    # (igual que «Qué hay que hacer» en los otros correos).
+    motivo = "" if it.get("oculta_detalle") else limpiar_texto_tecnico(it.get("descripcion"), 140)
+    motivo_html = (f'<br><span style="color:#6b7280">Motivo:</span> {esc(motivo)}' if motivo else "")
     return (
         '<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px">'
         '<tr>'
@@ -427,7 +432,7 @@ def _fila_agenda(it, base):
         f'{esc(numero)}</a> &middot; <strong style="color:#222">{esc(it.get("cliente") or "Trabajo interno")}</strong><br>'
         f'{esc(it.get("tipo_label") or "Visita")}<br>'
         f'{esc(direccion)}<br>'
-        f'<span style="color:#6b7280">Equipos:</span> {esc(equipos_txt(it.get("equipos")))}{varios}{estado_html}'
+        f'<span style="color:#6b7280">Equipos:</span> {esc(equipos_txt(it.get("equipos")))}{motivo_html}{varios}{estado_html}'
         '</td></tr></table>')
 
 
