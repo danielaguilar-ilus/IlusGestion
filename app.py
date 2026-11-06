@@ -82,6 +82,7 @@ import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién pued
 import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
 import ot_firma_vigencia as _ofv      # 2026-11-05: el enlace de firma remota del cliente vence en 48 HORAS HÁBILES (módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
+import ficha_cliente_cabecera as _fcc  # 2026-11-05: semáforo, motivos y KPIs de la cabecera de la ficha del cliente (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
 import maquina_historia as _mh    # 2026-10-21: Historia del equipo (hoja de vida unificada: línea de tiempo sin duplicados, por rol): reglas puras con pruebas
@@ -74568,6 +74569,36 @@ def _mant_ficha_impl(cid):
     except Exception as _e_pr:
         print(f"[ficha-cli] prospecto cid={cid}: {_e_pr}", flush=True)
 
+    # 🧭 2026-11-05 (Daniel: «ese módulo es viejo, quisiera enchularlo»): semáforo + KPIs de la cabecera. Todo sale de lo que la ficha ya calculó más UN
+    # conteo de OT abiertas (cliente_id está indexado). Sin plata (REGLAS #19 y #26). Si algo falla, la ficha se ve igual sin la franja de KPIs.
+    _cli_cab = None
+    try:
+        try:
+            _hoy_cab = _now_chile().date()          # el día de Chile: con la fecha del servidor (UTC), a las 21:00 una OT de «hoy» saldría atrasada
+        except Exception:
+            _hoy_cab = hoy
+        _ot_ab = _ot_at = None
+        try:
+            _r_ot = mysql_fetchone(
+                "SELECT COUNT(*) AS n, "
+                "       COALESCE(SUM(CASE WHEN estado IN ('programada','en_curso','reagendada') "
+                "                          AND fecha_programada < %s AND fecha_programada < '2099-01-01' THEN 1 ELSE 0 END),0) AS atrasadas "
+                "  FROM mant_visitas WHERE cliente_id=%s AND estado NOT IN ('cerrada','cancelada','anulada')", (_hoy_cab, cid)) or {}
+            _ot_ab, _ot_at = int(_r_ot.get("n") or 0), int(_r_ot.get("atrasadas") or 0)
+        except Exception as _e_cab_ot:
+            print(f"[ficha-cli] cabecera OT cid={cid}: {type(_e_cab_ot).__name__}", flush=True)
+        _eq_prob = sum(1 for _m in maquinas
+                       if (_m.get("estado") or "activo") != "baja"
+                       and ((_m.get("estado_capturado") or "") in ("fuera_servicio", "advertencia", "en_reparacion") or (_m.get("rep_pend") or 0) > 0))
+        _cli_cab = _fcc.armar(
+            hoy=_hoy_cab, cliente=cliente, contratos=contratos, ot_abiertas=_ot_ab, ot_atrasadas=_ot_at,
+            equipos_activos=int((historial.get("equipos") or {}).get("n_activos") or 0),
+            equipos_total=int((historial.get("equipos") or {}).get("n") or 0), equipos_con_problema=_eq_prob,
+            ult_visita=stats.get("ult_visita_fecha"), prox_visita=stats.get("prox_visita_fecha"),
+            tiene_correo=any(_ocom.correo_valido(cliente.get(_k)) for _k in ("contacto_email", "contacto2_email", "email_empresa")))
+    except Exception as _e_cab:
+        print(f"[ficha-cli] cabecera cid={cid}: {type(_e_cab).__name__}: {str(_e_cab)[:160]}", flush=True)
+
     return render_template("mantenciones/ficha.html",
         prospecto = _prospecto,
         cliente   = dict(cliente),
@@ -74580,6 +74611,8 @@ def _mant_ficha_impl(cid):
         sucursales = sucursales,
         # 2026-09-02 — resumen de "todo lo que le hemos hecho a este cliente".
         historial = historial,
+        # 2026-11-05 — semáforo y KPIs de la cabecera (None si no se pudo armar: la plantilla lo omite).
+        cli_cab   = _cli_cab,
     )
 
 

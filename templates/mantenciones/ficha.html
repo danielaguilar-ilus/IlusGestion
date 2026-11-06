@@ -15,6 +15,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='cliente_form.css') }}">
 {#- 🗂️ 2026-11-05 (Daniel: «ahorrar pestañas»): las 15 pestañas en 5 secciones, con «Vista clásica» de respaldo. -#}
 <link rel="stylesheet" href="{{ url_for('static', filename='ficha_grupos.css') }}">
+{#- 🚦 2026-11-05: cabecera con semáforo, KPIs, motivos y acciones. -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='ficha_cabecera.css') }}">
 
 {# ── Breadcrumb ─────────────────────────────────────── #}
 <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
@@ -44,7 +46,7 @@
         <h4 class="mb-0" style="font-size:1.4rem;font-weight:900;color:#fff;line-height:1.15">
           {{ cliente.razon_social }}
         </h4>
-        <span class="cli-badge badge-{{ cliente.estado }}" style="font-size:.65rem">{{ cliente.estado.title() }}</span>
+        <span class="cli-badge badge-{{ cliente.estado }}" style="font-size:.75rem">{{ cliente.estado.title() }}</span>
         {# Badge tipo_cliente (Plan 2026-05-21 Capa 8 / regla CLAUDE.md paleta) #}
         {% set _tc = (cliente.tipo_cliente or 'mantencion')|lower %}
         {% set _tc_colors = {
@@ -56,13 +58,20 @@
         } %}
         {% set _tc_def = _tc_colors.get(_tc, _tc_colors['mantencion']) %}
         <span class="cli-badge" title="Tipo de cliente"
-              style="background:{{ _tc_def[0] }};color:{{ _tc_def[1] }};font-size:.65rem;padding:3px 10px;font-weight:800;letter-spacing:.3px">
-          <i class="bi {{ _tc_def[2] }}"></i>{{ _tc.title() }}
+              style="background:{{ _tc_def[0] }};color:{{ _tc_def[1] }};font-size:.75rem;padding:3px 10px;font-weight:800;letter-spacing:.3px">
+          <i class="bi {{ _tc_def[2] }}"></i>{{ {'mantencion': 'Mantención', 'instalacion': 'Instalación'}.get(_tc, _tc.title()) }}
         </span>
+        {#- 🚦 2026-11-05: el semáforo del cliente. Su MOTIVO va escrito más abajo (nunca un color sin explicación). -#}
+        {% if cli_cab %}
+        <span class="fcb-sem fcb-sem-{{ cli_cab.semaforo.nivel }}" id="fcbSemaforo" role="status"
+              title="{{ 'Todo en orden' if cli_cab.semaforo.nivel == 'ok' else 'Mira los motivos debajo' }}">
+          <i class="bi {{ 'bi-check-circle-fill' if cli_cab.semaforo.nivel == 'ok' else ('bi-exclamation-circle-fill' if cli_cab.semaforo.nivel == 'aviso' else 'bi-exclamation-triangle-fill') }}" aria-hidden="true"></i>{{ cli_cab.semaforo.titulo }}
+        </span>
+        {% endif %}
       </div>
       {# Info en grid: RUT | ID | Creado #}
       <div style="display:flex;flex-wrap:wrap;gap:0 22px;font-size:.78rem;color:#94a3b8;margin-bottom:8px">
-        {% if cliente.rut %}<span><i class="bi bi-card-text me-1" style="color:#64748b"></i>RUT <strong style="color:#cbd5e1">{{ cliente.rut }}</strong></span>{% endif %}
+        {% if cliente.rut %}<span><i class="bi bi-card-text me-1" style="color:#64748b"></i>RUT <strong style="color:#cbd5e1">{{ cliente.rut | rut_fmt }}</strong></span>{% endif %}
         <span><i class="bi bi-hash me-1" style="color:#64748b"></i>ID Cliente <strong style="color:#cbd5e1">{{ '%06d' % cliente.id }}</strong></span>
         {% if cliente.created_at %}<span><i class="bi bi-calendar-plus me-1" style="color:#64748b"></i>Creado <strong style="color:#cbd5e1">{{ cliente.created_at.strftime('%d/%m/%Y') }}</strong></span>{% endif %}
       </div>
@@ -73,6 +82,15 @@
         {% if cliente.contacto_tel %}<span><i class="bi bi-telephone me-1" style="color:#64748b"></i><a href="tel:{{ cliente.contacto_tel }}" style="color:#cbd5e1;text-decoration:none">{{ cliente.contacto_tel }}</a></span>{% endif %}
         {% if cliente.contacto_email %}<span><i class="bi bi-envelope me-1" style="color:#64748b"></i><a href="mailto:{{ cliente.contacto_email }}" style="color:#cbd5e1;text-decoration:none">{{ cliente.contacto_email }}</a></span>{% endif %}
       </div>
+      {#- 2026-11-05: el segundo contacto y el ejecutivo a cargo también viven en la cabecera (antes había que abrir «Editar cliente» para verlos). -#}
+      {% if cliente.contacto2_nombre or cliente.contacto2_email or cliente.contacto2_tel or cliente.get('ejecutivo_nombre') %}
+      <div style="display:flex;flex-wrap:wrap;gap:0 22px;font-size:.78rem;color:#94a3b8;margin-top:6px" id="fcbContactos2">
+        {% if cliente.get('ejecutivo_nombre') %}<span title="Ejecutivo a cargo de este cliente"><i class="bi bi-person-badge me-1" style="color:#64748b"></i>Ejecutivo <strong style="color:#cbd5e1">{{ cliente.ejecutivo_nombre }}</strong></span>{% endif %}
+        {% if cliente.contacto2_nombre %}<span><i class="bi bi-person-lines-fill me-1" style="color:#64748b"></i>{{ cliente.contacto2_nombre }}<span style="color:#64748b"> · 2.º contacto</span></span>{% endif %}
+        {% if cliente.contacto2_tel %}<span><i class="bi bi-telephone me-1" style="color:#64748b"></i><a href="tel:{{ cliente.contacto2_tel }}" style="color:#cbd5e1;text-decoration:none">{{ cliente.contacto2_tel }}</a></span>{% endif %}
+        {% if cliente.contacto2_email %}<span><i class="bi bi-envelope me-1" style="color:#64748b"></i><a href="mailto:{{ cliente.contacto2_email }}" style="color:#cbd5e1;text-decoration:none">{{ cliente.contacto2_email }}</a></span>{% endif %}
+      </div>
+      {% endif %}
       {# Auditoría — Daniel 2026-08-08: "necesito quién hizo la ÚLTIMA, el
          último movimiento... ese siempre va a cambiar". ANTES comparábamos
          nombres (updated_by != created_by) para decidir si mostrar "Actualizado
@@ -85,7 +103,7 @@
          confiable de "¿se tocó después de crearse?". #}
       {% set _tocado = cliente.updated_at and cliente.created_at and cliente.updated_at > cliente.created_at %}
       {% if cliente.created_by or cliente.get('updated_by') %}
-      <div style="margin-top:8px;font-size:.66rem;color:#64748b;display:flex;flex-wrap:wrap;gap:0 18px">
+      <div style="margin-top:8px;font-size:.75rem;color:#7c8aa0;display:flex;flex-wrap:wrap;gap:0 18px">
         {% if cliente.created_by %}
         <span><i class="bi bi-person-plus me-1" style="opacity:.6"></i>Creado por <strong>{{ cliente.created_by }}</strong>{% if cliente.created_at %} el {{ cliente.created_at.strftime('%d/%m/%Y') }}{% endif %}</span>
         {% endif %}
@@ -97,16 +115,31 @@
     </div>
 
     {# Botones de acción — Técnico solo lectura: no ve editar/nueva visita #}
-    <div class="d-flex gap-2 flex-shrink-0 flex-wrap">
+    <div class="d-flex gap-2 flex-shrink-0 flex-wrap fcb-acciones" id="fcbAcciones">
       {% if not is_tecnico %}
-      <button class="btn btn-sm btn-outline-secondary" style="color:#cbd5e1;border-color:#334155;background:rgba(255,255,255,.04)" onclick="abrirEditarCliente()">
-        <i class="bi bi-pencil me-1"></i>Editar cliente
+      {#- 2026-11-05 (Daniel: «todo se centraliza en la ficha»): las acciones de siempre + las que antes había que buscar en otro módulo. Cada una abre
+          lo MISMO que ya abría desde su pestaña (nada nuevo que mantener): Generar OT = el asistente con el cliente puesto, Cotización = el cotizador
+          con este cliente, Ticket = Nuevo Ticket con sus datos, Email = el correo manual de la pestaña Comunicaciones. -#}
+      <button type="button" class="btn btn-sm fcb-btn fcb-btn-primario" onclick="abrirGenerarOT()" title="Crea una orden de trabajo para este cliente">
+        <i class="bi bi-clipboard2-plus me-1" aria-hidden="true"></i>Generar OT
       </button>
-      <button class="btn btn-sm btn-ilus" onclick="abrirNuevaVisita()">
-        <i class="bi bi-calendar-plus me-1"></i>Nueva visita
+      <button type="button" class="btn btn-sm btn-ilus fcb-btn" onclick="abrirNuevaVisita()">
+        <i class="bi bi-calendar-plus me-1" aria-hidden="true"></i>Nueva visita
+      </button>
+      <button type="button" class="btn btn-sm fcb-btn fcb-btn-sec" onclick="window.open('/tickets/cotizaciones?desde_cliente={{ cliente.id }}', '_blank')" title="Abre el cotizador con los datos de este cliente">
+        <i class="bi bi-file-earmark-text me-1" aria-hidden="true"></i>Nueva cotización
+      </button>
+      <button type="button" class="btn btn-sm fcb-btn fcb-btn-sec" onclick="window.open('/tickets?desde_cliente={{ cliente.id }}', '_blank')" title="Abre «Nuevo Ticket» con los datos de este cliente">
+        <i class="bi bi-ticket-perforated me-1" aria-hidden="true"></i>Nuevo ticket
+      </button>
+      <button type="button" class="btn btn-sm fcb-btn fcb-btn-sec" onclick="abrirEmailManual()" title="Escribirle un correo a este cliente (queda registrado en Comunicaciones)">
+        <i class="bi bi-envelope-plus me-1" aria-hidden="true"></i>Enviar email
+      </button>
+      <button type="button" class="btn btn-sm fcb-btn fcb-btn-sec" onclick="abrirEditarCliente()">
+        <i class="bi bi-pencil me-1" aria-hidden="true"></i>Editar cliente
       </button>
       {# Botón "Ticket" eliminado 2026-05-21 (Daniel) — flujo discontinuado.
-         La gestión va por Visita / OT directamente. #}
+         La gestión va por Visita / OT directamente. (5-nov-2026: «Nuevo ticket» vuelve con Tickets 2.0, que ya vive en este mismo sistema.) #}
       {% endif %}
 
       {% if permissions.superadmin %}
@@ -128,6 +161,36 @@
       {% endif %}
     </div>
   </div>
+
+  {#- ══ 🚦 KPIs + MOTIVOS del semáforo (5-nov-2026, Daniel: «enchularlo»). Sin plata (REGLAS #19 y #26: la misma franja la ve un técnico). Cada tarjeta
+      abre la pestaña de donde sale el número. «Tickets abiertos» lo completa el navegador con el MISMO endpoint que ya llena el contador de la pestaña. ══ -#}
+  {% if cli_cab %}
+  <div class="fcb-kpis" id="fcbKpis" role="list" aria-label="Resumen del cliente">
+    {% for k in cli_cab.kpis %}
+    <div class="fcb-kpi fcb-t-{{ k.tono }}" role="listitem" data-kpi="{{ k.clave }}">
+      <button type="button" class="fcb-kpi-btn" {% if k.js %}onclick="{{ k.js }}"{% endif %} aria-label="{{ k.etiqueta }}: {{ k.valor }}, {{ k.detalle }}">
+        <span class="fcb-kpi-l">{{ k.etiqueta }}</span>
+        <span class="fcb-kpi-v" data-kpi-valor>{{ k.valor }}</span>
+        <span class="fcb-kpi-d" data-kpi-detalle>{{ k.detalle }}</span>
+      </button>
+    </div>
+    {% endfor %}
+  </div>
+  {% if cli_cab.semaforo.motivos or cli_cab.info %}
+  <div class="fcb-motivos" id="fcbMotivos" aria-label="Por qué el semáforo está así">
+    {% for m in cli_cab.semaforo.motivos %}
+    <button type="button" class="fcb-chip fcb-chip-{{ m.nivel }}" {% if m.js %}onclick="{{ m.js }}"{% endif %}>
+      <i class="bi {{ 'bi-exclamation-triangle-fill' if m.nivel == 'alerta' else 'bi-exclamation-circle-fill' }}" aria-hidden="true"></i>{{ m.texto }}
+    </button>
+    {% endfor %}
+    {% for m in cli_cab.info %}
+    <button type="button" class="fcb-chip fcb-chip-info" {% if m.js %}onclick="{{ m.js }}"{% endif %}>
+      <i class="bi bi-info-circle" aria-hidden="true"></i>{{ m.texto }}
+    </button>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
 </div>
 
 {# ══════════════════════════════════════════════════════════════════
@@ -3764,8 +3827,22 @@ function tkFichaCambiarPagina(delta){
 (function(){
   fetch('/tickets/api/clientes-ficha/' + {{ cliente.id }} + '/tickets?page=1&per_page=5', {credentials: 'same-origin'})
     .then(function(r){ return r.json(); })
-    .then(function(d){ var b = document.getElementById('tkFichaCountBadge'); if (b && d && d.ok && d.abiertos > 0) { b.style.display = 'inline-block'; b.textContent = d.abiertos; } })
-    .catch(function(){});
+    .then(function(d){
+      var b = document.getElementById('tkFichaCountBadge'); if (b && d && d.ok && d.abiertos > 0) { b.style.display = 'inline-block'; b.textContent = d.abiertos; }
+      // 2026-11-05: la tarjeta «Tickets abiertos» de la cabecera usa esta misma respuesta (una sola consulta, el mismo permiso y alcance).
+      var k = document.querySelector('[data-kpi="tickets"]'); if (!k) return;
+      var v = k.querySelector('[data-kpi-valor]'), det = k.querySelector('[data-kpi-detalle]');
+      if (!d || !d.ok) { if (v) v.textContent = '—'; if (det) det.textContent = 'no se pudo leer'; return; }
+      if (d.sin_rut) { if (v) v.textContent = '—'; if (det) det.textContent = 'el cliente no tiene RUT'; return; }
+      if (v) v.textContent = String(d.abiertos || 0);
+      if (det) det.textContent = d.total ? ((d.abiertos || 0) ? d.total + ' en total' : 'ninguno abierto · ' + d.total + ' en total') : 'sin tickets';
+      k.classList.remove('fcb-t-neutro'); k.classList.add((d.abiertos || 0) ? 'fcb-t-info' : 'fcb-t-ok');
+    })
+    .catch(function(){
+      var k = document.querySelector('[data-kpi="tickets"]'); if (!k) return;
+      var v = k.querySelector('[data-kpi-valor]'), det = k.querySelector('[data-kpi-detalle]');
+      if (v) v.textContent = '—'; if (det) det.textContent = 'no se pudo leer';
+    });
 })();
 </script>
 </div>
