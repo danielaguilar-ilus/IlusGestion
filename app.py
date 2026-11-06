@@ -79,6 +79,7 @@ import anexo_anulacion as _axa   # 2026-10-28 (REGLA #52): anexo FIRMADO + OT el
 import anexo_lugar as _axl        # 2026-11-03: «Lugar del Servicio» del anexo (dirección donde se ejecuta; pedido de Félix): módulo puro con pruebas
 import ot_intenciones as _oint   # 2026-10-25 (REGLA #47): intenciones del costeo (por qué, quién lo asume) y su validación: módulo puro con pruebas
 import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
+import ot_recordatorio_24h as _orec   # 2026-11-05: recordatorio de 24 horas de la OT al cliente y al técnico (módulo puro con pruebas)
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
@@ -39761,6 +39762,15 @@ def tr_cron_simpliroute_poll():
                 "enviados": len(_ag.get("enviados") or []), "pendientes": len(_ag.get("pendientes") or [])}
         except Exception as _e_at:
             print(f"[cron-simpliroute] agenda técnicos: {_e_at}", flush=True)
+    # ⏰ Recordatorio de 24 horas de la OT (Daniel 2026-11-05): al cliente y al técnico, solo en horario de cobertura, una vez por fecha de visita.
+    # Cada correo tiene su interruptor en Comunicaciones → Control de correos; si están frenados, no hace nada. Si falla no afecta al polling.
+    if not dry and time.time() - _t_peticion < 225:
+        try:
+            _rc = _ot_recordatorio_barrido(max_s=min(30, max(5, 270 - (time.time() - _t_peticion))))
+            res["recordatorio_ot_24h"] = {"motivo": _rc.get("motivo"), "ok": _rc.get("ok"), "cortado": _rc.get("cortado"),
+                                          "cliente": len(_rc.get("cliente") or []), "tecnico": len(_rc.get("tecnico") or [])}
+        except Exception as _e_rc:
+            print(f"[cron-simpliroute] recordatorio OT 24h: {_e_rc}", flush=True)
     # 🚀 Check precargado (Daniel 2026-10-23, «sí, precarga lo de Check»): renueva las cachés de stock y trazabilidad antes de que venzan, para que
     # Retiros e Incidencias no esperen la descarga (8-35 s). Solo lectura de Check; con tope de tiempo; si falla no afecta al polling.
     if not dry and time.time() - _t_peticion < 150:
@@ -141833,7 +141843,8 @@ def _mant_send_email_multi(cid, asunto, html, evento="", emails=None,
         emails: lista opcional que REEMPLAZA a los emails del cliente
             (se normaliza lower + dedupe, conserva el orden).
         attachments: pass-through a _send_ilus_email (tuplas o dicts, ver
-            _email_normalize_attachments).
+            _email_normalize_attachments). 2026-11-05: también puede ser una FUNCIÓN `fn(email) -> adjuntos | None`, para
+            adjuntar a cada destinatario su propia invitación de calendario (el .ics lleva el correo del invitado).
         correo: clave del correo en el registro (Control de correos, 2026-10-20): ot_creada_cliente,
             ot_visita_agendada_manual, mant_plan_propuesto, ot_informe_servicio…
 
@@ -141870,10 +141881,17 @@ def _mant_send_email_multi(cid, asunto, html, evento="", emails=None,
     enviados, bloqueados, fallidos = [], 0, 0
     for e in destinos:
         try:
+            adj = attachments
+            if callable(attachments):
+                try:
+                    adj = attachments(e)
+                except Exception as _e_adj:
+                    print(f"[mant-multi-email] adjunto de {e}: {type(_e_adj).__name__}: {_e_adj}", flush=True)
+                    adj = None                        # el correo sale igual, sin el archivo
             ok = _send_ilus_email(e, asunto, html,
                                   evento=evento or "mantenciones",
                                   modulo="mantenciones",
-                                  attachments=attachments, correo=correo)
+                                  attachments=adj, correo=correo)
         except Exception as exc:
             print(f"[mant-multi-email] fallo {e}: {exc}", flush=True)
             ok = False
@@ -142436,6 +142454,34 @@ def _mant_ot_creacion_variables(vid):
     return v, variables
 
 
+def _ot_cliente_ics_fn(v, variables):
+    """Invitación de calendario (.ics, METHOD:REQUEST con RSVP) para el CLIENTE (Daniel, 5-nov-2026: «que se cree con un envío de correo el
+    calendario, una instancia en el calendario que le pida permiso… para que entienda que se creó una orden de trabajo y se está informando»).
+    Devuelve `fn(email) -> [(nombre, bytes, 'text/calendar')] | None` (el archivo lleva el correo de CADA invitado) o None si la OT no tiene
+    fecha. Solo lo que el cliente ya ve en el correo: número de OT, cliente, tipo, equipos, horario y dirección; NUNCA «qué hay que hacer»
+    interno, montos, proveedores ni el enlace a la ficha (pide sesión). Si algo falla, el correo sale igual, sin el archivo. Nunca lanza."""
+    try:
+        eq = (variables.get("maquina") or "").strip()
+        vista = {"id": v.get("id"), "numero_ot": v.get("numero_ot"), "cliente": v.get("razon_social") or "",
+                 "tipo_label": variables.get("tipo_mantencion") or "", "fecha": v.get("fecha_programada"),
+                 "fecha_fin": v.get("fecha_fin"), "hora_inicio": v.get("hora_inicio"), "hora_fin": v.get("hora_fin"),
+                 "direccion": variables.get("direccion") or "", "descripcion": "", "equipos": ([eq] if eq and eq != "—" else [])}
+        if not _otc.a_fecha(vista["fecha"]):
+            return None
+        organizador = (_get_brand_cfg().get("reply_to") or "").strip() or "soportetec@sphs.cl"
+        ts = time.time()
+        numero = vista.get("numero_ot") or f"V-{int(vista.get('id') or 0):05d}"
+    except Exception as e:
+        print(f"[ot-cliente-ics] {type(e).__name__}: {e}", flush=True)
+        return None
+
+    def _fn(email):
+        data = _otc.ics_evento(vista, "asignada", correo=email, nombre="", ts=ts, base_url="", organizador=organizador,
+                               rsvp=True, sin_link=True)
+        return [(_otc.ics_nombre_archivo(numero), data, "text/calendar")] if data else None
+    return _fn
+
+
 def _mant_ot_email_cliente_creacion(vid):
     """Correo al CLIENTE apenas se crea la OT (plantilla 'visita_agendada',
     ya sembrada). Solo aplica a OT con cliente real -- trabajo interno no
@@ -142490,7 +142536,8 @@ def _mant_ot_email_cliente_creacion(vid):
             )
         html = _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {variables['ot']}")
         res = _mant_send_email_multi(v["cliente_id"], asunto, html, correo="ot_creada_cliente",
-                                     evento="visita_agendada", emails=destinos)
+                                     evento="visita_agendada", emails=destinos,
+                                     attachments=_ot_cliente_ics_fn(v, variables))
         if res["enviados"]:
             _mant_log("visita", vid, "email_creacion_cliente", f"a {', '.join(res['enviados'])} — OT {variables['ot']}")
     except Exception as e:
@@ -143269,6 +143316,225 @@ def mant_cron_agenda_tecnicos():
         return jsonify({"error": "forbidden"}), 403
     dry = (request.args.get("dry") or "") in ("1", "true", "yes")
     return jsonify(_ot_tec_barrido_agenda(dry=dry, fecha=(request.args.get("fecha") or "").strip() or None))
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  RECORDATORIO DE 24 HORAS DE LA OT — al cliente y al técnico (Daniel, 5-nov-2026)
+#
+#  «Necesito que le recordemos también 24 horas tanto al técnico como al cliente… eso lo podemos establecer por el sistema de
+#  comunicaciones, déjalo todo por el front.» Las reglas de CUÁNDO viven en ot_recordatorio_24h.py (puro, con pruebas): 24 h antes del
+#  comienzo, solo en horario de cobertura, una vez por fecha de visita. Acá están las lecturas de la base, el envío y la constancia.
+#  · Corre colgado de `simpliroute-poll` (cada 10 min) y tiene su propia ruta con token (?dry=1 solo mira).
+#  · Cada uno de los dos correos tiene su interruptor en Comunicaciones → Control de correos (ot_recordatorio_cliente, ot_tec_recordatorio)
+#    y respeta la llave de su módulo. Si están frenados NO se reserva nada: cuando se abran, lo que siga dentro de la ventana sale.
+#  · IDEMPOTENTE: mant_ot_recordatorios con UNIQUE(OT, tipo, destinatario, fecha-hora de la visita). Si no se puede reservar, NO se envía
+#    (un recordatorio repetido cada 10 minutos a un cliente real es peor que uno que falta).
+#  · Confidencialidad (REGLAS #19 y #26): el técnico recibe el correo sin montos ni proveedores y, con el Anexo sin firmar, sin dirección.
+# ══════════════════════════════════════════════════════════════════════
+def _ensure_ot_recordatorios_tabla():
+    """mant_ot_recordatorios — un renglón por recordatorio ya enviado (OT + tipo + destinatario + fecha-hora de la visita). Barata (REGLA #18):
+    un solo CREATE TABLE IF NOT EXISTS, sin tocar ninguna tabla existente."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_ot_recordatorios (
+                id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+                visita_id    INT NOT NULL,
+                tipo         VARCHAR(12) NOT NULL,
+                destinatario VARCHAR(190) NOT NULL,
+                inicio_clave VARCHAR(16) NOT NULL,
+                creado_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_ot_rec (visita_id, tipo, destinatario, inicio_clave),
+                KEY idx_ot_rec_vid (visita_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_ot_recordatorios_tabla] {e}", flush=True)
+
+
+def _ot_rec_reservar(vid, tipo, destinatario, clave):
+    """True = es nuevo, se envía. False = ya se recordó (o no se pudo reservar: sin la tabla NO se garantiza la unicidad y, a diferencia de otros
+    avisos, acá se prefiere no enviar: este barrido corre cada 10 minutos)."""
+    try:
+        return mysql_execute_returning_rowcount(
+            "INSERT IGNORE INTO mant_ot_recordatorios (visita_id, tipo, destinatario, inicio_clave) VALUES (%s,%s,%s,%s)",
+            (int(vid), tipo, destinatario[:190], clave)) == 1
+    except Exception as e:
+        print(f"[ot-recordatorio] reserva: {type(e).__name__}: {e}", flush=True)
+        return False
+
+
+def _ot_rec_liberar(vid, tipo, destinatario, clave):
+    """El correo no salió (falla del proveedor): se libera la reserva para reintentarlo en el siguiente ciclo."""
+    try:
+        mysql_execute("DELETE FROM mant_ot_recordatorios WHERE visita_id=%s AND tipo=%s AND destinatario=%s AND inicio_clave=%s",
+                      (int(vid), tipo, destinatario[:190], clave))
+    except Exception:
+        pass
+
+
+def _ot_rec_log(filas):
+    """Una línea de bitácora por recordatorio enviado, en UN solo INSERT. filas: [(vid, detalle)]. Best-effort."""
+    if not filas:
+        return
+    try:
+        params = []
+        for vid, detalle in filas:
+            params.extend(("visita", int(vid), "recordatorio_24h", detalle[:1900], "sistema"))
+        mysql_execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES "
+                      + ",".join(["(%s,%s,%s,%s,%s)"] * len(filas)), tuple(params))
+    except Exception as e:
+        print(f"[ot-recordatorio] bitácora: {type(e).__name__}", flush=True)
+
+
+def _ot_recordatorio_barrido(dry=False, ahora=None, max_s=None, max_ot=40):
+    """Manda el recordatorio de 24 horas de cada OT que toca (ver ot_recordatorio_24h.toca_recordar) al cliente y a sus técnicos. Nunca lanza.
+    dry=True: solo muestra qué mandaría (ignora el horario de cobertura para poder revisarlo de noche). max_s: tope de tiempo (la petición de
+    Cloud Scheduler dura 300 s); lo que no alcanza sale en el siguiente ciclo. max_ot: tope de OT por corrida."""
+    res = {"ok": True, "dry": bool(dry), "revisadas": 0, "cliente": [], "tecnico": [], "omitidos": []}
+    t0 = time.time()
+    log_filas = []
+    try:
+        from cl_feriados import es_dia_habil as _es_habil
+        ahora_aw = ahora or _now_chile()
+        ahora_n = ahora_aw.replace(tzinfo=None)
+        res["ahora"] = ahora_n.strftime("%d/%m/%Y %H:%M")
+        if not dry and not _orec.en_cobertura(ahora_n, _es_habil):
+            res["motivo"] = "fuera del horario de cobertura (lunes a viernes 08:00-17:00, sin la colación)"
+            return res
+        bloq_cli = _correo_bloqueo_previo(_ocom.MODULO_GENERAL, _ocom.CORREO_RECORDATORIO_CLIENTE)
+        bloq_tec = _correo_bloqueo_previo(_ocom.MODULO_TECNICOS, _ocom.CORREO_RECORDATORIO_TECNICO)
+        if not _ocom.cliente_activo():
+            bloq_cli = bloq_cli or "freno"
+        if bloq_cli and bloq_tec and not dry:
+            res["motivo"] = "los dos recordatorios están frenados (interruptor general, llave del módulo o interruptor del correo)"
+            res["bloqueado"] = {"cliente": bloq_cli, "tecnico": bloq_tec}
+            return res
+        res["bloqueado"] = {"cliente": bloq_cli, "tecnico": bloq_tec}
+        excl = sorted(_otc.ESTADOS_SIN_AGENDA)
+        ph_e = ",".join(["%s"] * len(excl))
+        hoy = ahora_n.date()
+        filas = mysql_fetchall(
+            "SELECT v.*, c.razon_social AS cli_razon, c.contacto_nombre AS cli_contacto_nombre "
+            "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+            " WHERE v.fecha_programada BETWEEN %s AND %s "
+            f"  AND COALESCE(v.estado,'') NOT IN ({ph_e}) "
+            " ORDER BY v.fecha_programada, v.hora_inicio LIMIT 400",
+            (hoy, hoy + timedelta(days=7)) + tuple(excl)) or []
+        res["revisadas"] = len(filas)
+        tz_cl = ahora_aw.tzinfo
+        cand = []
+        for f in filas:
+            ini = _orec.inicio_ot(f.get("fecha_programada"), f.get("hora_inicio"))
+            creada = f.get("created_at")
+            creada_cl = None
+            if isinstance(creada, datetime):
+                try:
+                    creada_cl = creada.replace(tzinfo=timezone.utc).astimezone(tz_cl).replace(tzinfo=None)
+                except Exception:
+                    creada_cl = None
+            ok, _motivo = _orec.toca_recordar(ini, creada_cl, ahora_n, _es_habil, ignorar_cobertura=bool(dry))
+            if ok:
+                cand.append((f, ini))
+        cand = cand[:max_ot]
+        if not cand:
+            return res
+        ids = [int(f["id"]) for f, _i in cand]
+        tec_map, fichas_map = _ot_tec_destinatarios_bulk(ids, con_fichas=True)
+        info = _ot_tec_filas(ids) or {}
+        equipos = _ot_tec_equipos_bulk(ids) or {}
+        base = _public_base_url()
+        plantilla_tec_apagada = _ot_tec_plantilla_apagada(_ocom.PLANTILLA_RECORDATORIO_TECNICO)
+        for f, ini in cand:
+            if max_s and time.time() - t0 > max_s:
+                res["cortado"] = True
+                break
+            vid = int(f["id"])
+            clave = _orec.clave_inicio(ini)
+            numero = f.get("numero_ot") or f"V-{vid:05d}"
+            inf = info.get(vid) or {}
+            tec = (tec_map or {}).get(vid, {})
+            fichas = (fichas_map or {}).get(vid, set())
+            personas = [n for e, n in tec.items() if e not in fichas]        # el nombre de una ficha es el de un PROVEEDOR: no se muestra
+            ot = {"id": vid, "numero_ot": numero, "cliente": f.get("cli_razon") or inf.get("cliente") or "",
+                  "tipo_label": inf.get("tipo_label") or "Visita", "fecha": f.get("fecha_programada"),
+                  "hora_inicio": f.get("hora_inicio"), "hora_fin": f.get("hora_fin"),
+                  "direccion": inf.get("direccion") or "", "equipos": equipos.get(vid, []), "tecnicos": personas}
+            ref = {"tipo": "OT", "id": vid, "codigo": numero}
+            link_ot = f"{base}/ot/{vid}"
+            # ── al CLIENTE: solo OT de cliente (no trabajo interno) y no la desinstalación (su aviso es el de la instalación)
+            hija_desinst = (bool(f.get("ot_madre_id"))
+                            and (f.get("ot_relacion") or "").strip().lower() == _evt.REL_DESINSTALACION)
+            if f.get("cliente_id") and not hija_desinst and not _ot_es_interna(f) and not bloq_cli:
+                contacto = (f.get("contacto_nombre") or f.get("cli_contacto_nombre") or "").strip()
+                for d in _ot_com_cliente_correos(f):
+                    if dry:
+                        res["cliente"].append({"ot": numero, "correo": d["correo"], "visita": clave})
+                        continue
+                    if not _ot_rec_reservar(vid, "cliente", d["correo"], clave):
+                        continue
+                    ok = False
+                    try:
+                        vs = _orec.variables_recordatorio(
+                            ot, ini, hoy, nombre_destinatario=(contacto if d.get("origen") == "contacto_ot" else ""), link_ot="")
+                        asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_RECORDATORIO, vs)
+                        asunto = _brand_subject(asunto)
+                        ok = bool(_send_ilus_email(
+                            d["correo"], asunto, _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {numero}"),
+                            evento=_ocom.EVENTO_RECORDATORIO_CLIENTE, modulo=_ocom.MODULO_GENERAL, asincrono=True, ref=ref,
+                            correo="ot_recordatorio_cliente"))
+                    except Exception as e:
+                        print(f"[ot-recordatorio] cliente vid={vid}: {type(e).__name__}: {e}", flush=True)
+                    if ok:
+                        res["cliente"].append({"ot": numero, "correo": d["correo"], "visita": clave})
+                        log_filas.append((vid, f"Recordatorio de 24 horas al cliente: correo a {d['correo']} (visita {clave})"))
+                    else:
+                        _ot_rec_liberar(vid, "cliente", d["correo"], clave)
+            # ── al TÉCNICO (cada persona o empresa externa de la OT): sin montos ni proveedores
+            if not bloq_tec and not plantilla_tec_apagada:
+                oculto = _ot_tec_oculta_detalle(vid)
+                for email, nombre in sorted(tec.items()):
+                    if dry:
+                        res["tecnico"].append({"ot": numero, "correo": email, "visita": clave})
+                        continue
+                    if not _ot_rec_reservar(vid, "tecnico", email, clave):
+                        continue
+                    ok = False
+                    try:
+                        ot_t = dict(ot, direccion=(_otc.OCULTO_ANEXO if oculto else ot.get("direccion")))
+                        vs = _orec.variables_recordatorio(ot_t, ini, hoy, nombre_destinatario=nombre, link_ot=link_ot)
+                        asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_RECORDATORIO_TECNICO, vs)
+                        ok = bool(_ot_tec_enviar(email, _brand_subject(asunto), cuerpo, evento=_ocom.EVENTO_RECORDATORIO_TECNICO,
+                                                 subtitulo=f"OT {numero}", ref=ref, correo="ot_tec_recordatorio"))
+                    except Exception as e:
+                        print(f"[ot-recordatorio] técnico vid={vid}: {type(e).__name__}: {e}", flush=True)
+                    if ok:
+                        res["tecnico"].append({"ot": numero, "correo": email, "visita": clave})
+                        log_filas.append((vid, f"Recordatorio de 24 horas al técnico: correo a {nombre} ({email}) (visita {clave})"))
+                    else:
+                        _ot_rec_liberar(vid, "tecnico", email, clave)
+    except Exception as e:
+        res["ok"] = False
+        res["error"] = type(e).__name__
+        print(f"[ot-recordatorio] {type(e).__name__}: {e}", flush=True)
+    finally:
+        _ot_rec_log(log_filas)
+    return res
+
+
+@app.route("/mantenciones/cron/recordatorio-ot-24h", methods=["GET", "POST"])
+def mant_cron_recordatorio_ot_24h():
+    """Recordatorio de 24 horas de las OT (también lo dispara simpliroute-poll cada 10 min). Token por header X-Cron-Token (= ILUS_CRON_TOKEN);
+    sin token configurado solo acepta localhost. ?dry=1 solo muestra qué mandaría (incluso fuera del horario de cobertura)."""
+    tok = _cron_extract_token()
+    esperado = ((os.environ.get("ILUS_CRON_TOKEN") or "").strip()
+                or (os.environ.get("FEDEX_CRON_TOKEN") or "").strip())
+    if esperado:
+        if not tok or not secrets.compare_digest(tok.encode("utf-8"), esperado.encode("utf-8")):
+            return jsonify({"error": "forbidden"}), 403
+    elif request.remote_addr not in ("127.0.0.1", "::1", "localhost"):
+        return jsonify({"error": "forbidden"}), 403
+    dry = (request.args.get("dry") or "") in ("1", "true", "yes")
+    return jsonify(_ot_recordatorio_barrido(dry=dry))
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -185273,6 +185539,7 @@ try:
     with app.app_context():
         _ensure_ot_comunicacion_tablas()
         _ensure_comm_template_ot_comunicacion()
+        _ensure_ot_recordatorios_tabla()      # 2026-11-05: constancia del recordatorio de 24 horas (CREATE TABLE IF NOT EXISTS, barata)
 except Exception as _ensure_otcom_err:
     print(f"[ILUS][WARN] comunicación de la OT (tabla/plantillas): {_ensure_otcom_err}", flush=True)
 

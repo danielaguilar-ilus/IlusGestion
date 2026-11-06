@@ -642,15 +642,21 @@ const TPL_ESTADOS_MANTENCIONES = [
     color:'#16a34a', desc:'Recordatorio automático entre las 17:00 y las 21:00 del día hábil anterior, con las OT del técnico (el viernes avisa el lunes, y también un sábado o feriado que tenga OT; el correo nunca sale en sábado, domingo ni feriado)' },
   // 📨 2026-10-21 (Daniel: «cuando se termine la OT se envíe automáticamente por correo… y habilita, como las cotizaciones, un envío por
   // mail directo de las órdenes de trabajo»). La OT terminada (al aprobar el cierre) y el envío manual: ninguno lleva montos ni proveedores.
-  // El del cliente nace APAGADO (OT_TERMINADA_CLIENTE_ACTIVA): solo Daniel lo enciende. Variables: ver TPL_VARS.ot_terminada.
+  // 2026-11-05 (Daniel: «le avisemos al cliente a partir de ahora… déjalo todo por el front»): el aviso al cliente se enciende y se apaga en
+  // Control de correos, ya no por una variable de entorno. Variables: ver TPL_VARS.ot_terminada.
   { key:'ot_terminada',          label:'OT terminada (al cliente)', icon:'bi-envelope-check', grupo:'ot_terminada',
-    color:'#16a34a', desc:'Al cliente, cuando se aprueba el cierre de la OT: el enlace al documento firmado, sin montos (hoy apagado por configuración: OT_TERMINADA_CLIENTE_ACTIVA)' },
+    color:'#16a34a', desc:'Al cliente, cuando el responsable de Servicio Técnico firma el cierre (con las tres firmas puestas): el enlace al documento firmado, sin montos. Se enciende y se apaga en Control de correos' },
   { key:'ot_terminada_interno',  label:'OT terminada (al equipo)',  icon:'bi-people',         grupo:'ot_terminada',
     color:'#0ea5e9', desc:'A quien creó la OT, al ejecutivo del cliente y al responsable, con lo que se le envió al cliente y al técnico' },
   { key:'ot_terminada_tecnico',  label:'OT terminada (al técnico)', icon:'bi-person-check',   grupo:'ot_terminada',
     color:'#f59e0b', desc:'Al técnico que la hizo, cuando se aprueba el cierre: su copia, sin montos ni proveedores' },
   { key:'ot_envio_manual',       label:'Enviar OT por correo (manual)', icon:'bi-send',       grupo:'ot_terminada',
     color:'#dc2626', desc:'El botón «Enviar OT por correo» de la ficha de una OT cerrada: el mismo texto para todos los destinatarios, con el mensaje opcional de quien envía' },
+  // ⏰ 2026-11-05 (Daniel: «recordemos 24 horas tanto al técnico como al cliente»): 24 horas antes de la visita, solo en horario hábil.
+  { key:'ot_recordatorio_24h',         label:'Recordatorio de 24 horas (al cliente)', icon:'bi-alarm', grupo:'ot_terminada',
+    color:'#f59e0b', desc:'Al cliente, 24 horas antes de que empiece la visita (lunes a viernes de 08:00 a 17:00, sin la colación): el día, el horario, los técnicos y la dirección' },
+  { key:'ot_recordatorio_24h_tecnico', label:'Recordatorio de 24 horas (al técnico)', icon:'bi-alarm', grupo:'ot_terminada',
+    color:'#f59e0b', desc:'Al técnico o empresa externa de la OT, 24 horas antes de la visita: sin montos ni proveedores' },
 ];
 
 // 2026-10-04 (Daniel: «crear las plantillas separadas del resto, llámala gestión de prospectos de mantención,
@@ -843,6 +849,9 @@ const TPL_VARS = {
     { v:'{{cliente}}',             label:'Cliente (o «Trabajo interno»)' },
     { v:'{{tipo_mantencion}}',     label:'Tipo de orden de trabajo' },
     { v:'{{fecha_realizada}}',     label:'Fecha en que se hizo el trabajo' },
+    { v:'{{fecha}}',               label:'Fecha de la visita (solo en los recordatorios de 24 horas)' },
+    { v:'{{dia}}',                 label:'«hoy», «mañana» o «el martes 10/11/2026» (solo en los recordatorios de 24 horas)' },
+    { v:'{{horario}}',             label:'Horario de la visita (solo en los recordatorios de 24 horas)' },
     { v:'{{tecnicos}}',            label:'Los técnicos (personas) de la OT' },
     { v:'{{maquina}}',             label:'Equipos de la OT' },
     { v:'{{direccion}}',           label:'Dirección del trabajo' },

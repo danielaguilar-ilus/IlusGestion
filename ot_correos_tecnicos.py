@@ -660,8 +660,12 @@ def _lineas_fecha(ini, fin, hi, hf):
 
 
 def ics_evento(ot, evento, *, correo, nombre="", ts, base_url="", organizador="soportetec@sphs.cl",
-               ocultar_detalle=False, link_lista=False, motivo=""):
+               ocultar_detalle=False, link_lista=False, motivo="", rsvp=False, sin_link=False):
     """Bytes del .ics de UNA OT para UN técnico, o None si no se puede armar (evento desconocido o OT sin fecha).
+
+    rsvp / sin_link (5-nov-2026, invitación de calendario al CLIENTE): rsvp=True pide que la persona ACEPTE o RECHACE la visita desde su
+    calendario (RSVP=TRUE); sin_link=True omite el enlace a la ficha (es interna y pide sesión: el cliente no la puede abrir). Con los
+    valores por omisión el archivo es exactamente el de siempre.
 
     ot: id, numero_ot, cliente, tipo_label, fecha, fecha_fin, hora_inicio, hora_fin, direccion, equipos, descripcion.
         Para «cancelada» y «desasignada» pasar la fecha/hora que el técnico tenía en su calendario (la que se borra).
@@ -707,7 +711,8 @@ def ics_evento(ot, evento, *, correo, nombre="", ts, base_url="", organizador="s
             m = limpiar_texto_tecnico(motivo, 200)
             if m:
                 desc.append(f"Motivo del cambio: {m}.")
-    desc.append(f"Ficha: {link}")
+    if not sin_link:
+        desc.append(f"Ficha: {link}")
 
     direccion = "" if ocultar_detalle else (ot.get("direccion") or "").strip()
     if direccion in ("—", "-"):
@@ -716,7 +721,7 @@ def ics_evento(ot, evento, *, correo, nombre="", ts, base_url="", organizador="s
     stamp = _dt.datetime.fromtimestamp(float(ts), _dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     org = f"ORGANIZER;CN={_param('ILUS Fitness')}:mailto:{organizador}"
     att = ("ATTENDEE;" + (f"CN={_param(nombre)};" if _param(nombre) else "")
-           + f"CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE:mailto:{correo}")
+           + f"CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP={'TRUE' if rsvp else 'FALSE'}:mailto:{correo}")
     L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ILUS Fitness//Ordenes de trabajo//ES",
          "CALSCALE:GREGORIAN", f"METHOD:{metodo}", "BEGIN:VEVENT",
          f"UID:{ics_uid(numero)}", f"DTSTAMP:{stamp}", f"SEQUENCE:{secuencia_desde(ts)}"]
@@ -724,8 +729,8 @@ def ics_evento(ot, evento, *, correo, nombre="", ts, base_url="", organizador="s
     L += [f"SUMMARY:{ics_escapar(titulo)}"]
     if direccion:
         L.append(f"LOCATION:{ics_escapar(direccion)}")
-    L += [f"DESCRIPTION:{ics_escapar(chr(10).join(desc))}", f"URL:{link}", org, att,
-          f"STATUS:{'CANCELLED' if cancela else 'CONFIRMED'}", "TRANSP:OPAQUE"]
+    L += [f"DESCRIPTION:{ics_escapar(chr(10).join(desc))}"] + ([] if sin_link else [f"URL:{link}"]) + [
+          org, att, f"STATUS:{'CANCELLED' if cancela else 'CONFIRMED'}", "TRANSP:OPAQUE"]
     if not cancela and con_hora:                        # sin hora no hay "2 h antes" que avisar
         L += ["BEGIN:VALARM", f"TRIGGER:{ICS_ALARMA}", "ACTION:DISPLAY",
               f"DESCRIPTION:{ics_escapar('Recordatorio ' + etiqueta)}", "END:VALARM"]

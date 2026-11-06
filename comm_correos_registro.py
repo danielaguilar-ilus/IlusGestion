@@ -123,6 +123,10 @@ DEMO_EXTRA = {
     "saludo": "Hola María,", "nombre_destinatario": "María", "nombre_contacto": "María", "fecha_realizada": "21/10/2026",
     "link_ot_firmada": "https://ilusfitness.com/ot-firmada/demo", "mensaje_html": "", "aprobado_por": "Aarón Rojas",
     "cerrada_en": "21/10/2026 11:30", "resumen_envio_html": "", "dias_vigencia": "30", "enviado_por": "Aarón Rojas",
+    # Recordatorio de 24 horas (5-nov-2026).
+    "dia": "mañana", "nombre_tecnico": "Pedro", "tecnicos": "Pedro Pérez", "tipo_mantencion": "Mantención preventiva",
+    "ot": "OT-2026-00123", "cliente": "Gimnasio Demo SpA", "direccion": "Av. Demo 1234, Las Condes", "maquina": "Trotadora ILUS Pro 9000",
+    "fecha": "21/10/2026", "link_ot": "https://ilusfitness.com/ot/123",
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -230,7 +234,10 @@ REGISTRO = (
     _c("ot_creada_cliente", "OT creada: aviso de la visita agendada al cliente", "ot", "mantenciones", "cliente",
        "Al crear una OT de cliente (asistente «Nueva OT», ficha del cliente o ticket). No sale en trabajos internos.",
        modo="automatico", plantilla=("mantenciones", "visita_agendada"),
-       avisa_a="Al contacto de la OT y a los correos de la ficha del cliente"),
+       avisa_a="Al contacto de la OT y a los correos de la ficha del cliente",
+       adjunta="Invitación de calendario (.ics) para aceptar o rechazar la visita",
+       nota="Desde el 5-nov-2026 lleva una invitación de calendario: el cliente la acepta desde su correo y la visita queda en su calendario. "
+            "Sin fecha definida, el correo sale sin la invitación."),
     _c("ot_visita_agendada_manual", "Visita agendada: envío manual al cliente", "ot", "mantenciones", "cliente",
        "Botón «Enviar email» de la ficha de la OT (lo manda una persona).",
        plantilla=("mantenciones", "visita_agendada"), avisa_a="Al cliente (o al destinatario que se escriba)"),
@@ -364,13 +371,12 @@ REGISTRO = (
        "Al APROBAR el cierre de una OT de cliente: el documento firmado (sin montos) al contacto de la OT y a los correos de la ficha "
        "del cliente. No sale en un trabajo interno ni en una desinstalación.",
        modo="automatico", plantilla=("mantenciones", "ot_terminada"),
-       condiciones=(_cond("OT_TERMINADA_CLIENTE_ACTIVA", "verdadero_amplio", "todo",
-                          "El aviso automático al cliente está encendido (OT_TERMINADA_CLIENTE_ACTIVA).",
-                          "Apagado por configuración: OT_TERMINADA_CLIENTE_ACTIVA no está encendida. Encenderla requiere la "
-                          "autorización explícita de Daniel (REGLA #22). Mientras tanto la gestión lo envía a mano con «Enviar OT por correo»."),),
        avisa_a="Al contacto de la OT y a los correos de la ficha del cliente", adjunta="Enlace al documento firmado (sin montos)",
-       nota="Nace APAGADO. Al encenderlo no se manda nada retroactivo: solo las OT que se aprueben desde ese momento. Una OT terminada "
-            "cuyo aviso al cliente no salió muestra en su ficha «todavía no se le envió al cliente» con el botón «Enviar OT por correo»."),
+       nota="Se enciende y se apaga aquí (Daniel, 5-nov-2026: «le avisemos al cliente a partir de ahora… déjalo todo por el front»). Sale "
+            "cuando el responsable de Servicio Técnico firma el cierre, es decir, con las tres firmas puestas (técnico, cliente y responsable). "
+            "No manda nada retroactivo: solo las OT que se aprueben desde que está encendido. Una OT terminada cuyo aviso al cliente no salió "
+            "muestra en su ficha «todavía no se le envió al cliente» con el botón «Enviar OT por correo». Además de este interruptor, tiene que "
+            "estar abierta la llave de Servicio Técnico. Freno de emergencia: la variable OT_TERMINADA_CLIENTE_ACTIVA=0 lo apaga aunque esté encendido."),
     _c("ot_terminada_responsable", "OT terminada: aviso a quien la creó, al ejecutivo o al responsable", "ot", "mantenciones",
        "responsable_ot",
        "Al APROBAR el cierre de una OT: quien la creó, el ejecutivo del cliente o el responsable de la OT (los decide "
@@ -381,6 +387,23 @@ REGISTRO = (
        "Al APROBAR el cierre de una OT: el técnico (o la empresa externa) que la hizo recibe su copia, sin montos ni proveedores.",
        modo="automatico", plantilla=("mantenciones", "ot_terminada_tecnico"), plantilla_apagada="no_sale",
        avisa_a="A cada técnico de la OT"),
+    # 2026-11-05 (Daniel: «necesito que le recordemos también 24 horas tanto al técnico como al cliente… déjalo todo por el front»).
+    # Los manda el barrido `_ot_recordatorio_barrido` (app.py, colgado de simpliroute-poll cada 10 min), solo en horario de cobertura.
+    _c("ot_recordatorio_cliente", "Recordatorio de 24 horas: tu visita técnica es mañana (al cliente)", "ot", "mantenciones", "cliente",
+       "24 horas antes de que empiece la visita de una OT de cliente, en horario hábil (lunes a viernes de 08:00 a 17:00, sin la colación). "
+       "Si las 24 horas caen en fin de semana o feriado, sale el último día hábil anterior. No sale en un trabajo interno, en una "
+       "desinstalación ni si la OT se creó dentro de las 24 horas previas (ya recibió el aviso de creación).",
+       modo="automatico", plantilla=("mantenciones", "ot_recordatorio_24h"),
+       avisa_a="Al contacto de la OT y a los correos de la ficha del cliente",
+       nota="Una sola vez por fecha de visita: si la OT se reagenda, recuerda la nueva fecha. Nunca lleva montos ni proveedores. Además de "
+            "este interruptor, tiene que estar abierta la llave de Servicio Técnico."),
+    _c("ot_tec_recordatorio", "Recordatorio de 24 horas: tu visita es mañana (al técnico)", "ot", "ot_tecnicos", "tecnico",
+       "24 horas antes de que empiece la visita, a cada técnico (o empresa externa) de la OT, en horario hábil. Mismas reglas de horario que "
+       "el recordatorio al cliente.",
+       modo="automatico", plantilla=("mantenciones", "ot_recordatorio_24h_tecnico"), plantilla_apagada="no_sale",
+       avisa_a="A cada técnico de la OT",
+       nota="Sin montos ni proveedores. Con el Anexo de Servicios sin firmar no lleva la dirección. Además de este interruptor, tiene que "
+            "estar abierta la llave de «Correos a técnicos (OT)»."),
     _c("ot_envio_manual", "Enviar OT por correo (envío manual a cliente, ejecutivo u otros)", "ot", "mantenciones", "cliente",
        "Botón «Enviar OT por correo» de la ficha de una OT cerrada (solo gestión): el documento firmado, sin montos, a los correos que se "
        "elijan. Prellenado con el cliente, el ejecutivo y los técnicos; cada destinatario ve el mismo texto.",

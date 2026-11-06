@@ -23,6 +23,7 @@ es el MISMO que ya ve el cliente (`/ot-firmada/<token>`, sin costos). A un técn
 import datetime as _dt
 import html as _html
 import json as _json
+import os
 import re
 
 import comm_correos_registro as _ccr
@@ -45,13 +46,20 @@ CORREO_TERMINADA_RESPONSABLE = "ot_terminada_responsable"
 CORREO_TERMINADA_TECNICO = "ot_tec_terminada"
 CORREO_MANUAL = "ot_envio_manual"
 CORREO_MANUAL_TECNICO = "ot_tec_envio_manual"
+# Recordatorio de 24 horas (Daniel, 5-nov-2026): al cliente y al técnico, cada uno con su interruptor en Control de correos.
+CORREO_RECORDATORIO_CLIENTE = "ot_recordatorio_cliente"
+CORREO_RECORDATORIO_TECNICO = "ot_tec_recordatorio"
 CORREOS = (CORREO_TERMINADA_CLIENTE, CORREO_TERMINADA_RESPONSABLE, CORREO_TERMINADA_TECNICO, CORREO_MANUAL, CORREO_MANUAL_TECNICO)
+CORREOS_RECORDATORIO = (CORREO_RECORDATORIO_CLIENTE, CORREO_RECORDATORIO_TECNICO)       # los envía el barrido `_ot_recordatorio_barrido`
 
 PLANTILLA_TERMINADA = "ot_terminada"
 PLANTILLA_TERMINADA_INTERNO = "ot_terminada_interno"
 PLANTILLA_TERMINADA_TECNICO = "ot_terminada_tecnico"
 PLANTILLA_MANUAL = "ot_envio_manual"
-PLANTILLAS = (PLANTILLA_TERMINADA, PLANTILLA_TERMINADA_INTERNO, PLANTILLA_TERMINADA_TECNICO, PLANTILLA_MANUAL)
+PLANTILLA_RECORDATORIO = "ot_recordatorio_24h"
+PLANTILLA_RECORDATORIO_TECNICO = "ot_recordatorio_24h_tecnico"
+PLANTILLAS = (PLANTILLA_TERMINADA, PLANTILLA_TERMINADA_INTERNO, PLANTILLA_TERMINADA_TECNICO, PLANTILLA_MANUAL,
+              PLANTILLA_RECORDATORIO, PLANTILLA_RECORDATORIO_TECNICO)
 
 # Nombre del evento en email_log / Historial de Comunicaciones.
 EVENTO_TERMINADA_CLIENTE = "ot_terminada_cliente"
@@ -59,6 +67,8 @@ EVENTO_TERMINADA_RESPONSABLE = "ot_terminada_responsable"
 EVENTO_TERMINADA_TECNICO = "ot_terminada_tecnico"
 EVENTO_MANUAL = "ot_envio_manual"
 EVENTO_MANUAL_TECNICO = "ot_envio_manual_tecnico"
+EVENTO_RECORDATORIO_CLIENTE = "ot_recordatorio_24h_cliente"
+EVENTO_RECORDATORIO_TECNICO = "ot_recordatorio_24h_tecnico"
 
 TIPO_TERMINADA = "terminada"        # fila de mant_ot_comunicaciones: el aviso automático de UNA aprobación del cierre
 TIPO_MANUAL = "manual"              # fila de mant_ot_comunicaciones: un «Enviar OT por correo»
@@ -120,13 +130,13 @@ def correo_valido(c):
 
 
 def cliente_activo(environ=None):
-    """¿Está ENCENDIDO el aviso automático al cliente? Lo decide la MISMA condición que muestra Control de correos («Apagado por
-    configuración»), para que la pantalla y el código jamás se contradigan. Nace apagado: vacío o ausente = apagado."""
-    c = _ccr.por_clave(CORREO_TERMINADA_CLIENTE) or {}
-    for cond in c.get("condiciones") or ():
-        if cond.get("variable") == ENV_CLIENTE_ACTIVA:
-            return bool(_ccr.evaluar_condicion(cond, environ))
-    return False
+    """¿Está permitido el aviso automático al cliente por CONFIGURACIÓN del servidor? Desde el 5-nov-2026 (Daniel: «le avisemos al cliente a
+    partir de ahora… déjalo todo por el front») el aviso se enciende y se apaga SOLO desde Comunicaciones → Control de correos (el
+    interruptor de «OT terminada: aviso al cliente») y desde la llave de Servicio Técnico: ambos los muestra el plan de envío como
+    «apagado» y la puerta única los respeta. La variable de entorno quedó solo como FRENO DE EMERGENCIA: si alguien la pone explícitamente en
+    0/false/no/off, el aviso queda apagado aunque el interruptor del frente esté encendido; ausente o vacía = no frena nada."""
+    env = os.environ if environ is None else environ
+    return (env.get(ENV_CLIENTE_ACTIVA) or "").strip().lower() not in ("0", "false", "no", "off")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -593,7 +603,7 @@ def esc(v):
 
 
 def variables_ot(ot, *, saludo="", nombre_destinatario="", link_ot_firmada="", link_ot="", mensaje="", aprobado_por="",
-                 cerrada_en="", resumen_envio_html="", enviado_por="", dias=TOKEN_DIAS, tecnicos_nombres=None):
+                 cerrada_en="", resumen_envio_html="", enviado_por="", dias=TOKEN_DIAS, tecnicos_nombres=None, dia="", horario=""):
     """Las variables de los correos de la OT, TODAS ESCAPADAS para HTML (las escribe una persona: razón social, dirección…); los `*_html`
     ya vienen armados. `ot`: id, numero_ot, cliente, tipo_label, fecha_realizada, fecha, direccion, equipos (lista de nombres)."""
     numero = ot.get("numero_ot") or f"V-{int(ot.get('id') or 0):05d}"
@@ -616,6 +626,7 @@ def variables_ot(ot, *, saludo="", nombre_destinatario="", link_ot_firmada="", l
         "aprobado_por": esc(aprobado_por or "—"), "cerrada_en": esc(cerrada_en or "—"),
         "resumen_envio_html": resumen_envio_html or "",
         "dias_vigencia": esc(str(dias)), "enviado_por": esc(enviado_por or ""),
+        "dia": esc(dia), "horario": esc(horario),      # solo los recordatorios de 24 horas los llenan (ot_recordatorio_24h.py)
     }
 
 
@@ -719,6 +730,27 @@ SEMILLAS = {
         + _tabla("#16a34a", _FILAS)
         + _boton("Ver la orden de trabajo firmada", "{{link_ot_firmada}}")
         + _pie("El enlace se mantiene disponible por {{dias_vigencia}} días. Lo envió {{enviado_por}} desde ILUS Fitness.")),
+    # RECORDATORIO DE 24 HORAS (Daniel, 5-nov-2026). Al CLIENTE: sin enlace a la ficha interna (pide sesión); si algo cambia, responde el correo.
+    PLANTILLA_RECORDATORIO: (
+        "Recordatorio: tu visita técnica es {{dia}} ({{ot}})",
+        _p("{{saludo}}")
+        + _p("Te recordamos que <strong>{{dia}}</strong> nuestro equipo técnico irá a realizar el trabajo de la orden de trabajo "
+             "<strong>{{ot}}</strong>.")
+        + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Trabajo", "{{tipo_mantencion}}") + _f("Fecha", "{{fecha}}")
+                 + _f("Horario", "{{horario}}") + _f("Técnico(s)", "{{tecnicos}}") + _f("Equipos", "{{maquina}}")
+                 + _f("Dirección", "{{direccion}}"))
+        + _p("Para que todo salga bien, procura que haya una persona que pueda recibir al equipo y darle acceso a los equipos del trabajo.")
+        + _pie("¿Necesitas cambiar la fecha o el acceso? Responde este correo o crea un ticket de soporte y lo coordinamos con tiempo.")),
+    # Al TÉCNICO (o a la empresa externa): su recordatorio, SIN montos ni proveedores. La dirección la reemplaza el código mientras el Anexo no esté firmado.
+    PLANTILLA_RECORDATORIO_TECNICO: (
+        "Recordatorio: {{dia}} tienes la {{ot}} · {{cliente}}",
+        _p("{{saludo}}")
+        + _p("Te recordamos que <strong>{{dia}}</strong> tienes la orden de trabajo <strong>{{ot}}</strong>.")
+        + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Cliente", "{{cliente}}") + _f("Trabajo", "{{tipo_mantencion}}")
+                 + _f("Fecha", "{{fecha}}") + _f("Horario", "{{horario}}") + _f("Dirección", "{{direccion}}")
+                 + _f("Equipos", "{{maquina}}"))
+        + _boton("Ver la OT", "{{link_ot}}")
+        + _pie("Si no puedes asistir, avisa lo antes posible a tu coordinador de Servicio Técnico.")),
 }
 
 
