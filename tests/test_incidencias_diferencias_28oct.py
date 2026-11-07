@@ -157,8 +157,8 @@ class TestGestionarLaDiferenciaUnidadPorUnidad(unittest.TestCase):
             t = fh.read()
         self.assertIn('id="incDifModal"', t)
         self.assertIn("incAbrirDiferencia(h); return;", t)
-        panel = t.split("function incAbrirDiferencia")[1][:9500]
-        for ancla in ("incAbrirPorId(c.id)", "incAbrirBaja(", "incRegistrarConPregunta(Object.assign", "con motivo", "Falta agregar", "Registrar esta UA"):
+        panel = t.split("function incAbrirDiferencia")[1].split("function incPintarUasAlternas")[0]
+        for ancla in ("incAbrirPorId(c.id", "incAbrirBaja(", "incRegistrarConPregunta(Object.assign", "con motivo", "Falta agregar", "Registrar esta UA"):
             self.assertIn(ancla, panel, ancla)
         self.assertIsNone(re.search(r"(?<![A-Za-z.])(alert|confirm|prompt)\(", panel))
         # «Ver / corregir» no se pierde: queda en el menú de la fila (REGLA #4.2)
@@ -480,7 +480,7 @@ class TestDiferenciasDeUa(unittest.TestCase):
         with open(PLANTILLA, encoding="utf-8") as fh:
             t = fh.read()
         for ancla in ("asignar_ua:     {ico:'bi-upc-scan'", "'Asignar UA'", "if(incConcFiltro === 'asignar') return !!h.falta_asignar_ua;",
-                      "data-dif=\"asignar\"", "c.ua_sugerida", "function incAbrirPorId(id, abrirRepuesto, alAbrir)",
+                      "data-dif=\"asignar\"", "c.ua_sugerida", "function incAbrirPorId(id, abrirRepuesto, alAbrir, opts)",
                       "En el ERP · falta la gestión en Check", "incPorQueTimer = setTimeout("):
             self.assertIn(ancla, t, ancla)
         # asignar la UA solo rellena el campo: la persona revisa y guarda (nada se escribe sin su confirmación)

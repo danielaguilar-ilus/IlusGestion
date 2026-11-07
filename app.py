@@ -69741,7 +69741,7 @@ def _inc_hallazgo_faltan(h):
     return int(round(falta)) if falta > 0.001 else 0
 
 
-def _inc_unidades_hallazgo(h, incs, repetible):
+def _inc_unidades_hallazgo(h, incs, repetible, check_por_ua=None):
     """PURA. El detalle POR UNIDAD de una diferencia de cantidad («dif_erp» / «dif_wms»), para el panel «Gestionar diferencia».
 
     Daniel (28-oct): «la idea de esta bodega es separar: 90 pisos van en una línea, pero 2 máquinas van separadas porque cada una tiene un motivo
@@ -69755,7 +69755,10 @@ def _inc_unidades_hallazgo(h, incs, repetible):
       · «faltan_repetible»  un producto repetible al que le faltan N unidades: se registra en UNA línea con la cantidad;
       · «sin_ua»            faltan unidades, Check las tiene pero no hay otra UA libre que proponer (hay que separarlas en Check);
       · «falta_check»       el ERP las tiene en la Bodega 13, Check NO, y nosotros tampoco las declaramos: hay que pedir el ingreso en Check Y registrarlas;
-      · «check_pendiente»   ya las declaramos, pero Check todavía no las tiene: solo falta el ingreso en Check."""
+      · «check_pendiente»   ya las declaramos, pero Check todavía no las tiene: solo falta el ingreso en Check.
+    `check_por_ua` = {UA: unidades que Check tiene en la Bodega 13} (None si Check no respondió). 7-nov (Daniel, Tarro Pegamento U Lock Turf: nosotros 14,
+    ERP 7, Check 7, «declaramos 7 de más» y no decía cuál): cada incidencia con UA lleva `en_check` (Check tiene esa UA en la Bodega 13) y `check_cant`
+    (cuántas). Así se ve cuál sobra. Sin dato de Check no se afirma nada (no se agregan las llaves)."""
     tarjetas, con_motivo, declaradas = [], 0, 0
     for i in incs or []:
         try:
@@ -69765,8 +69768,13 @@ def _inc_unidades_hallazgo(h, incs, repetible):
         ok = len((i.get("motivo") or "").strip()) >= 10
         declaradas += cant
         con_motivo += cant if ok else 0
-        tarjetas.append({"clase": "incidencia", "id": i.get("id"), "ua": i.get("ua"), "ubicacion": i.get("ubicacion"),
-                         "cantidad": cant, "motivo": (i.get("motivo") or "").strip(), "con_motivo": ok})
+        t = {"clase": "incidencia", "id": i.get("id"), "ua": i.get("ua"), "ubicacion": i.get("ubicacion"),
+             "cantidad": cant, "motivo": (i.get("motivo") or "").strip(), "con_motivo": ok}
+        if check_por_ua is not None and i.get("ua"):
+            en = check_por_ua.get(i.get("ua"))
+            t["en_check"] = en is not None
+            t["check_cant"] = int(round(en)) if en is not None else 0
+        tarjetas.append(t)
     ref = h.get("erp") if h.get("tipo") == "dif_erp" else h.get("wms")
     try:
         dif = float(ref or 0) - float(h.get("nuestra_bd") or 0)
@@ -70524,10 +70532,24 @@ def _inc_calcular_hallazgos(forzar=False):
     # producto se puede agrupar o va una línea por equipo. Una sola consulta batch a la clasificación; nada nuevo contra el ERP ni Check.
     _skus_dif = sorted({h.get("sku") for h in hallazgos if h.get("tipo") in ("dif_erp", "dif_wms", "asignar_ua") and h.get("sku")})
     _clasif_dif = _inc_clasificacion_skus_batch(_skus_dif) if _skus_dif else {}
+    # 7-nov: cuántas unidades tiene Check en cada UA de la Bodega 13 (una UA puede venir en varias filas): para decir cuál incidencia sobra.
+    _check_por_ua = None
+    if wms_ok:
+        _check_por_ua = {}
+        for r in wms_b13:
+            _ua = (r.get("ua") or "").strip().upper()
+            if _ua:
+                try:
+                    _check_por_ua[_ua] = _check_por_ua.get(_ua, 0) + float(r.get("stFisico") or 0)
+                except (TypeError, ValueError):
+                    _check_por_ua.setdefault(_ua, 0)
     for h in hallazgos:
         if h.get("tipo") in ("dif_erp", "dif_wms", "asignar_ua"):
-            h["repetible"] = (_clasif_dif.get((h.get("sku") or "").strip()) or {}).get("repetible") is True
-            h["unidades"] = _inc_unidades_hallazgo(h, inc_por_sku.get(h.get("sku"), {}).get("incs", []), h["repetible"])
+            _cl = _clasif_dif.get((h.get("sku") or "").strip()) or {}
+            h["repetible"] = _cl.get("repetible") is True
+            # 7-nov (Daniel, con un tarro de pegamento que el panel llamaba «equipo»): sin clasificación en el Catálogo no se afirma que sea un equipo.
+            h["sin_clasificar"] = _cl.get("repetible") is None
+            h["unidades"] = _inc_unidades_hallazgo(h, inc_por_sku.get(h.get("sku"), {}).get("incs", []), h["repetible"], _check_por_ua)
             _sc = h["unidades"].get("sin_check") or 0
             h["falta_ingreso_check"] = _sc > 0
             h["falta_asignar_ua"] = (h["unidades"].get("por_asignar") or 0) > 0
@@ -71543,6 +71565,17 @@ def mant_api_incidencias_list():
     where = ["COALESCE(eliminada,0) = 0"]
     params = []
 
+    # 🔧 2026-11-07 (Daniel: «entro a gestionar la diferencia, toco Ver / corregir y no hace nada»): el botón pedía la lista con page_size=500
+    # (no permitido → 10 filas) y SIN ver_todo, así que la incidencia de una diferencia —justo la que NO cuadra— nunca llegaba y no se abría nada.
+    # `?id=N` trae esa incidencia sola, cuadre o no; sigue sin traer las eliminadas ni las dadas de baja (esas no se editan).
+    try:
+        solo_id = int(request.args.get("id") or 0)
+    except (TypeError, ValueError):
+        solo_id = 0
+    if solo_id > 0:
+        where.append("id = %s")
+        params.append(solo_id)
+
     # 🔧 2026-09-30 (Daniel: "dar de baja sin eliminar"): una incidencia dada de
     # baja no se muestra acá -- vive en "Dadas de baja", el historial con el
     # motivo, quién y cuándo. Sigue en la base con todo su detalle.
@@ -71559,7 +71592,7 @@ def mant_api_incidencias_list():
     # diferencias" (mismo dato, ver _inc_ids_no_cuadran). `?ver_todo=1`
     # es la válvula de escape (no se borra ni se oculta nada de forma
     # permanente, solo deja de ser el default de esta tabla).
-    if (request.args.get("ver_todo") or "").strip() != "1":
+    if (request.args.get("ver_todo") or "").strip() != "1" and not solo_id:
         ids_no_cuadran = _inc_ids_no_cuadran()
         if ids_no_cuadran:
             marcadores_nc = ",".join(["%s"] * len(ids_no_cuadran))
