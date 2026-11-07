@@ -1149,6 +1149,18 @@
 .inc-dif-card .motivo{font-size:.88rem;color:#111827;line-height:1.35;overflow-wrap:anywhere}
 .inc-dif-card .acc{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:4px}
 .inc-dif-card .acc .btn{min-height:44px;font-weight:800}
+/* 7-nov: «declaramos de más» y lo que Check tiene en cada UA (ámbar = revisar, nunca rojo) */
+.inc-dif-prog.alerta .bar > span{background:#f59e0b}
+.inc-dif-nota.sobra{background:#fff8e1;border-color:#f59e0b;color:#92400e}
+.inc-dif-nota.sobra > i{color:#d97706;margin-top:2px}
+.inc-chip.ojo{background:#fff8e1;border-color:#f59e0b;color:#92400e}
+.inc-chip.ojo .lbl{color:#b45309}
+.inc-dif-card .pills{display:flex;flex-wrap:wrap;gap:6px}
+.inc-dif-card.revisar{border-left-color:#f59e0b;background:#fffdf5;box-shadow:0 0 0 2px #fde68a}
+.inc-dif-card .pill.revisar{background:#fef3c7;color:#92400e;border-color:#fde68a}
+.inc-dif-card .chk{display:flex;gap:6px;align-items:flex-start;font-size:.8rem;font-weight:700;line-height:1.3}
+.inc-dif-card .chk.verde{color:#166534}
+.inc-dif-card .chk.ambar{color:#92400e}
 @media (max-width:768px){ #incDifModal .modal-dialog{margin:0;max-width:none;height:100dvh} #incDifModal .modal-content{height:100dvh;border-radius:0} .inc-dif-grid{grid-template-columns:1fr} }
 .inc-pane{animation:incFade .28s ease;padding:12px;border-radius:14px;
   border:1.5px solid #e5e7eb;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.03);
@@ -2927,16 +2939,42 @@
   // `abrirRepuesto=true` (2026-09-26, acción "Solicitar repuesto" directo
   // desde Revisar diferencias) además dispara el flujo de solicitud ya
   // existente apenas el modal termina de poblarse.
-  function incAbrirPorId(id, abrirRepuesto, alAbrir){
-    fetch('/mantenciones/api/incidencias?page=1&page_size=500')
-      .then(function(r){return r.json();}).then(function(d){
-        if(!d || !d.ok) return;
-        abrirEdicion(id, d.rows || []);
-        if(typeof alAbrir === 'function') alAbrir();
-        if(abrirRepuesto){
-          setTimeout(function(){ document.getElementById('incBtnSolicitarRepuesto').click(); }, 350);
+  // 🔧 2026-11-07 (Daniel: «entro a gestionar la diferencia, toco Ver / corregir y no hace nada»): antes pedía la lista completa con
+  // page_size=500 (el servidor solo acepta hasta 200 → devolvía 10) y SIN ver_todo, que deja fuera justo las incidencias que no cuadran:
+  // la de una diferencia nunca llegaba y el botón no abría nada ni avisaba. Ahora se pide ESA incidencia por su número (`?id=`), y si ya
+  // no está (dada de baja o eliminada) se dice. `opts.cerrar` = un modal que se cierra ANTES de abrir la edición (sin dos modales a la vez).
+  // Devuelve una promesa: true si se abrió.
+  function incAbrirPorId(id, abrirRepuesto, alAbrir, opts){
+    opts = opts || {};
+    return fetch('/mantenciones/api/incidencias?id=' + encodeURIComponent(id) + '&ver_todo=1&page=1&page_size=10', {credentials: 'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var fila = (d && d.ok) ? (d.rows || []).filter(function(x){ return String(x.id) === String(id); })[0] : null;
+        if(!fila){
+          ilusAlert({title: 'No se pudo abrir la incidencia #' + id, type: 'warning',
+            message: (d && d.ok)
+              ? 'Ya no está abierta: puede que alguien la haya dado de baja o eliminado. Toca «Actualizar» en las diferencias para ver cómo está hoy.'
+              : ((d && d.error) || 'El servidor no respondió. Intenta de nuevo en un momento.')});
+          return false;
         }
-      });
+        incCerrarYLuego(opts.cerrar, function(){
+          abrirEdicion(id, [fila]);
+          if(typeof alAbrir === 'function') alAbrir();
+          if(abrirRepuesto){
+            setTimeout(function(){ document.getElementById('incBtnSolicitarRepuesto').click(); }, 350);
+          }
+        });
+        return true;
+      })
+      .catch(function(){ ilusToast('No se pudo conectar con el servidor', {type: 'error'}); return false; });
+  }
+
+  // Cierra un modal y RECIÉN cuando terminó de cerrarse ejecuta `fn` (abrir otro sobre uno que se está cerrando le quita a la página el
+  // bloqueo de scroll). Sin modal, o si ya está cerrado, ejecuta `fn` de inmediato.
+  function incCerrarYLuego(el, fn){
+    if(!el || !el.classList.contains('show')){ fn(); return; }
+    el.addEventListener('hidden.bs.modal', function(){ fn(); }, {once: true});
+    bootstrap.Modal.getOrCreateInstance(el).hide();
   }
 
   // 🔧 2026-09-26: eliminar directo desde "Revisar diferencias" (Daniel:
@@ -3511,7 +3549,7 @@
   // pasados 12s (el ERP/WMS a veces demoran, pero igual sigue esperando)
   // para que no se vea "colgado" sin decir nada.
   var incConcToken = 0;
-  function incConcCargar(forzar){
+  function incConcCargar(forzar, alListo){       // alListo(d): 7-nov, para volver al panel «Gestionar diferencia» con los números de hoy
     if(forzar === true) incPorQueCache = {q: '', html: ''};
     var miToken = ++incConcToken;
     $('incConciliacion').hidden = false;
@@ -3534,6 +3572,7 @@
           return;
         }
         incConcData = d; incConcPintar();
+        if(typeof alListo === 'function') alListo(d);
       }).catch(function(){
         clearTimeout(avisoLento);
         if(miToken !== incConcToken) return;
@@ -3660,6 +3699,37 @@
   };
   function incDifModal(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('incDifModal')); }
 
+  // ↩️ 2026-11-07 (Daniel: «necesito empezar a declarar los motivos… que el sistema sea amigable»): lo que se abre desde una tarjeta del panel
+  // (la incidencia, la baja, el registro de una UA) al cerrarse —guardado o no— vuelve al MISMO panel con los números de hoy, para seguir con la
+  // siguiente unidad sin buscar de nuevo la fila. Si la diferencia ya cuadró, se dice. Solo vuelve cuando no queda ningún otro modal del flujo
+  // abierto (registrar pasa por «¿cómo registras?» → alta o desglose; la solicitud de repuesto oculta y vuelve a mostrar la incidencia).
+  var _incDifVolver = null;
+  var INC_DIF_FLUJO = ['incModal', 'incBajaModal', 'incAgruparModal', 'incDesgloseModal', 'incRepModal', 'incDifModal'];
+  function incDifQuizasVolver(){
+    if(!_incDifVolver) return;
+    setTimeout(function(){
+      if(!_incDifVolver) return;
+      var otro = INC_DIF_FLUJO.some(function(id){
+        var el = document.getElementById(id);
+        return el && (el.classList.contains('show') || el.style.display === 'block');
+      });
+      if(otro) return;                               // el flujo sigue en otro modal: se vuelve cuando ese se cierre
+      var v = _incDifVolver; _incDifVolver = null;
+      incConcData = null;
+      incConcCargar(false, function(d){
+        var h = (d.hallazgos || []).filter(function(x){
+          return x.sku === v.sku && x.unidades && (x.tipo === 'dif_erp' || x.tipo === 'dif_wms' || x.tipo === 'asignar_ua');
+        })[0];
+        if(h) incAbrirDiferencia(h);
+        else ilusToast('✓ ' + v.sku + ' ya cuadra: no le quedan diferencias de cantidad', {type: 'success'});
+      });
+    }, 450);
+  }
+  INC_DIF_FLUJO.forEach(function(id){
+    var el = document.getElementById(id);
+    if(el && id !== 'incDifModal') el.addEventListener('hidden.bs.modal', incDifQuizasVolver);
+  });
+
   // 📋 2026-10-29: ILUS no escribe en Check (REGLA #4.4); el ingreso lo hace la gente de Check. Esto deja el pedido listo para pegarlo en un mensaje.
   function incCopiarPedidoCheck(h, c){
     var n = c.cantidad || 1;
@@ -3677,26 +3747,60 @@
     var u = h.unidades || {tarjetas: [], unidades: 0, con_motivo: 0};
     var m = INC_TIPOS[h.tipo] || {t: h.tipo};
     var pct = u.unidades ? Math.round(100 * u.con_motivo / u.unidades) : 0;
+    // 7-nov (Daniel, Tarro Pegamento U Lock Turf: nosotros 14, ERP 7, Check 7): la referencia es el ERP en «Diferencia con el ERP» y Check en
+    // «Diferencia con el WMS». El chip que no coincide con ella se marca en ámbar para ver de un vistazo dónde está la diferencia.
+    var refEsErp = h.tipo !== 'dif_wms';
+    var refNom = refEsErp ? 'el ERP' : 'Check';
+    var refVal = refEsErp ? h.erp : h.wms;
+    function chipVal(v){ return (v === null || v === undefined) ? '—' : incNum(Number(v)); }
     var html = '<div class="inc-dif-cab"><div><div class="inc-dif-nom">' + incEsc(h.descripcion || h.sku || '—') + '</div>'
       + '<div class="inc-dif-sub">SKU ' + incEsc(h.sku || '—') + ' · ' + incEsc(m.t) + '</div></div>'
       + '<div class="inc-chip-row" style="display:flex">'
-      + ['Nosotros|' + h.nuestra_bd, 'ERP Random|' + h.erp, 'Check (WMS)|' + h.wms].map(function(x){
-          var p = x.split('|'); return '<span class="inc-chip"><span class="lbl">' + p[0] + '</span><span class="val">' + (p[1] === 'null' || p[1] === 'undefined' ? '—' : incNum(Number(p[1]))) + '</span></span>';
+      + [['Nosotros', h.nuestra_bd, true], ['ERP Random', h.erp, !refEsErp], ['Check (WMS)', h.wms, refEsErp]].map(function(x){
+          var ojo = x[2] && x[1] !== null && x[1] !== undefined && refVal !== null && refVal !== undefined && Number(x[1]) !== Number(refVal);
+          return '<span class="inc-chip' + (ojo ? ' ojo' : '') + '"' + (ojo ? ' title="No coincide con ' + refNom + '"' : '') + '><span class="lbl">' + x[0] + '</span><span class="val">' + chipVal(x[1]) + '</span></span>';
         }).join('') + '</div></div>'
-      + '<div class="inc-dif-prog"><span class="tx">' + u.con_motivo + ' de ' + u.unidades + ' unidad' + (u.unidades === 1 ? '' : 'es') + ' con motivo'
+      + '<div class="inc-dif-prog' + (u.sobran ? ' alerta' : '') + '"><span class="tx">' + u.con_motivo + ' de ' + u.unidades + ' unidad' + (u.unidades === 1 ? '' : 'es') + ' con motivo'
       + (u.faltan ? ' · falta' + (u.faltan > 1 ? 'n ' + u.faltan : ' 1') + ' por agregar' : '')
       + (u.sobran ? ' · declaramos ' + u.sobran + ' de más' : '') + '</span>'
-      + '<span class="bar"><span style="width:' + pct + '%"></span></span></div>'
-      + (h.repetible
+      + '<span class="bar"><span style="width:' + pct + '%"></span></span></div>';
+    // Declaramos de más: antes solo lo decía en la barra (que además se veía verde, como si todo estuviera bien). Ahora dice qué hacer y,
+    // si Check lo sabe, en qué UA está la diferencia (cada tarjeta muestra cuánto tiene Check en su UA).
+    if(u.sobran){
+      var sospechosas = u.tarjetas.filter(function(c){ return c.clase === 'incidencia' && c.en_check !== undefined && c.check_cant < c.cantidad; });
+      html += '<div class="inc-dif-nota sobra"><i class="bi bi-exclamation-triangle-fill"></i><span>'
+        + 'Declaramos <b>' + u.sobran + ' unidad' + (u.sobran === 1 ? '' : 'es') + ' de más</b>: nosotros ' + chipVal(h.nuestra_bd) + ' y ' + refNom + ' ' + chipVal(refVal) + '. '
+        + (sospechosas.length
+            ? 'Revisa ' + (sospechosas.length === 1 ? 'la tarjeta marcada' : 'las tarjetas marcadas') + ' en ámbar: Check tiene menos unidades de las que declaramos en esa UA. '
+            : 'Revisa cuál incidencia sobra o tiene una cantidad mayor a la real. ')
+        + 'Corrige la cantidad en <b>Ver / corregir</b> o, si esas unidades ya no están en la bodega, <b>Dar de baja</b> (queda en el historial con su motivo: nada se borra).'
+        + '</span></div>';
+    }
+    html += (h.repetible
           ? '<div class="inc-dif-nota"><i class="bi bi-stack"></i><span>Este producto se puede <b>agrupar</b>: va en una sola línea con su cantidad (por ejemplo, 90 pisos).</span></div>'
-          : '<div class="inc-dif-nota eq"><i class="bi bi-diagram-3"></i><span>Es un <b>equipo</b>: cada máquina va en su propia línea, con su propia UA y su propio motivo.</span></div>')
+          : (h.sin_clasificar
+              // 7-nov: sin clasificación en el Catálogo el sistema NO sabe si es equipo o insumo (antes un tarro de pegamento salía como «equipo»).
+              ? '<div class="inc-dif-nota eq"><i class="bi bi-tag"></i><span>Este producto <b>no está clasificado</b> en el Catálogo, así que se trata como <b>equipo</b>: una línea por UA, cada una con su motivo. '
+                + 'Si es un insumo o accesorio que se puede agrupar, clasifícalo en el Catálogo y se registrará en una sola línea con su cantidad.</span></div>'
+              : '<div class="inc-dif-nota eq"><i class="bi bi-diagram-3"></i><span>Es un <b>equipo</b>: cada máquina va en su propia línea, con su propia UA y su propio motivo.</span></div>'))
       + '<div class="inc-dif-grid">';
     u.tarjetas.forEach(function(c, i){
       var k = c.clase === 'incidencia' ? (!c.con_motivo ? 'incidencia_warn' : (!c.ua && c.ua_sugerida ? 'incidencia_ua' : 'incidencia_ok')) : c.clase;
       var d = INC_DIF_CLASES[k] || INC_DIF_CLASES.sin_ua;
-      var cuerpo = '', acc = '';
+      var cuerpo = '', acc = '', chk = '', revisar = false;
+      // 7-nov: lo que Check tiene en la UA de esta incidencia (solo si Check respondió). Con «declaramos de más», la que Check tiene con
+      // menos unidades se marca en ámbar: es la candidata a corregir o dar de baja.
+      if(c.clase === 'incidencia' && c.en_check !== undefined){
+        var cc = Number(c.check_cant) || 0;
+        revisar = !!u.sobran && cc < c.cantidad;
+        chk = !c.en_check
+          ? '<div class="chk ambar"><i class="bi bi-exclamation-triangle-fill"></i><span>Check <b>no tiene</b> esta UA en la bodega 13</span></div>'
+          : (cc === c.cantidad
+              ? '<div class="chk verde"><i class="bi bi-check-circle-fill"></i><span>Check tiene ' + cc + ' en esta UA: coincide</span></div>'
+              : '<div class="chk ambar"><i class="bi bi-exclamation-triangle-fill"></i><span>Check tiene <b>' + cc + '</b> en esta UA y declaramos <b>' + c.cantidad + '</b></span></div>');
+      }
       if(c.clase === 'incidencia'){
-        cuerpo = '<div class="motivo">' + (c.motivo ? incEsc(c.motivo) : '<span class="meta">Sin motivo declarado.</span>') + '</div>';
+        cuerpo = chk + '<div class="motivo">' + (c.motivo ? incEsc(c.motivo) : '<span class="meta">Sin motivo declarado.</span>') + '</div>';
         if(!c.ua && c.ua_sugerida){
           cuerpo += '<div class="motivo mt-1"><i class="bi bi-upc-scan me-1"></i>Esta incidencia <b>no tiene UA</b> y Check ya tiene la <b>' + incEsc(c.ua_sugerida) + '</b>'
                   + (c.ubicacion_sugerida ? ' (' + incEsc(c.ubicacion_sugerida) + ')' : '') + ' libre de este producto. ¿Es esta? Asígnala para que Check y nuestra base hablen de la misma unidad.</div>';
@@ -3724,7 +3828,8 @@
         cuerpo = '<div class="motivo">Faltan <b>' + c.cantidad + '</b> unidad' + (c.cantidad === 1 ? '' : 'es') + ' pero Check no tiene otra UA libre de este SKU. '
                + 'Pide en Check que las separen en una UA por unidad y vuelve a revisar.</div>';
       }
-      html += '<div class="inc-dif-card ' + d.cls + '"><span class="pill"><i class="bi ' + d.ico + '"></i>' + d.t + '</span>'
+      html += '<div class="inc-dif-card ' + d.cls + (revisar ? ' revisar' : '') + '"><div class="pills"><span class="pill"><i class="bi ' + d.ico + '"></i>' + d.t + '</span>'
+        + (revisar ? '<span class="pill revisar"><i class="bi bi-search"></i>Revisar: puede sobrar</span>' : '') + '</div>'
         + (c.ua ? '<div class="ua">' + incEsc(c.ua) + '</div>' : (c.clase === 'incidencia' ? '<div class="ua">Incidencia #' + c.id + ' · sin UA</div>' : ''))
         + '<div class="meta">' + (c.clase === 'incidencia' ? 'Incidencia #' + c.id + ' · ' : '') + c.cantidad + ' unidad' + (c.cantidad === 1 ? '' : 'es')
         + (c.ubicacion ? ' · ' + incEsc(c.ubicacion) : '') + '</div>'
@@ -3738,16 +3843,29 @@
       b.addEventListener('click', function(){
         var c = u.tarjetas[parseInt(b.dataset.i, 10)], quehacer = b.dataset.dif;
         if(quehacer === 'copiar'){ incCopiarPedidoCheck(h, c); return; }
-        incDifModal().hide();
-        if(quehacer === 'ver') incAbrirPorId(c.id);
-        else if(quehacer === 'asignar') incAbrirPorId(c.id, false, function(){
-          // la UA queda puesta en la incidencia; la persona revisa y guarda
-          $('incRecomendacion').value = c.ua_sugerida; incPintarUbicacionCheck('coincide', c.ubicacion_sugerida || ''); incAltaSinUaOk = false;
-          refrescarVerdeTodos(); pintarPasos();
-          ilusToast('Revisa y guarda para asignar la ' + c.ua_sugerida, {type: 'info'});
+        if(b.disabled) return;
+        // 7-nov: al terminar (guardar o cerrar) se vuelve a ESTE panel con los números al día, para seguir con la siguiente unidad.
+        _incDifVolver = {sku: h.sku, tipo: h.tipo};
+        if(quehacer === 'ver' || quehacer === 'asignar'){
+          // El panel queda abierto (con «Abriendo…») hasta que llega la incidencia: si no se puede abrir, se avisa y no se pierde nada.
+          var antes = b.innerHTML;
+          b.disabled = true;
+          b.innerHTML = '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Abriendo…';
+          incAbrirPorId(c.id, false, quehacer === 'asignar' ? function(){
+            // la UA queda puesta en la incidencia; la persona revisa y guarda
+            $('incRecomendacion').value = c.ua_sugerida; incPintarUbicacionCheck('coincide', c.ubicacion_sugerida || ''); incAltaSinUaOk = false;
+            refrescarVerdeTodos(); pintarPasos();
+            ilusToast('Revisa y guarda para asignar la ' + c.ua_sugerida, {type: 'info'});
+          } : null, {cerrar: $('incDifModal')}).then(function(ok){
+            b.disabled = false; b.innerHTML = antes;
+            if(!ok) _incDifVolver = null;
+          });
+          return;
+        }
+        incCerrarYLuego($('incDifModal'), function(){
+          if(quehacer === 'baja') incAbrirBaja({origen:'incidencia', id:c.id, sku:h.sku, descripcion:h.descripcion, ua:c.ua, cantidad:c.cantidad, sub:'Incidencia #'+c.id});
+          else incRegistrarConPregunta(Object.assign({}, h, {ua: c.ua, ubicacion: c.ubicacion, cantidad: c.cantidad, falta_ingreso_check: c.clase === 'falta_check', uas_libres: c.clase === 'faltan_repetible' ? (h.uas_libres || []) : (c.ua ? [{ua: c.ua, ubicacion: c.ubicacion}] : [])}));
         });
-        else if(quehacer === 'baja') incAbrirBaja({origen:'incidencia', id:c.id, sku:h.sku, descripcion:h.descripcion, ua:c.ua, cantidad:c.cantidad, sub:'Incidencia #'+c.id});
-        else incRegistrarConPregunta(Object.assign({}, h, {ua: c.ua, ubicacion: c.ubicacion, cantidad: c.cantidad, falta_ingreso_check: c.clase === 'falta_check', uas_libres: c.clase === 'faltan_repetible' ? (h.uas_libres || []) : (c.ua ? [{ua: c.ua, ubicacion: c.ubicacion}] : [])}));
       });
     });
     incDifModal().show();
